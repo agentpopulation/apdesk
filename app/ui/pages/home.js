@@ -28,18 +28,22 @@ export async function homePage(el, ui) {
     card(h('h3', null, 'Pick up where you left off'), recent), extra);
   const paint = async () => {
     let d; try { d = await api('home'); } catch (e) { running.replaceChildren(empty(e.message)); return; }
+    await ui.refreshStopped?.();
+    const owners = (list) => list.filter(j => !j.quiet);   // the desk's own upkeep stays in Tasks › Housekeeping
     const tile = (n, label, page) => h('button', { class: 'card hov stat', onclick: () => ui.go(page) }, h('b', null, String(n)), h('span', null, label));
     tiles.replaceChildren(tile(d.jobs.summary.running, 'Tasks running', 'tasks'), tile(d.approvals.length + d.jobs.summary.waiting, 'Waiting for you', 'tasks'), tile(d.jobs.summary.done, 'Finished', 'tasks'), tile(d.agents, 'Agents', 'agents'));
-    running.replaceChildren(...(d.jobs.running.length ? d.jobs.running.map(j => h('div', { class: 'line' }, h('div', null, h('b', null, j.title), h('span', { class: 'd' }, `${ui.agent(j.agentId)?.name || 'Agent'} · ${j.detail || 'Working'}`)), meter(j.progress, { live: true, style: { maxWidth: '160px' } }), pill(fmt.pct(j.progress), 'run'))) : [empty('Nothing is running.')]));
+    const run = owners(d.jobs.running);
+    running.replaceChildren(...(run.length ? run.map(j => h('div', { class: 'line' }, h('div', null, h('b', null, j.title), h('span', { class: 'd' }, `${ui.agent(j.agentId)?.name || 'Agent'} · ${j.detail || 'Working'}`)), meter(j.progress, { live: true, style: { maxWidth: '160px' } }), pill(fmt.pct(j.progress), 'run'))) : [empty('Nothing is running.')]));
     const waits = [...d.approvals.map(a => line(a.title, `${ui.agent(a.agentId)?.name || 'An agent'} asks · ${ui.ACTION_WORDS[a.action] || a.action}`, btn('Review', { kind: 'ghost sm', onClick: () => ui.openApprovals() }))),
       ...d.jobs.waiting.map(j => line(j.title, j.detail || 'Waiting for you', btn('Open', { kind: 'ghost sm', onClick: () => ui.go('tasks') })))];
-    waiting.replaceChildren(...(waits.length ? waits : [empty('Nothing is waiting.')]));
+    const stopped = ui.stoppedSection?.();
+    waiting.replaceChildren(...(waits.length || stopped ? [...waits, stopped].filter(Boolean) : [empty('Nothing is waiting.')]));
     const rec = [...(d.recent || []).map(c => line(c.title || 'Chat', c.last || '', btn('Open', { kind: 'ghost sm', onClick: () => ui.go('chat', c.id) }))),
-      ...d.jobs.done.slice(0, 4).map(j => line(j.title, `Finished ${fmt.ago(j.finished)}`, btn('Open', { kind: 'ghost sm', onClick: () => j.chatId ? ui.go('chat', j.chatId) : ui.go('tasks') })))];
+      ...owners(d.jobs.done).slice(0, 4).map(j => line(j.title, `Finished ${fmt.ago(j.finished)}`, btn('Open', { kind: 'ghost sm', onClick: () => j.chatId ? ui.go('chat', j.chatId) : ui.go('tasks') })))];
     recent.replaceChildren(...(rec.length ? rec : [empty('Start in Chat: ask for research, leads, a schedule or a file.'), h('div', { class: 'chips', style: { justifyContent: 'center' } }, chipsFor(ui.state.settings.role).map(c => h('button', { class: 'chip', onclick: () => ui.go('chat') + sessionStorage.setItem('apd-prefill', c) }, c)))]));
     const mods = ui.state.modules.filter(m => m.on && m.kind !== 'core' && (m.menu || []).length);
     extra.replaceChildren(...mods.map(m => h('button', { class: 'card hov', onclick: () => ui.go(m.menu[0].id) }, h('b', null, m.name), h('div', { class: 'sub' }, 'Module is on. Open it.'))));
   };
   await paint();
-  ui.on('job', paint); ui.on('approval', paint); ui.on('modules', paint);
+  ui.on('job', paint); ui.on('approval', paint); ui.on('modules', paint); ui.on('panic', paint);
 }

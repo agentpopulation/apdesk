@@ -1,5 +1,5 @@
 // Plumbing tests with the fake model (never proof that learning works; see real-check.mjs for that).
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { testDesk } from '../../test/helpers/desk.js';
 import { nightlyDue } from './dream.js';
@@ -37,6 +37,7 @@ test('memory: remember, recall by search words, forPrompt without a model, lesso
     const done = await t.core.jobs.wait(job.jobId, 5000);
     assert.equal(done.status, 'done'); assert.ok(done.output.merged >= 1);
     // who started it is recorded and shown; only the owner's button and the nightly timer can start a Dream
+    assert.equal(done.quiet, false, 'Run Dream now is the owner\'s own job, not quiet');
     const st = (await t.call('/api/m/memory/status')).json; assert.equal(st.lastDream.source, 'owner'); assert.match(st.lastDream.startedBy, /Run Dream now/); assert.equal(st.dreams.length, 1);
     assert.equal((await t.call('/api/m/memory/dream', { body: {}, session: false })).status, 403, 'not the owner: refused');
     assert.ok(!t.core.modules.tools.has('memory_dream'), 'no model turn can start a Dream'); assert.equal(typeof mem.dream, 'undefined', 'no other module can start a Dream'); assert.equal((await mem.recall({ query: 'office' })).filter(m => /office/.test(m.text)).length, 1);
@@ -53,6 +54,22 @@ test('memory: learns from Chat\'s message events (user, streaming reply ignored,
     ev.emit('chat', { type: 'message', chatId: 'c9', message: { role: 'assistant', chatId: 'c9', agentId: 'coordinator', text: 'Noted.', status: 'done' } });
     for (let i = 0; i < 50 && !(await t.call('/api/m/memory/items')).json.items.length; i++) await new Promise(r => setTimeout(r, 50));
     assert.match((await t.call('/api/m/memory/items')).json.items.map(m => m.text).join(' '), /rack monitors/);
+  } finally { await t.close(); }
+});
+
+test('memory: the nightly Dream is the desk\'s own upkeep (quiet); Settings still shows when it last ran', async () => {
+  const t = await testDesk({ modules: ['memory'], script });
+  try {
+    t.core.settings.set('timeZone', 'UTC');
+    const at3 = new Date(); at3.setUTCHours(3, 20, 0, 0);
+    mock.timers.enable({ apis: ['Date'], now: at3.getTime() });   // only the clock is 3:20; timers run as usual
+    let job = null;
+    try { for (let i = 0; i < 80 && !job; i++) { await new Promise(r => setTimeout(r, 100)); job = t.core.jobs.list().find(j => j.kind === 'memory.dream'); } }
+    finally { mock.timers.reset(); }
+    assert.ok(job, 'the nightly timer started a Dream');
+    assert.equal(job.quiet, true);
+    const done = await t.core.jobs.wait(job.id, 5000); assert.equal(done.status, 'done');
+    const st = (await t.call('/api/m/memory/status')).json; assert.equal(st.lastDream.source, 'nightly');
   } finally { await t.close(); }
 });
 

@@ -2,7 +2,7 @@
 // what code can check on the fetched text (the company is named there; a contact or address only if it is on the page).
 // Rules: never invent a company, contact, email or number; a news site, directory or shop is not itself a lead;
 // anything a page did not say stays empty.
-import { hostKind, hostOf, skipSource, notACompany, isPublisher, looksLikeSeller, buyerAsk, textNames, textHas, emailIn, normName, coreName, companyKey, siteMatches, emailsOn, sentenceNaming, strictEmail, topicWords, sameBusiness, sameCompany, namesCompany, sameSeller, askCountry, siteCountry, wrongCountrySite, needOnPage, emailCountry, aboutSameBusiness, siteRoot, segmentClash, placedElsewhere, placedIn, listPlaces } from './rules.js';
+import { hostKind, hostOf, skipSource, notACompany, isPublisher, looksLikeSeller, buyerAsk, textNames, textHas, emailIn, normName, coreName, companyKey, siteMatches, emailsOn, sentenceNaming, strictEmail, topicWords, sameBusiness, sameCompany, namesCompany, sameSeller, askCountry, siteCountry, wrongCountrySite, needOnPage, emailCountry, aboutSameBusiness, siteRoot, segmentClash, placedElsewhere, placedIn, listPlaces, siteFits, sellsIn, otherKindIn, askKind, registrableDomain } from './rules.js';
 
 const clip = (v, n) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 const PAGE_CHARS = 4000;
@@ -76,6 +76,12 @@ export function checkRow(row, page, { query, buyerProduct }) {
   // the ask names a country: what on this page places the company there (its sentences, or the page being a list of that country's companies)
   const placed = country ? placedIn(page.text, company, country) || listPlaces(page, country) : '';
   if (placed) lead.placed = { words: clip(placed, 120), url: page.url };
+  // the ask names a kind of product: what this page says the company itself sells (a list's heading never counts for its names)
+  if (askKind(query)) {
+    const sells = sellsIn(page.text, company, query);
+    if (sells) lead.sells = { words: clip(sells, 200), url: page.url };
+    else { const other = otherKindIn(page.text, company, query); if (other) lead.otherKind = other; }
+  }
   return lead;
 }
 
@@ -109,6 +115,8 @@ const WHY = {
   'already in your pipeline': (n) => `${n} ${n === 1 ? 'was' : 'were'} already in your pipeline and skipped`,
   'a seller, the ask wants buyers': (n) => `${n} ${n === 1 ? 'was a seller' : 'were sellers'}, and you asked for buyers`,
   'model failed on a batch': (n) => `the model failed on ${n} batch${n === 1 ? '' : 'es'} of pages`,
+  'another kind of business': (n) => `${n} ${n === 1 ? 'was' : 'were'} another kind of business than the ask (such as staffing, consulting or IT services)`,
+  'what it sells not checked': (n) => `${n} ${n === 1 ? 'was' : 'were'} left out because no page read said what ${n === 1 ? 'it sells' : 'they sell'}`,
   'not placed in the country': (n, country) => `${n} ${n === 1 ? 'was' : 'were'} left out because no page read placed ${n === 1 ? 'it' : 'them'} in ${country?.label || 'the country asked for'}`,
 };
 
@@ -127,7 +135,7 @@ export async function findLeads({ query, count = 20, search, model, agentId = 'c
   const B = { pages: Math.min(90, Math.max(12, target * 3)), searches: Math.min(50, 12 + target), totalMs: (budget.totalMinutes ?? 14) * 60000, firstMs: (budget.searchMinutes ?? 8) * 60000, extraRounds: 3, firstRounds: 3, ...budget };
   if (budget.siteMinutes === 0) B.noSites = true;
   const left = () => B.totalMs - (Date.now() - t0);
-  const buyerProduct = buyerAsk(query); const country = askCountry(query);
+  const buyerProduct = buyerAsk(query); const country = askCountry(query); const kindAsk = !!askKind(query);
   const used = []; const usedSet = new Set(skipQueries.map(q => q.toLowerCase()));
   const queue = []; const seenUrl = new Set(skipUrls); const readUrls = [];
   let searches = 0;
@@ -168,7 +176,7 @@ export async function findLeads({ query, count = 20, search, model, agentId = 'c
       if (lead.reject) { bump(lead.reject); continue; }
       const key = companyKey(lead.company) || normName(lead.company);
       const twin = [...final, ...pool, ...held].find(x => sameCompany(x.company, lead.company, askWords));
-      if (twin || seenNames.some(n => sameCompany(n, lead.company, askWords))) { bump('merged as the same company'); if (twin && !twin.sources.some(s => s.url === page.url) && twin.sources.length < 4) twin.sources.push(lead.sources[0]); if (twin && !twin.placed && lead.placed) twin.placed = lead.placed; continue; }
+      if (twin || seenNames.some(n => sameCompany(n, lead.company, askWords))) { bump('merged as the same company'); if (twin && !twin.sources.some(s => s.url === page.url) && twin.sources.length < 4) twin.sources.push(lead.sources[0]); if (twin && !twin.placed && lead.placed) twin.placed = lead.placed; if (twin && !twin.sells && lead.sells) twin.sells = lead.sells; continue; }
       if (known(lead.company, key, askWords)) { bump('already in your pipeline'); seenNames.push(lead.company); continue; }
       seenNames.push(lead.company);
       if (pool.filter(x => x.sources[0]?.url === page.url).length >= perPage) held.push(lead); else pool.push(lead);
@@ -234,6 +242,8 @@ export async function findLeads({ query, count = 20, search, model, agentId = 'c
     if (cand.siteSaid && segmentClash(query, `${cand.need} ${cand.siteSaid}`)) { bump('does not fit'); continue; }
     delete cand.siteSaid;
     if (cand.elsewhere) { bump('does not fit'); continue; }
+    // the ask names a kind of product and no page that was read says this company sells it: left out, never shown as a fit
+    if (kindAsk && !cand.sells) { bump(cand.otherKind ? 'another kind of business' : 'what it sells not checked'); continue; }
     // the ask names a country and no page that was read places this company there: left out, never shown as checked
     if (country && !cand.placed) { bump('not placed in the country'); continue; }
     // a seller already in the pipeline (same company, or the same own site) is skipped and does not count
@@ -243,8 +253,14 @@ export async function findLeads({ query, count = 20, search, model, agentId = 'c
     final.push(cand);
   }
   // what placed each lead in the ask's country is said in its findings
-  for (const l of final) { if (country && l.placed) l.findings = `${l.findings} Placed in ${country.label} by "${l.placed.words}" (${l.placed.url}).`.trim(); delete l.placed; }
+  for (const l of final) {
+    if (country && l.placed) l.findings = `${l.findings} Placed in ${country.label} by "${l.placed.words}" (${l.placed.url}).`.trim();
+    if (kindAsk && l.sells) l.findings = `${l.findings} What it sells, from ${l.sells.url}: "${l.sells.words}".`.trim();
+    delete l.placed; delete l.sells; delete l.otherKind;
+  }
   const leads = final;
+  // what the site step found, counted over the leads kept (a candidate checked and then merged or left out is not one of them)
+  Object.assign(sites, leadCounts(leads));
   onProgress({ pages: pagesRead, leads: leads.length, p: 0.97, detail: `read ${pagesRead} pages, ${leads.length} leads` });
   let reason = '';
   if (leads.length < count) {
@@ -269,7 +285,6 @@ export async function checkSites({ leads, search, query = '', fetchHtml = null, 
     onProgress(i, leads.length); checked++;
     try {
       const field = topicWords(query);            // the ask's own field words; words of the lead's need line are not evidence
-      const fieldOr = field.length ? field : topicWords(lead.need);
       let cands = [];
       if (lead.website && siteMatches(lead.company, lead.website) && !wrongCountrySite(lead.website, country)) cands.push(lead.website);
       if (!cands.length) {
@@ -290,8 +305,11 @@ export async function checkSites({ leads, search, query = '', fetchHtml = null, 
         if (!pg) continue;
         if (wrongCountrySite(pg.url || o, country)) { wrongCountry++; continue; }
         if (String(pg.text || '').length <= 150 || !namesCompany(pg.text + ' ' + (pg.title || ''), lead.company, field)) continue;
-        if (!aboutSameBusiness(pg, fieldOr).ok) { wrongBusiness++; continue; }
-        home = pg; home.url = home.url || o + '/'; origin = o; break;
+        const fit = siteFits(pg, { query, company: lead.company, need: lead.need });   // the same test as real-check.mjs
+        if (!fit.ok) { wrongBusiness++; if (fit.other) lead.otherKind = fit.other; continue; }
+        home = pg; home.url = home.url || o + '/'; origin = o;
+        if (fit.sells) { lead.sells = { words: clip(fit.sells, 200), url: home.url }; delete lead.otherKind; }
+        break;
       }
       if (!home) continue;
       own++;
@@ -332,6 +350,7 @@ export function mergePair(final, i, drop, askWords = []) {
   for (const src of drop.sources || []) if (!keep.sources.some(x => x.url === src.url) && keep.sources.length < 4) keep.sources.push(src);
   if (!keep.email && drop.email) keep.email = drop.email;
   if (!keep.placed && drop.placed) keep.placed = drop.placed;
+  if (!keep.sells && drop.sells) keep.sells = drop.sells;
   final[i] = keep;
 }
 /** Merge leads of one seller in place (see rules.sameSeller). Keeps the row whose text fits the ask best; returns how many were merged away. */
@@ -342,4 +361,21 @@ export function mergeSellers(leads, query = '') {
     mergePair(leads, i, leads[j], askWords); leads.splice(j, 1); j--; merged++;
   }
   return merged;
+}
+
+// ---- the closing line: every number is counted over the leads shown, at the moment they are shown
+/** The lead's main source is its own site: the first source sits on the domain of its website. */
+export const ownMain = (l) => !!(l?.website && l.sources?.[0]?.url && registrableDomain(l.sources[0].url) === registrableDomain(l.website));
+/** Counts over the leads given: own site as the main source, a mail address, a named contact person. */
+export function leadCounts(leads = []) {
+  return { own: leads.filter(ownMain).length, emails: leads.filter(l => l?.email).length, contacts: leads.filter(l => l?.contactName).length };
+}
+/** "n of total <words>", or '' when n is not a whole number from 1 to total: a count of leads never exceeds the leads. */
+export function countClause(n, total, words) { return Number.isInteger(n) && Number.isInteger(total) && n >= 1 && n <= total ? `${n} of ${total} ${words}` : ''; }
+/** The line after a search, built from the leads shown. '' when there are none. */
+export function closingLine(leads = []) {
+  const total = leads.length; if (!total) return '';
+  const c = leadCounts(leads);
+  const parts = [countClause(c.own, total, 'have their own site as the main source'), countClause(c.emails, total, 'carry a mail address'), countClause(c.contacts, total, 'name a contact person')].filter(Boolean);
+  return `${parts.length ? parts.join('; ') + '. ' : ''}Contacts a page did not give are marked not checked.`;
 }

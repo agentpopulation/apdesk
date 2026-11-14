@@ -151,7 +151,8 @@ export async function activate(ctx) {
   async function dreamNow(source) {
     if (!STARTERS[source]) throw Object.assign(new Error('Dream runs only at night or from Settings › Memory.'), { status: 403 });
     const started = new Date().toISOString();
-    return ctx.jobs.start({ kind: 'memory.dream', title: 'Dream: tidy memories', input: { source, startedBy: STARTERS[source] }, async run(job) {
+    // The nightly run is the desk's own upkeep (quiet: no notice, badge or Home line unless it fails); Run Dream now is the owner's.
+    return ctx.jobs.start({ kind: 'memory.dream', title: 'Dream: tidy memories', quiet: source === 'nightly', input: { source, startedBy: STARTERS[source] }, async run(job) {
       const report = await dream({ store, model: ctx.model, signal: job.signal, progress: (p, d) => job.progress(p, d), log: ctx.log });
       const rec = { at: started, source, startedBy: STARTERS[source], merged: report.merged, lowered: report.lowered, reviewed: report.reviewed, summary: report.summary?.text || null, label: report.label };
       ctx.kv.set('lastDream', rec);

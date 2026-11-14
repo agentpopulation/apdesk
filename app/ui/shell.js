@@ -52,6 +52,7 @@ const toldJobs = new Set();
 const placeOf = (kind) => { const k = String(kind || ''); return k.startsWith('research') ? 'research' : (k.startsWith('sales') || k.startsWith('leads')) ? 'sales' : 'tasks'; };
 function jobFinished(j) {
   if (!j || !['done', 'failed'].includes(j.status) || toldJobs.has(j.id + j.status)) return;
+  if (j.quiet && j.status === 'done') return;   // the desk's own upkeep: listed under Housekeeping in Tasks, told only when it fails
   toldJobs.add(j.id + j.status);
   if (state.settings.notifications === false) return;
   const ok = j.status === 'done'; const text = `${ok ? 'Finished' : 'Failed'}: ${j.title || 'a job'}`;

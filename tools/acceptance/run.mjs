@@ -84,7 +84,7 @@ for (const n of list) {
   }
   results.push(r);
   console.log(`ASK ${String(r.n).padEnd(2)} ${r.state.padEnd(11)} ${r.evidence.replace(/\s+/g, ' ')}${r.models ? '  [models: ' + r.models + ']' : ''}`);
-  try { for (const x of r.extra || []) { const e = { n: x.n, title: x.title, owner: r.owner, state: x.ok ? 'PASS' : 'FAIL', evidence: x.evidence, how: r.how, shot: x.shot, models: r.models, calls: 0, did: x.evidence, saw: x.evidence }; results.push(e); console.log(`ASK ${String(x.n).padEnd(2)} ${e.state.padEnd(11)} ${e.evidence}`); } } catch (e) { console.log('extra result failed: ' + e.message); }
+  try { for (const x of r.extra || []) { const e = { n: x.n, title: x.title, owner: r.owner, state: x.state === 'NOT CHECKED' ? 'NOT CHECKED' : x.ok ? 'PASS' : 'FAIL', evidence: x.evidence, how: r.how, shot: x.shot, models: r.models, calls: 0, did: x.evidence, saw: x.evidence }; results.push(e); console.log(`ASK ${String(x.n).padEnd(2)} ${e.state.padEnd(11)} ${e.evidence}`); } } catch (e) { console.log('extra result failed: ' + e.message); }
 }
 const totalCalls = results.reduce((s, r) => s + (r.calls || 0), 0);
 // every reply that carries "No file was saved." (it should appear only where a false file line was removed)

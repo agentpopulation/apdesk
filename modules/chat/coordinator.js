@@ -1,5 +1,6 @@
 // The Coordinator turn: one loop for every chat. Native tool calls where the model can, a JSON decision protocol where it cannot.
 // Prompts, names, tones and model picks are read fresh on every turn (never cached), so an edit on the Agents page shows in the next reply.
+import fs from 'node:fs';
 import { wrapUntrusted, detectInjection } from './untrusted.js';
 import { cleanReply, dropFileClaims, stepReason } from './ui-text.js';
 import { FACT_TOOLS, PAGE_TOOLS, needsOutsideFacts, verifyTable, pagesFrom, dropPromises, unifyUnits, checkSentence } from './verify.js';
@@ -29,6 +30,8 @@ export function makeCoordinator(ctx, store, bus) {
     return Array.isArray(allowed) ? all.filter(t => allowed.includes(t.name)) : all;
   };
   /** Who answers: a direct chat's one agent; in a group the Coordinator, unless the owner names a member first ("@Scout ..." or "Scout, ..."). */
+  /** Top-level names in the workspace (files without their extension, and folders), for "my notes", "the reports folder". */
+  const workspaceNames = () => { try { return fs.readdirSync(ctx.workspace).filter(n => !n.startsWith('.')).map(n => n.replace(/\.[^.]+$/, '')); } catch { return []; } };
   function speakerFor(chat, text) {
     if (chat.members.length === 1) return chat.members[0];
     const m = String(text || '').match(/^\s*@?([A-Za-z][\w .-]{0,40}?)\s*[,:]\s|^\s*@([A-Za-z][\w.-]{0,40})\b/);
@@ -52,6 +55,7 @@ export function makeCoordinator(ctx, store, bus) {
     if (tools.length && chat.settings.deepResearch === false) lines.push('The owner switched deep research off for this chat: do not start deep research jobs here unless asked by name.');
     if (tools.length && tools.some(t => t.name === 'research_swarm')) lines.push(`When you start a swarm, use ${Number(chat.settings.swarm) || 5} agents unless the owner says otherwise.`);
     if (tools.length && held.length) lines.push(`${heldLine(held)} start only when the owner asks for them; if one would help, say so in one sentence.`);
+    if (tools.length && held.includes('task')) lines.push('Answer a plain question yourself, here in the chat: do not hand it to another agent and do not turn it into a task.');
     if (tools.length) lines.push('A tool that starts a job returns at once; its progress shows in the chat by itself. Tell the owner it has started; do not wait for it.');
     try {
       const skills = await ctx.modules.api('agents')?.skillsFor?.(speaker);
@@ -165,10 +169,15 @@ export function makeCoordinator(ctx, store, bus) {
     const wantsFile = fileAsk(userText);
     // the tools that start heavy background work are offered only when the ask names that work, or in the own chat of the
     // agent who does it (Scout: research, Closer: leads, Operator: the browser)
-    const askedHeavy = heavyAsked(userText);
-    const heavyOk = (t) => !HEAVY[t.name] || askedHeavy.has(HEAVY[t.name]) || (speaker !== 'coordinator' && handoffFor(t.name) === speaker);
-    const tools = plainWriting ? [] : allTools.filter(t => !(inJob && t.name === 'task_create') && (t.name !== 'agent_update' || agentTalk) && !(offline && isWeb(t)) && !(paste && /^(?:outreach_draft|mail_draft|social_draft|channel_draft)$/.test(t.name)) && (wantsFile || !FILE_MAKERS.has(t.name)) && heavyOk(t));
-    const held = [...new Set(allTools.filter(t => !heavyOk(t) && !(offline && isWeb(t))).map(t => HEAVY[t.name]))];
+    // the same for tools that start work beyond this turn (a task or a hand-off, a schedule, a chain of agents, a web plan,
+    // a site build, outreach drafts): offered only when the ask is for that work
+    const askedHeavy = new Set([...heavyAsked(userText), ...startAsked(userText, { agents: ctx.agents.list().filter(a => a.enabled !== false), self: speaker })]);
+    const heavyOk = (t) => !GATED[t.name] || askedHeavy.has(GATED[t.name]) || (speaker !== 'coordinator' && handoffFor(t.name) === speaker);
+    // file_write also edits workspace files, so it is offered for a file ask, a write/save/edit ask, a named workspace file or
+    // folder, or a chat with an attached file; a plain question gets no file
+    const writeOk = wantsFile || writeAsk(userText, { names: workspaceNames() }) || store.messages(chatId, { limit: 40 }).some(m => m.role === 'user' && m.meta?.attachment);
+    const tools = plainWriting ? [] : allTools.filter(t => !(inJob && t.name === 'task_create') && (t.name !== 'agent_update' || agentTalk) && !(offline && isWeb(t)) && !(paste && /^(?:outreach_draft|mail_draft|social_draft|channel_draft)$/.test(t.name)) && (wantsFile || !FILE_MAKERS.has(t.name)) && (writeOk || t.name !== 'file_write') && heavyOk(t));
+    const held = [...new Set(allTools.filter(t => !heavyOk(t) && !(offline && isWeb(t)) && !(inJob && t.name === 'task_create')).map(t => GATED[t.name]))];
     const toolDefs = tools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
     const res = ctx.model.resolve(speaker);
     const jsonProviders = ctx.kv.get('jsonProviders', []);   // native tool calls first everywhere; providers listed here go straight to JSON decisions
@@ -807,7 +816,52 @@ export function heavyAsked(text) {
   for (const [kind, re] of Object.entries(HEAVY_WORDS)) if (re.test(kind === 'research' ? u.replace(RESEARCH_NOUN, ' ') : u)) out.add(kind);
   return out;
 }
-const HELD_NAMES = { research: 'Deep research', swarm: 'a research swarm', council: 'the Council', leads: 'lead search', browser: 'a browser task' };
+/** Tools that start work that outlives the turn or belongs to another agent, and the kind of ask that opens each one. */
+export const STARTERS = { task_create: 'task', schedule_create: 'schedule', flow_create: 'flow', travel_plan: 'travel', site_build: 'site', outreach_draft: 'outreach' };
+/** Every tool that is offered only when the ask is for its work. */
+export const GATED = { ...HEAVY, ...STARTERS };
+const DAYS = 'monday|tuesday|wednesday|thursday|friday|saturday|sunday';
+const START_WORDS = {
+  // the ask says the work should outlive this turn ("Make this a background task: …" is the side panel's "Turn into a task")
+  task: /\b(?:as an? |in the )background\b|\bbackground (?:task|job)s?\b|\bas an? (?:separate |new )?(?:task|job)\b|\b(?:make|turn|put) (?:this|it|that) (?:into |in )?(?:an? )?(?:task|job)\b|\b(?:start|create|make|set up|run) (?:a |an |the )?(?:new )?task\b|\bkeep (?:on )?working\b|\bwhen (?:it(?:'s| is)|you(?:'re| are)|that(?:'s| is)) (?:done|finished|ready)\b|\bwhen (?:it|you) finish(?:es)?\b|\btonight\b|\bovernight\b|\bwhile I(?:'m| am) (?:away|gone|out|asleep|sleeping|offline)\b|\bclos(?:e|ing) (?:the |this |my )?(?:window|browser|tab|laptop|app)\b|\bcome back (?:for|to) (?:it|this|that)\b|\btask_create\b/i,
+  schedule: new RegExp(String.raw`\bevery\s+(?:\d+\s+|other\s+|few\s+)?(?:morning|evening|afternoon|night|day|week|weekday|weekend|month|year|hour|minute|${DAYS})s?\b|\beach (?:morning|evening|night|day|week|month|${DAYS})\b|\b(?:daily|hourly|weekly|monthly|nightly)\b|\bschedul(?:e|es|ed|ing)\b|\broutines?\b|\bremind(?:er|ers)?\b|\btomorrow\b|\btonight\b|\bnext (?:week|month|${DAYS})\b|\bschedule_create\b`, 'i'),
+  flow: /\b(?:make|create|build|set up|save|run|start)\b[^.?!]{0,20}\bflows?\b|\bagent flows?\b|\bchain (?:of )?(?:agents|steps)\b|\bchained\b|\bone agent after (?:the )?other\b|\bflow_create\b/i,
+  // travel_plan reads the web for a one-day plan: only when the ask wants it checked on the web
+  travel: /\bsources?\b|\bmap links?\b|\bon a map\b|\bfrom (?:the )?web\b|\bweb[- ]checked\b|\b(?:look|check) (?:it |them |this |that )?(?:up )?online\b|\btravel_plan\b/i,
+  site: /\bweb ?sites?\b|\blanding pages?\b|\bhome ?pages?\b|\b(?:one|single)[- ]page (?:web)?site\b|\bstatic site\b|\b(?:build|make|create|design)\b[^.?!]{0,30}\bsite\b|\bsite_build\b/i,
+  outreach: /\boutreach\b|\bdrafts?\b|\bfollow[- ]?ups?\b|\bcold (?:e-?mails?|messages?|calls?)\b|\breach out\b|\bpitch(?:es)?\b|\bleads?\b(?!\s+(?:to|into|up)\b)|\bprospects?\b|\b(?:write|prepare|send)\b[^.?!]{0,40}\b(?:e-?mails?|mails?|messages?)\b|\boutreach_draft\b/i,
+};
+const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** Does the owner hand the work to an agent by name ("Ask the Operator to …", "@Scout …", "Scout, …", "Meera should …")?
+ *  agents: the roster (hired agents too); the agent answering is left out. */
+export function namesAgent(text, agents = []) {
+  const u = String(text || '');
+  return agents.some(a => {
+    const n = [a.name, a.id].filter(Boolean).map(esc).join('|'); if (!n) return false;
+    return new RegExp(String.raw`(?:^|[^\w@])@(?:${n})\b|^\s*(?:${n})\s*[,:]|\b(?:ask|tell|have|get|let)\s+(?:the\s+)?(?:${n})\b|\b(?:hand|give|send|pass|assign|delegate)\b[^.?!]{0,30}?\bto\s+(?:the\s+)?(?:${n})\b|\b(?:${n})\s+(?:should|can|could|will|must|please)\b`, 'i').test(u);
+  });
+}
+/** Which kinds of beyond-the-turn work the owner's words ask for. A heavy ask, or work handed to an agent by name, opens the
+ *  task tool too (and an agent named opens a chain of agents). */
+export function startAsked(text, { agents = [], self = null } = {}) {
+  const u = String(text || ''); const out = new Set();
+  for (const [kind, re] of Object.entries(START_WORDS)) if (re.test(u)) out.add(kind);
+  if (timedAsk(u)) out.add('schedule');
+  if (heavyAsked(u).size) out.add('task');
+  if (namesAgent(u, agents.filter(a => a.id !== self))) { out.add('task'); out.add('flow'); }
+  return out;
+}
+const WRITE_WORDS = /\bsav(?:e|es|ed|ing)\b|\bedit(?:s|ed|ing)?\b|\bappend(?:s|ed|ing)?\b|\brenam(?:e|es|ed|ing)\b|\b(?:note|jot|write|put) (?:it |this |that |them |these )?down\b|\bmake a note\b|\bwrit(?:e|ing) (?:it |this |that |them |these |those )?(?:to|into)\b|\bupdat(?:e|es|ed|ing) (?:the|my|our|this|that|it|your)\b|\badd\b[^.?!]{0,30}\b(?:line|lines|row|rows|entry|item|items|note|section)\b[^.?!]{0,30}\bto\b|\bfolders?\b|\bdirector(?:y|ies)\b|\bworkspace\b|\bfile_write\b/i;
+/** Does the ask change or name something in the workspace: write to, save, edit, update, append, rename, note down, a folder,
+ *  or a workspace name after "my", "the", "in" and the like ("Tidy up my notes" when notes.md is there)? "Write me a short
+ *  poem" is text for the chat, not this. names: top-level workspace names without their extension. */
+export function writeAsk(text, { names = [] } = {}) {
+  const u = String(text || '');
+  if (WRITE_WORDS.test(u)) return true;
+  const n = [...new Set(names.filter(x => x && x.length >= 3).map(x => esc(x.toLowerCase())))];
+  return n.length > 0 && new RegExp(String.raw`\b(?:my|the|our|this|that|in|to|into|from)\s+(?:${n.join('|')})\b`, 'i').test(u);
+}
+const HELD_NAMES = { research: 'Deep research', swarm: 'a research swarm', council: 'the Council', leads: 'lead search', browser: 'a browser task', task: 'a background task or a hand-off to another agent', schedule: 'a schedule', flow: 'a chain of agents', travel: 'a travel plan read from the web', site: 'a website build', outreach: 'outreach drafts' };
 function heldLine(kinds) { const n = kinds.map(k => HELD_NAMES[k]); const s = n.length > 1 ? n.slice(0, -1).join(', ') + ' and ' + n.at(-1) : n[0]; return s[0].toUpperCase() + s.slice(1); }
 /** Tools that save the answer itself as a file (a workbook, a document). */
 export const FILE_MAKERS = new Set(['table_file', 'doc_file']);

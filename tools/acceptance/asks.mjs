@@ -1,6 +1,6 @@
 // The 17 acceptance asks. Each returns { state, evidence, how, ... } or throws NotChecked / Fail.
 import fs from 'node:fs'; import path from 'node:path';
-import { chatIdle, browserText, SEL, sleep, go, shot, openDesk, chatOpen, chatAsk, chatWithAgent, readTheirs, viewText, offNote, clickText, firstVisible, probe, arrayIn, newFiles, walk, fetchText, LABEL_RE, hash, appRequire } from './lib.mjs';
+import { chatIdle, chatBusy, browserText, SEL, sleep, go, shot, openDesk, chatOpen, chatAsk, chatWithAgent, readTheirs, viewText, offNote, clickText, firstVisible, probe, arrayIn, newFiles, walk, fetchText, LABEL_RE, hash, appRequire, askJudge } from './lib.mjs';
 
 export class NotChecked extends Error {}
 const nc = (m) => { throw new NotChecked(m); };
@@ -81,49 +81,124 @@ export async function ask2(t) {
 }
 
 // ---------------------------------------------------------------- 3
+// Panic is pressed on work that is certainly running: a deep research job the ask starts in its own words ("Research
+// in depth, as a background job"), seen running on the Tasks page. A long writing ask may legitimately become a file
+// or a job instead of a streaming reply, so the streaming variant is a second sub-check (3s) that runs only when a
+// reply does stream. No work caught running is NOT CHECKED, never PASS.
+const ASK3_JOB = 'Research in depth, as a background job: how national renewable energy policies have changed around the world since 1970, country by country. Give a cited report.';
+const ASK3_STREAM = 'Write a detailed 1500-word essay on the history of the printing press, with many sections, here in the chat. Do not stop early.';
+/** Ask 3's verdict from what was seen around Panic and Resume (pure, so it can be tested). */
+export function panicVerdict(o) {
+  if (!o.caught) return { state: 'NOT CHECKED', problems: [], why: 'no work could be caught running to press Panic on: ' + (o.notCaught || 'unknown') };
+  const p = [];
+  if (o.jobStoppedMs == null || o.jobStoppedMs > 3000) p.push('the job was NOT stopped within 3 s');
+  if (o.stillShownRunning) p.push('Tasks still shows the job under Running');
+  if (!o.halted) p.push('the desk does not say it is halted');
+  if (o.runningAfter > 0) p.push(`${o.runningAfter} job(s) still running`);
+  if (o.callsAfter > 0) p.push(`${o.callsAfter} model call(s) after Panic`);
+  if (!o.overlay) p.push('no halted overlay');
+  if (o.refused !== 'halted') p.push(`a new ask while halted was not refused (${o.refused})`);
+  if (o.newJobsWhileHalted > 0) p.push(`${o.newJobsWhileHalted} job(s) started while halted`);
+  if (['running', 'waiting'].includes(o.statusAfterResume)) p.push(`the job is ${o.statusAfterResume} again after Resume`);
+  if (o.newJobsAfterResume > 0) p.push(`${o.newJobsAfterResume} new job(s) of the same work started by themselves after Resume`);
+  return { state: p.length ? 'FAIL' : 'PASS', problems: p, why: p.join('; ') };
+}
+const usageAfter = async (t, lastId, tP) => ((await t.desk.call('/api/model/usage')).json?.recent || []).filter(c => c.id > lastId && new Date(c.at).getTime() > tP + 1500);
+const refusedWhileHalted = (page) => page.evaluate(async () => { let l; try { await window.apd.apiStream('model/ask', { prompt: 'hi' }, (x) => { l = x; }); } catch (e) { return 'threw ' + e.message; } return l?.code; });
+async function resumeFromScreen(page) { await page.click('#resume').catch(() => {}); await page.locator('#halt').waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {}); }
 export async function ask3(t) {
-  const mods = await t.desk.modules(); const chatOn = mods.some(m => m.id === 'chat' && m.on);
-  const page = t.page; let useChat = false;
-  if (chatOn && await chatOpen(page)) useChat = true;
-  t.how = useChat ? 'browser: long ask typed into Chat, Panic button clicked' : 'browser: long reply streamed through window.apd.apiStream (chat module not built), Panic button clicked';
-  const long = 'Write a detailed 1500-word essay on the history of the printing press, with many sections. Do not stop early.';
-  const lenNow = useChat
-    ? async () => (await readTheirs(page)).map(m => m.text).join('').length
-    : async () => page.evaluate(() => window.__got.length);
-  let base = 0; const since3 = Date.now();
-  if (useChat) { await chatIdle(page); base = await lenNow(); const input = await firstVisible(page, SEL.chatInput, 5000); await input.fill(long); await input.press('Enter'); }
-  else await page.evaluate((p) => { window.__got = ''; window.__last = null; window.__p = window.apd.apiStream('model/ask', { prompt: p }, (l) => { if (l.delta) window.__got += l.delta; window.__last = l; }).catch(() => {}); }, long);
-  // the Coordinator may hand a long ask to an agent as a background job instead of streaming it: then Panic must stop that job
-  let job3 = null; const t0 = Date.now();
-  while (Date.now() - t0 < 120000 && (await lenNow()) - base < 150) { job3 = (await jobsSince(t, since3)).find(j => j.status === 'running'); if (job3) { await sleep(3000); break; } await sleep(300); }
+  await need(t, ['chat', 'research', 'tasks']);
+  const page = await chatPage(t);
+  t.how = 'browser: research job asked for in Chat, seen running on the Tasks page, Panic button clicked, Resume clicked; job state, jobs and model calls read over HTTP; then a long streaming reply cut with Panic (3s)';
+  t.did = `typed "${ASK3_JOB}", waited until Tasks showed the job running, clicked Panic, watched the job, the jobs list and the model calls, asked again while halted, clicked Resume, watched 15 s`;
+  t.expected = 'the job stops within 3 s of Panic, the desk is halted, no job runs, no model call is made, a new ask is refused with "halted", no job starts while halted, and after Resume the job stays stopped and nothing restarts it';
+  t.repro = 'Chat › ' + ASK3_JOB + ' › Tasks › Panic › Resume';
+  // A: the job variant
+  await chatIdle(page); const since = Date.now();
+  const input = await firstVisible(page, SEL.chatInput, 5000); await input.fill(ASK3_JOB); await input.press('Enter');
+  let job = null; const tw = Date.now();
+  while (Date.now() - tw < 4 * 60000) { const js = (await jobsSince(t, since)).filter(j => j.status === 'running'); job = js.find(j => /research/.test(j.kind)) || js[0] || null; if (job) break; await sleep(1500); }
+  const o = { caught: false };
+  if (!job) o.notCaught = `no job was running within 4 minutes of the ask (jobs started: ${(await jobsSince(t, since)).map(j => `${j.kind} ${j.status}`).join(', ') || 'none'}; transcript: ${await lastTurn(t, page)})`;
+  else {
+    await go(page, '#/tasks', 1200);
+    const shownRunning = () => page.evaluate((title) => [...document.querySelectorAll('#view .tk-group')].filter(g => /^\s*Running/.test(g.querySelector('h3')?.textContent || '')).some(g => [...g.querySelectorAll('.tk-job b')].some(b => b.textContent.trim() === title)), job.title).catch(() => false);
+    let onTasks = false; const ts = Date.now(); while (Date.now() - ts < 20000 && !(onTasks = await shownRunning())) await sleep(500);
+    const now = (await t.desk.call('/api/jobs/' + job.id)).json?.status;
+    if (!onTasks || now !== 'running') o.notCaught = `job "${job.title}" (${job.kind}) was ${now} and ${onTasks ? 'shown' : 'NOT shown'} under Running on Tasks before Panic could be pressed`;
+    else {
+      o.caught = true; t.shot2 = await shot(page, t.shots, 'ask03_tasks_running');
+      const lastId = await t.desk.lastCallId(); const tP = Date.now(); await page.click('#panic');
+      for (let i = 0; i < 12 && o.jobStoppedMs == null; i++) { await sleep(250); const js = (await t.desk.call('/api/jobs/' + job.id)).json; if (js && !['running', 'waiting'].includes(js.status)) { o.jobStoppedMs = Date.now() - tP; o.statusAtStop = js.status; } }
+      o.halted = (await t.desk.call('/api/panic')).json?.halted === true;
+      o.runningAfter = (await t.desk.call('/api/jobs?status=running')).json?.jobs?.length || 0;
+      o.overlay = await page.locator('#halt').isVisible().catch(() => false);
+      o.refused = await refusedWhileHalted(page);
+      await sleep(6000);
+      o.stillShownRunning = await shownRunning();
+      o.newJobsWhileHalted = (await jobsSince(t, tP + 2000)).length;
+      o.callsAfter = (await usageAfter(t, lastId, tP)).length;
+      t.shot = await shot(page, t.shots, 'ask03_halted');
+      const tR = Date.now(); await resumeFromScreen(page); await sleep(15000);
+      o.statusAfterResume = (await t.desk.call('/api/jobs/' + job.id)).json?.status;
+      o.newJobsAfterResume = (await jobsSince(t, tR + 2000)).filter(j => j.kind === job.kind || j.title === job.title).length;
+      o.job = job;
+    }
+  }
+  const v = panicVerdict(o);
+  t.saw = o.caught
+    ? `job "${job.title}" (${job.kind}) shown running on Tasks; after Panic: job ${o.statusAtStop || 'still running'}${o.jobStoppedMs != null ? ' after ' + (o.jobStoppedMs / 1000).toFixed(1) + ' s' : ''}, halted ${o.halted}, running jobs ${o.runningAfter}, overlay ${o.overlay}, new ask -> ${o.refused}, jobs started while halted ${o.newJobsWhileHalted}, model calls after Panic ${o.callsAfter}, Tasks still shows it under Running ${o.stillShownRunning}; 15 s after Resume: job ${o.statusAfterResume}, same work started again ${o.newJobsAfterResume}`
+    : v.why;
+  // B (3s): the streaming variant, when a reply does stream
+  const s3 = await streamPanic(t, page).catch(e => ({ n: '3s', title: STREAM_TITLE, state: 'NOT CHECKED', ok: false, evidence: 'check stopped: ' + String(e.message).split('\n')[0] }));
+  // 3b: after Resume the next ask is answered by itself
+  let b3;
+  try {
+    await chatOpen(page); await chatIdle(page, 3 * 60000);
+    const after = await chatAsk(page, 'Reply with one word: ready', { timeout: 60000 });
+    const aText = String(after.text || '').trim(); const alone = /ready/i.test(aText) && aText.length <= 60 && !/printing press|renewable|energy polic/i.test(aText) && LABEL_RE.test(after.label);
+    b3 = { n: '3b', title: 'After Resume the next ask is answered by itself, not with the stopped work', ok: alone, evidence: `"Reply with one word: ready" after Resume was answered [${after.label}] "${aText.replace(/\s+/g, ' ').slice(0, 120)}"${alone ? '' : aText.length > 60 ? ' (' + aText.length + ' characters: not a one-word answer)' : LABEL_RE.test(after.label) ? '' : ' (no model label)'}`, shot: null };
+  } catch (e) { b3 = { n: '3b', title: 'After Resume the next ask is answered by itself, not with the stopped work', ok: false, evidence: 'check stopped: ' + String(e.message).split('\n')[0] }; }
+  t.extra = [s3, b3];
+  if (v.state === 'NOT CHECKED') nc(v.why);
+  return { ok: v.state === 'PASS', evidence: `job "${job.title}" (${job.kind}) caught running on Tasks; ${v.state === 'PASS' ? `stopped ${(o.jobStoppedMs / 1000).toFixed(1)} s after Panic (${o.statusAtStop}); halted; running jobs 0; model calls after 0; ask while halted: ${o.refused}; jobs started while halted 0; after Resume the job stays ${o.statusAfterResume} and nothing restarted it` : v.why}` };
+}
+const STREAM_TITLE = 'Panic cuts a streaming reply';
+/** 3s: a long reply that does stream is frozen by Panic. NOT CHECKED when the app does something else with the ask. */
+async function streamPanic(t, page) {
+  await chatOpen(page); await chatIdle(page, 3 * 60000);
+  const lenNow = async () => (await readTheirs(page)).map(m => m.text).join('').length;
+  const base = await lenNow(); const since = Date.now();
+  const input = await firstVisible(page, SEL.chatInput, 5000); await input.fill(ASK3_STREAM); await input.press('Enter');
+  // streaming: the reply has grown at least three separate times, the last within the past 1.5 s, and holds 150+ new
+  // characters (a reply that lands in one piece, or a file card, is not a stream to cut)
+  const t0 = Date.now(); let streaming = false, prev = base, grew = 0, lastGrow = 0;
+  while (Date.now() - t0 < 120000) {
+    const l = await lenNow(); if (l > prev) { grew++; lastGrow = Date.now(); prev = l; }
+    if (l - base >= 150 && grew >= 3 && Date.now() - lastGrow < 1500) { streaming = true; break; }
+    if (Date.now() - t0 > 15000 && !(await chatBusy(page)) && Date.now() - lastGrow > 5000) break;
+    await sleep(300);
+  }
   const pre = (await lenNow()) - base;
-  if (pre < 150 && !job3) return { ok: false, evidence: `the long reply never started streaming (${pre} chars in 90 s)`, ...(t.did = 'started a long reply', t.saw = `${pre} chars`, t.expected = 'a streaming reply to cut', {}) };
-  const lastId = await t.desk.lastCallId();
-  const tP = Date.now(); await page.click('#panic');
-  // stream stopped growing within 3 s? (and the job, if one was running, is stopped within 3 s)
-  let lens = [], jobStoppedMs = null; for (let i = 0; i < 12; i++) { await sleep(250); lens.push(await lenNow()); if (job3 && jobStoppedMs == null) { const js = (await t.desk.call('/api/jobs/' + job3.id)).json; if (js && js.status !== 'running') jobStoppedMs = Date.now() - tP; } }
+  if (!streaming) {
+    await chatIdle(page, 5 * 60000);
+    const js = (await jobsSince(t, since)).map(j => `${j.kind} ${j.status}`);
+    return { n: '3s', title: STREAM_TITLE, state: 'NOT CHECKED', ok: false, evidence: `no reply was streaming to cut (${pre} new characters, chat ${(await chatBusy(page)) ? 'busy' : 'idle'}); the app did this with the ask instead: jobs ${js.join(', ') || 'none'}; ${await lastTurn(t, page)}`.slice(0, 600) };
+  }
+  const lastId = await t.desk.lastCallId(); const tP = Date.now(); await page.click('#panic');
+  const lens = []; for (let i = 0; i < 12; i++) { await sleep(250); lens.push(await lenNow()); }
   const at3 = lens.at(-1), stopAt = lens.findIndex((l, i) => lens.slice(i).every(x => x === l));
   const halted = (await t.desk.call('/api/panic')).json?.halted === true;
   const running = (await t.desk.call('/api/jobs?status=running')).json?.jobs?.length || 0;
+  const overlay = await page.locator('#halt').isVisible().catch(() => false);
+  const refused = await refusedWhileHalted(page);
   await sleep(4000); const at7 = await lenNow();
-  const recent = ((await t.desk.call('/api/model/usage')).json?.recent || []).filter(c => c.id > lastId && new Date(c.at).getTime() > tP + 1500);
-  const overlay = await page.locator('#halt').isVisible();
-  t.shot = await shot(page, t.shots, 'ask03_halted');
-  const refused = await page.evaluate(async () => { let l; try { await window.apd.apiStream('model/ask', { prompt: 'hi' }, (x) => { l = x; }); } catch (e) { return 'threw ' + e.message; } return l?.code; });
-  await page.click('#resume'); await sleep(500);
-  let after;
-  if (useChat) { await page.locator('#halt').waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {}); after = await chatAsk(page, 'Reply with one word: ready', { timeout: 60000 }); }
-  else after = await page.evaluate(async () => { let l; await window.apd.apiStream('model/ask', { prompt: 'Reply with one word: ready' }, (x) => { l = x; }); return { text: l?.text || '', label: l?.label || '' }; });
-  const aText = String(after.text || '').trim(); const alone = /ready/i.test(aText) && aText.length <= 60 && !/printing press/i.test(aText);
-  t.extra = [{ n: '3b', title: 'After Resume the next ask is answered by itself, not with the stopped reply', ok: alone, evidence: `"Reply with one word: ready" after Resume was answered [${after.label}] "${aText.replace(/\s+/g, ' ').slice(0, 120)}"${alone ? '' : aText.length > 60 ? ' (' + aText.length + ' characters: not a one-word answer)' : ''}`, shot: null }];
-  const stoppedFast = stopAt >= 0 && stopAt <= 11 && at7 === at3 && (!job3 || (jobStoppedMs != null && jobStoppedMs <= 3000));
-  const jobLine = job3 ? `; job "${job3.title}" (${job3.kind}) ${jobStoppedMs != null ? 'stopped ' + (jobStoppedMs / 1000).toFixed(1) + ' s after Panic' : 'NOT stopped within 3 s'}` : '';
-  t.did = `${useChat ? 'typed' : 'streamed'} "${long.slice(0, 60)}…", clicked Panic after ${pre} chars, watched 7 s, asked again, clicked Resume, asked "Reply with one word: ready"`;
-  t.saw = `length after Panic: ${lens.join(',')} then ${at7}; halted=${halted}; running jobs=${running}; new model calls after Panic=${recent.length}; overlay=${overlay}; new ask while halted -> ${refused}; after Resume: [${after.label}] ${String(after.text).slice(0, 40)}`;
-  t.expected = 'stream frozen within 3 s, halted, no running jobs, no new calls, new asks refused with "halted", a named answer after Resume';
-  t.repro = 'start a long reply, POST /api/panic, GET /api/model/usage, POST /api/model/ask {prompt:"hi"} -> code halted';
-  const ok = stoppedFast && halted && running === 0 && recent.length === 0 && overlay && refused === 'halted' && String(after.text).trim().length > 0 && LABEL_RE.test(after.label);
-  return { ok, evidence: `${job3 ? 'long ask became a job' + jobLine + '; chat stream ' : ''}cut at ${pre} chars, frozen ${stoppedFast ? 'within ' + ((stopAt + 1) * 0.25).toFixed(2) + 's' : 'NO (' + lens.join(',') + ')'}; halted ${halted}; running jobs ${running}; calls after ${recent.length}; ask while halted: ${refused}; after Resume: [${after.label}] ${String(after.text).trim().slice(0, 20)}` };
+  const calls = (await usageAfter(t, lastId, tP)).length;
+  const sp = await shot(page, t.shots, 'ask03s_stream_halted');
+  await resumeFromScreen(page);
+  const frozen = stopAt >= 0 && at7 === at3;
+  const ok = frozen && halted && running === 0 && calls === 0 && overlay && refused === 'halted';
+  return { n: '3s', title: STREAM_TITLE, state: ok ? 'PASS' : 'FAIL', ok, shot: sp, evidence: `cut at ${pre} chars; frozen ${frozen ? 'within ' + ((stopAt + 1) * 0.25).toFixed(2) + ' s' : 'NO (' + lens.join(',') + ' then ' + at7 + ')'}; halted ${halted}; running jobs ${running}; model calls after Panic ${calls}; overlay ${overlay}; ask while halted: ${refused}` };
 }
 
 // ---------------------------------------------------------------- 4
@@ -168,15 +243,19 @@ export async function ask4(t) {
     const anchors = [...figures.map(f => page.text.indexOf(f.replace(/,$/, ''))), ...words.map(w => page.text.toLowerCase().indexOf(w))].filter(i => i >= 0);
     const at = anchors.length ? anchors.sort((a, b) => a - b)[Math.floor(anchors.length / 2)] : 0;
     const win = page.text.slice(Math.max(0, at - 5000), at + 5000);
-    const j = await t.desk.ask(`You check citations. Claim: "${c.claim}"\nThe cited page is ${url} (a claim that says "<site name> reports…" is about this page's own site).\nPart of that page:\n<<<${win}>>>\nDoes this page text state the claim's fact? Answer YES or NO first, then one short reason.`);
-    verdicts.push({ n: c.n, url, claim: c.claim, status: page.status, len: page.text.length, yes: /^\s*\**yes/i.test(j.text || ''), figOk, why: String(j.text || j.error).slice(0, 200) });
+    const j = await askJudge(t.desk, `You check citations. Claim: "${c.claim}"\nThe cited page is ${url} (a claim that says "<site name> reports…" is about this page's own site).\nPart of that page:\n<<<${win}>>>\nDoes this page text state the claim's fact?`);
+    verdicts.push({ n: c.n, url, claim: c.claim, status: page.status, len: page.text.length, yes: j.verdict === 'YES', unclear: j.verdict === null, figOk, why: j.text.slice(0, 200) });
   }
   const supported = verdicts.filter(v => v.yes && v.figOk).length;
   t.did = `typed "${q}"; waited for job ${done?.status}; read ${files.length} new files; fetched ${fetched.length} sources; judged ${verdicts.length} claims`;
   t.saw = `job ${done?.status}; pdf ${pdfOk}, docx ${docxOk}, md ${mdOk}; distinct sources ${sources.length}, opened ${opened.length}; claims supported ${supported}/${verdicts.length}: ${verdicts.filter(v => !(v.yes && v.figOk)).map(v => `[${v.n}] claim "${v.claim}" cites ${v.url} (page ${v.status}, ${v.len} chars; figures on page ${v.figOk}; judge: ${v.why.replace(/\s+/g, ' ')})`).join(' | ')}`;
   t.expected = '≥10 distinct sources that return 200 with readable text, ≥5 sampled claims supported by their cited page, PDF, Word and Markdown files that open';
   t.repro = 'Chat › ' + q;
-  const ok = done?.status === 'done' && sources.length >= 10 && opened.length >= 10 && verdicts.length >= 5 && supported === verdicts.length && pdfOk && docxOk && mdOk;
+  const okWith = (n) => done?.status === 'done' && sources.length >= 10 && opened.length >= 10 && verdicts.length >= 5 && n === verdicts.length && pdfOk && docxOk && mdOk;
+  const ok = okWith(supported);
+  // a judge that could not be read twice decides nothing: NOT CHECKED only when it is the one thing between this run and a PASS
+  const unclear = verdicts.filter(v => v.unclear);
+  if (!ok && unclear.length && okWith(supported + unclear.filter(v => v.figOk).length)) nc(`judge unclear on ${unclear.length} claim(s) (${unclear.map(v => '[' + v.n + '] ' + v.why).join(' | ')}); everything else holds: job ${done?.status}, ${sources.length} sources, ${opened.length} open, ${supported}/${verdicts.length} claims supported`);
   return { ok, evidence: `job ${done?.status}; ${sources.length} sources, ${opened.length} open; claims ${supported}/${verdicts.length} supported; pdf ${pdfOk ? 'ok' : 'NO'}, docx ${docxOk ? 'ok' : 'NO'}, md ${mdOk ? 'ok' : 'NO'}` };
 }
 
@@ -230,9 +309,9 @@ export async function ask5(t) {
       if (ov < 0.8) { const b3 = await browserText(t.browser, cellUrl); if (b3.text.length > 300) ov = Math.max(ov, overlap(b3.text)); }
       const onPage = ov < 0 ? null : ov >= 0.8;
       const hasFig = quote.replace(/,/g, '').includes(fig.replace(/,/g, ''));
-      const j = await t.desk.ask(`A table says: the "${c.col}" of the "${c.product}" is "${c.v}".\nIts proof is this passage from ${cellUrl}:\n<<<${quote.slice(0, 1500)}>>>\nAnswer YES only if the passage itself states this value as that attribute (the same measurement and unit, not another measurement that happens to share the number; a later sale or discounted price is not a launch price), and it is clear from the passage, or from the page being about this one product only, that it refers to the ${c.product} and not another model (Plus, Pro, Ultra, XL, another year). Otherwise answer NO. Answer YES or NO first, then one short reason.`);
-      const yes = /^\s*\**yes/i.test(j.text || '');
-      spots.push({ c, ok: yes && hasFig, why: !hasFig ? `the passage does not hold the figure ${fig}` : String(j.text || j.error).replace(/\s+/g, ' ').slice(0, 140), url: cellUrl, passage: quote.replace(/\s+/g, ' ').slice(0, 160), onPage: onPage === null ? 'page not readable by me' : onPage ? 'passage found on the page' : `only ${Math.round(ov * 100)}% of the passage's words found on the page by my fetch` });
+      const j = await askJudge(t.desk, `A table says: the "${c.col}" of the "${c.product}" is "${c.v}".\nIts proof is this passage from ${cellUrl}:\n<<<${quote.slice(0, 1500)}>>>\nAnswer YES only if the passage itself states this value as that attribute (the same measurement and unit, not another measurement that happens to share the number; a later sale or discounted price is not a launch price), and it is clear from the passage, or from the page being about this one product only, that it refers to the ${c.product} and not another model (Plus, Pro, Ultra, XL, another year). Otherwise answer NO.`);
+      const yes = j.verdict === 'YES';
+      spots.push({ c, ok: yes && hasFig, unclear: hasFig && j.verdict === null, why: !hasFig ? `the passage does not hold the figure ${fig}` : j.text.replace(/\s+/g, ' ').slice(0, 140), url: cellUrl, passage: quote.replace(/\s+/g, ' ').slice(0, 160), onPage: onPage === null ? 'page not readable by me' : onPage ? 'passage found on the page' : `only ${Math.round(ov * 100)}% of the passage's words found on the page by my fetch` });
       continue;
     }
     if (cellUrl) {
@@ -242,24 +321,29 @@ export async function ask5(t) {
       let near = -1; for (const n of names) { let i = low.indexOf(n); while (i >= 0 && near < 0) { const w = pg.text.slice(Math.max(0, i - 300), i + n.length + 300); if (w.includes(fig)) near = i; i = low.indexOf(n, i + 1); } if (near >= 0) break; }
       if (near < 0) { spots.push({ c, ok: false, why: `value ${fig} is not within 300 characters of "${c.product}" on its own page ${cellUrl}`, url: cellUrl }); continue; }
       const passage = pg.text.slice(Math.max(0, near - 600), near + 600);
-      const j = await t.desk.ask(`Passage from ${cellUrl}:\n<<<${passage}>>>\nDoes this passage support that the ${c.col} of the ${c.product} is "${c.v}"? Be strict: a later sale or discounted price is not a launch price, and another model is not this model. Answer YES or NO first, then one short reason.`);
-      spots.push({ c, ok: /^\s*\**yes/i.test(j.text || ''), why: String(j.text || j.error).slice(0, 120), url: cellUrl, passage: (vc.quote || vc.passage) ? String(vc.quote || vc.passage).slice(0, 120) : null });
+      const j = await askJudge(t.desk, `Passage from ${cellUrl}:\n<<<${passage}>>>\nDoes this passage support that the ${c.col} of the ${c.product} is "${c.v}"? Be strict: a later sale or discounted price is not a launch price, and another model is not this model.`);
+      spots.push({ c, ok: j.verdict === 'YES', unclear: j.verdict === null, why: j.text.slice(0, 120), url: cellUrl, passage: (vc.quote || vc.passage) ? String(vc.quote || vc.passage).slice(0, 120) : null });
       continue;
     }
     const key = String(c.product).split(/\s+/).filter(w => w.length > 1).slice(-2).join(' ').toLowerCase();
     const hit = pages.find(pg => pg.text.includes(fig) && pg.text.toLowerCase().includes(key));
     // a page that refused me is not evidence against the cell: judge only cells whose figure is on a page I could read
     if (!hit) { unreadable.push(`${c.product} ${c.col} "${c.v}"`); continue; }
-    let ok = false, why = '';
-    if (hit) { const i = hit.text.indexOf(fig); const j = await t.desk.ask(`Page text:\n<<<${hit.text.slice(Math.max(0, i - 2500), i + 2500)}>>>\nDoes this page support that the ${c.col} of the ${c.product} is "${c.v}"? Be strict: a later sale or discounted price is not a launch price. Answer YES or NO first, then one short reason.`); ok = /^\s*\**yes/i.test(j.text || ''); why = String(j.text || j.error).slice(0, 90); }
-    spots.push({ c, ok, why, url: hit?.u });
+    let ok = false, why = '', unclear = false;
+    if (hit) { const i = hit.text.indexOf(fig); const j = await askJudge(t.desk, `Page text:\n<<<${hit.text.slice(Math.max(0, i - 2500), i + 2500)}>>>\nDoes this page support that the ${c.col} of the ${c.product} is "${c.v}"? Be strict: a later sale or discounted price is not a launch price.`); ok = j.verdict === 'YES'; unclear = j.verdict === null; why = j.text.slice(0, 90); }
+    spots.push({ c, ok, unclear, why, url: hit?.u });
   }
-  const spotOk = spots.length >= Math.min(3, numeric.length - unreadable.length) && (spots.length > 0 || numeric.length === 0) && spots.every(x => x.ok);
+  const spotOkWith = (good) => spots.length >= Math.min(3, numeric.length - unreadable.length) && (spots.length > 0 || numeric.length === 0) && spots.every(good);
+  const spotOk = spotOkWith(x => x.ok);
   const cellLine = `${confirmed.length} of ${cells.length} cells confirmed, ${notChecked.length} not checked`;
   const spotLine = spots.map(x => `${x.c.product} ${x.c.col} "${x.c.v}": ${x.ok ? 'supported' : 'NOT SUPPORTED (' + x.why + ')'}${x.passage ? ' by the shown passage "' + x.passage + '"' : ''} on ${x.url}${x.onPage ? ' (' + x.onPage + ')' : ''}`).join('; ');
   t.saw = (card ? '' : `transcript: ${await lastTurn(t, page)}; `) + `${path.relative(t.desk.workspace, f.path)}: header [${head.join(', ')}], ${data.length} rows, products ${named.join('/')}, empty cells ${empty.length}; ${cellLine}; the app's own check: ${JSON.stringify({ confirmed: ver.confirmed, notChecked: ver.notChecked, cells: ver.cells })}; cited pages read ${pages.length}/${srcs.length} (${fetchNote.join(', ')}); confirmed cells whose figure was on no page I could read (not judged): ${unreadable.join(', ') || 'none'}; spot checks: ${spotLine || 'none possible'}; file card in chat ${card}`;
   // "not checked" cells are honest and pass; every cell filled, 3 rows, 4 attributes, every confirmed cell I can read supported
-  const ok = attrs.length === 4 && data.length === 3 && named.length === 3 && empty.length === 0 && spotOk && card;
+  const okWith = (sp) => attrs.length === 4 && data.length === 3 && named.length === 3 && empty.length === 0 && sp && card;
+  const ok = okWith(spotOk);
+  // a judge that could not be read twice decides nothing: NOT CHECKED only when it is the one thing between this run and a PASS
+  const unclearSpots = spots.filter(x => x.unclear);
+  if (!ok && unclearSpots.length && okWith(spotOkWith(x => x.ok || x.unclear))) nc(`judge unclear on ${unclearSpots.length} cell(s) (${unclearSpots.map(x => `${x.c.product} ${x.c.col} "${x.c.v}": ${x.why}`).join(' | ')}); everything else holds: ${cellLine}, file card shown`);
   return { ok, evidence: `${path.relative(t.desk.workspace, f.path)}: header ${attrs.length}/4 attributes, ${data.length} rows (${named.join(',')}), ${empty.length} empty; ${cellLine}${notChecked.length * 2 > cells.length ? ' (more than half not checked: honest, allowed by the G5 rule)' : ''}; shown passages that state their value ${spots.filter(x => x.ok).length}/${spots.length}${spots.some(x => !x.ok) ? ' [' + spots.filter(x => !x.ok).map(x => `${x.c.product} ${x.c.col} "${x.c.v}": passage "${(x.passage || '').slice(0, 80)}"`).join('; ') + ']' : ''}${unreadable.length ? ` (${unreadable.length} confirmed cell(s) not judged: their pages refused me)` : ''}${spots.some(x => !x.ok) ? ' (' + spots.filter(x => !x.ok).map(x => `${x.c.product} ${x.c.col} "${x.c.v}"`).join(', ') + ')' : ''}; file card ${card ? 'shown' : 'MISSING'}` };
 }
 
@@ -289,11 +373,24 @@ export async function ask6(t) {
   const shown = /bicycle/i.test(text) && (snippet ? norm(text).includes(norm(snippet)) : /done|finished/i.test(text));
   // no file may be named that does not exist (in the chat's text for this job or in the job's output)
   const lastMsgs = (await readTheirs(p2)).slice(-3).map(m => m.text).join(' ');
-  const named = [...new Set([...(lastMsgs + ' ' + raw).matchAll(/[\w./-]*?([\w-]+\.(docx|pdf|xlsx|csv|md|txt|pptx))\b/gi)].map(m => m[1]))];
-  const ws = walk(t.desk.workspace).map(f => path.basename(f.path).toLowerCase());
-  const ghost = named.filter(n => !ws.includes(n.toLowerCase()));
+  const named = namedFiles(lastMsgs + ' ' + raw);
+  const ghost = missingFiles(named, walk(t.desk.workspace).map(f => f.path));
   t.saw = `job ${job.id} (${job.kind}) ${done?.status}; chat on return ${shown ? 'shows' : 'does NOT show'} the result (looked for "${snippet.slice(0, 40)}"); files named: ${named.join(', ') || 'none'}; named but missing: ${ghost.join(', ') || 'none'}`;
   return { ok: done?.status === 'done' && shown && ghost.length === 0, evidence: `job ${job.kind} ${done?.status}; result in chat after reopening: ${shown ? 'yes' : 'no'}; files named that do not exist: ${ghost.length ? ghost.join(', ') : 'none'}` };
+}
+
+/** File names a text names, read whole: "reports/history_of_the_bicycle.brief.md" stays that, never "brief.md". A folder
+ *  part is kept when one is written. Web addresses are not file names; escaped line breaks from JSON are spaces. */
+export function namedFiles(text) {
+  const s = String(text || '').replace(/\\[nrt]/g, ' ').replace(/https?:\/\/\S+/gi, ' ');
+  const re = /(?:[\w.-]+[\/\\])*[\w-][\w.-]*\.(?:docx|pdf|xlsx|csv|md|txt|pptx)\b/gi;
+  return [...new Set([...s.matchAll(re)].map(m => m[0].replace(/\\/g, '/').replace(/^(\.\.?\/)+/, '')))];
+}
+/** The names in `named` that match no real file: a bare name must be some file's own name, a name with folders must be
+ *  the end of some file's path (whole folder names only). */
+export function missingFiles(named, paths) {
+  const real = paths.map(p => String(p).replace(/\\/g, '/').toLowerCase());
+  return named.filter(n => { const k = n.toLowerCase(); return !real.some(p => p === k || p.endsWith('/' + k)); });
 }
 
 // ---------------------------------------------------------------- 7
@@ -311,7 +408,9 @@ export async function ask7(t) {
   const s1 = (await list()).find(s => s.at && new Date(s.at).getTime() > tAsk - 5000);
   const dueAt = s1 ? new Date(s1.at).getTime() : tAsk + 60000;
   // the brief is the assistant message labelled "Scheduled: …" (else any new message after the acknowledgement); wait up to 5 min after due
-  const isBrief = (x) => x.text.length > 60 && !x.typing && (/Scheduled:/i.test(x.who) || /Scheduled:/i.test(x.label));
+  // the label may sit in the message's header or as its first line ("Scheduled: Brief")
+  const labelled = (x) => /Scheduled:/i.test(x.who) || /Scheduled:/i.test(x.label) || /^\s*Scheduled:/i.test(x.text);
+  const isBrief = (x) => x.text.length > 60 && !x.typing && labelled(x);
   const ackCount = r2.msgs.length;
   let firedAt = 0, brief = null; while (Date.now() < dueAt + 5 * 60000 + 15000) { const m = (await readTheirs(page)).slice(beforeAsk); brief = m.find(isBrief) || (s1 ? m.slice(ackCount).find(x => x.text.length > 60 && !x.typing && !x.cards.length) : null); if (brief) { firedAt = Date.now(); break; } await sleep(3000); }
   await chatIdle(page, 3 * 60000);
@@ -326,7 +425,7 @@ export async function ask7(t) {
   t.expected = `a schedule whose next run is 08:00 ${tz}; a one-time schedule one minute ahead that starts within 75 s of due and whose brief, labelled "Scheduled: …", is in this chat within 5 minutes; one owner bubble only`;
   t.repro = 'Chat › "In one minute, brief me." › GET /api/m/flows/schedules › wait';
   const ok = hhmm === '08:00' && !!s1 && firedAt > 0 && delay <= 300 && delay >= -5 && (firedDelay == null || (firedDelay <= 75 && firedDelay >= -5)) && ownerBubbles === 1;
-  return { ok, evidence: `8 AM schedule: ${hhmm ? 'next ' + hhmm + ' ' + tz : 'NOT FOUND'}; one-minute schedule ${s1 ? 'made' : 'NOT made'}${fj ? ', started ' + firedDelay + ' s after due' : ''}; brief ${firedAt ? `in chat ${delay} s after due${/Scheduled:/i.test(brief.who + brief.label) ? ', labelled Scheduled' : ', NOT labelled Scheduled'}` : 'NEVER appeared'}; owner bubbles for this ask ${ownerBubbles}${ownerBubbles === 1 ? '' : ' (' + mineTexts.join(' | ') + ')'}` };
+  return { ok, evidence: `8 AM schedule: ${hhmm ? 'next ' + hhmm + ' ' + tz : 'NOT FOUND'}; one-minute schedule ${s1 ? 'made' : 'NOT made'}${fj ? ', started ' + firedDelay + ' s after due' : ''}; brief ${firedAt ? `in chat ${delay} s after due${labelled(brief) ? ', labelled Scheduled' : ', NOT labelled Scheduled'}` : 'NEVER appeared'}; owner bubbles for this ask ${ownerBubbles}${ownerBubbles === 1 ? '' : ' (' + mineTexts.join(' | ') + ')'}` };
 }
 
 // ---------------------------------------------------------------- 8
@@ -512,18 +611,29 @@ export async function ask11(t) {
   if (!okName || !okTone) { t.shot = await shot(page, t.shots, 'ask11_form'); hookMissing(t, `the Profile rows Name (Rename) and Personality (Edit) with their dialog (name ${okName}, personality ${okTone})`); }
   const saved = (await t.desk.call('/api/agents/' + id)).json;
   if (!(await chatWithAgent(page, id, newName))) hookMissing(t, `the chat-rail entry for ${newName} ([data-agent-id="${id}"])`);
-  const r = await chatAsk(page, 'Tell me in two lines what you do.', { timeout: 90000 });
+  const tAsk = Date.now(); const r = await chatAsk(page, 'Tell me in two lines what you do.', { timeout: 90000 });
   t.shot = await shot(page, t.shots, 'ask11_reply');
-  const signed = new RegExp(newName, 'i').test(r.text);
-  const body = r.text.replace(new RegExp('[—-]+\\s*' + newName + '\\W*$', 'i'), '').trim();
-  const j = await t.desk.ask(`Text (the signature is removed):\n<<<${body.slice(0, 1500)}>>>\nA rhyming couplet is two lines whose last words rhyme. Split the text into lines (a line ends at a line break, a full stop, or a comma followed by a capital letter). List the last word of each line. Answer YES only if there are at least two lines and they rhyme in consecutive pairs (near rhymes such as seek/peak count); one line, or lines that do not rhyme, is NO. End with one line that is exactly YES or NO.`);
-  // a couplet may be written on one line: "…need to know, And rhyme as the answers begin to flow." (a comma then a capital starts a line)
-  const lines = body.split(/\n+|(?<=[.!?])\s+|,\s+(?=[A-Z])/).map(x => x.trim()).filter(x => /[a-z]{2,}/i.test(x));
-  const rhymes = lines.length >= 2 && /\bYES\W*$/i.test(String(j.text || '').trim());
+  // the reply as stored, with its line breaks: the screen's text joins two lines with no space ("…I collect,In rhyming…")
+  const m = await lastAssistant(t, page);
+  const reply = m?.text && new Date(m.at || 0).getTime() >= tAsk - 2000 ? String(m.text) : r.text;
+  const signed = new RegExp(newName, 'i').test(reply);
+  const body = reply.replace(new RegExp('[—-]+\\s*' + newName + '\\W*$', 'i'), '').trim();
+  const j = await askJudge(t.desk, `Text (the signature is removed):\n<<<${body.slice(0, 1500)}>>>\nA rhyming couplet is two lines whose last words rhyme. Split the text into lines (a line ends at a line break, a full stop, or a comma followed by a capital letter). List the last word of each line. Is the text at least two lines that rhyme in consecutive pairs (near rhymes such as seek/peak count)? One line, or lines that do not rhyme, is NO.`);
+  const lines = coupletLines(body);
+  const rhymes = lines.length >= 2 && j.verdict === 'YES';
+  // a judge that could not be read twice decides nothing: NOT CHECKED only when it is the one thing between this run and a PASS
+  if (j.verdict === null && saved?.name === newName && signed && lines.length >= 2) nc(`saved and signed; ${lines.length} lines; ${j.text}; reply "${reply.replace(/\s+/g, ' ').slice(0, 120)}"`);
   t.did = `Agents › Scout: name "${newName}", tone "rhyming couplets, signs as — ${newName}", saved; opened its chat; typed "Tell me in two lines what you do."`;
-  t.saw = `saved name "${saved?.name}", personality "${String(saved?.personality).slice(0, 60)}"; reply "${r.text.slice(0, 160)}"; couplets: ${String(j.text).slice(0, 40)}`;
+  t.saw = `saved name "${saved?.name}", personality "${String(saved?.personality).slice(0, 60)}"; reply "${reply.slice(0, 160)}"; lines read ${lines.length}; judge: ${j.text.replace(/\s+/g, ' ').slice(0, 120)} (verdict ${j.verdict || 'unclear'})`;
   t.expected = `the next reply is in rhyming couplets and signed "${newName}"`; t.repro = `Agents › Scout › rename to ${newName}, tone couplets › Chat with ${newName} › ask`;
-  return { ok: saved?.name === newName && signed && rhymes, evidence: `saved ${saved?.name === newName}; reply signed ${signed}; couplets ${rhymes}; "${r.text.slice(0, 70)}"` };
+  return { ok: saved?.name === newName && signed && rhymes, evidence: `saved ${saved?.name === newName}; reply signed ${signed}; couplets ${rhymes} (${lines.length} lines, judge ${j.verdict || 'unclear'}); "${reply.replace(/\s+/g, ' ').slice(0, 70)}"` };
+}
+
+/** The lines of a short reply, for the couplet check. A line ends at a line break, a full stop (! ?), or a comma followed by
+ *  a capital: a couplet may be written on one line ("…need to know, And rhyme…") or read off the screen with its
+ *  line break lost ("…I collect,In rhyming…"). Lines without a word are dropped. */
+export function coupletLines(text) {
+  return String(text || '').split(/\n+|(?<=[.!?])\s+|,\s*(?=[A-Z])/).map(x => x.trim()).filter(x => /[a-z]{2,}/i.test(x));
 }
 
 // ---------------------------------------------------------------- 12
@@ -953,6 +1063,28 @@ async function offlineCheck(t) {
 }
 
 // ---------------------------------------------------------------- O4: Council (its own line, run before ask 17)
+// lower case only (and "The", "An"): a course such as "Option A" or "Plan B" is a whole ending
+const DANGLING = /(?:^|[^\p{L}])(?:and|or|but|nor|the|The|a|an|An|is|are|was|were|be|to|of|for|with|that|than|because|in|on|at|by|from|as|which|who|if|so|into|about)$/u;
+/** Why a seat's answer looks cut off, or '' when its ending is complete. By design a seat ends with a line such as
+ *  "Recommendation: Build the in-house CRM" with no full stop: that line is a complete ending when it names a course
+ *  that does not itself stop on a dangling word, comma, colon, dash or open bracket (or leave a bracket open), and
+ *  the text before it does not stop on a dangling word, comma, dash or open bracket.
+ *  Without that line the answer must end a sentence (. ! ? or a closing bracket or quote). */
+export function cutOffEnding(ans) {
+  const s = String(ans || '').replace(/\s*Cut short\.?\s*$/i, '').replace(/[*_`]+/g, '').trim();
+  if (!s) return '';
+  const dangling = (x) => { const y = x.trim(); return !y || /[,;(\[{\-\u2013\u2014]$/.test(y) || DANGLING.test(y); };
+  const m = s.match(/(^|\n|[.!?)\]"\u201d\u2019]\s*)(?:my\s+|final\s+)?recommendation\s*[:\-\u2013\u2014]\s*([^\n]*)$/i);
+  if (m) {
+    const phrase = m[2].replace(/["\u201c\u201d]/g, '').trim();
+    const p = phrase.replace(/[.!?]+$/, '');
+    if (dangling(p) || /:$/.test(p) || (p.match(/[([{]/g) || []).length > (p.match(/[)\]}]/g) || []).length) return 'the Recommendation line is cut off';
+    const before = s.slice(0, m.index + m[1].length).trim();
+    if (before && dangling(before)) return 'the text before the Recommendation line is cut off';
+    return '';
+  }
+  return /[.!?)"'\u201d\u2019\]]$/.test(s) ? '' : 'ends mid-sentence';
+}
 export async function askO4(t) {
   await need(t, ['council']);
   const { page } = t; t.how = 'browser: Council page, one question';
@@ -974,7 +1106,7 @@ export async function askO4(t) {
   t.did = `Council › typed "${q}" › Run the debate`; t.repro = 'Council › ask the question › Run the debate';
   t.expected = 'each of the three seats names the model that wrote it, the Verdict names its model, and the "Figures here come from the models… not checked" line shows when the answers hold numbers';
   t.saw = `ended ${ended}; seats: ${seatLine.map(s => `${s.name}: "${s.label}"${s.answered ? '' : ' (no answer)'}`).join('; ')}; Verdict ${info.hasVerdict ? 'written by "' + by + '"' : 'NOT shown: ' + info.verdict.replace(/\s+/g, ' ').slice(0, 160)}; answers hold numbers ${numbers}; figures line: ${figLine ? '"' + figLine.slice(0, 140) + '"' : 'not shown'}`;
-  const half = info.seats.filter(s => s.ans && !/[.!?)"'”’\]]\s*$/.test(s.ans.replace(/\s*Cut short\.?\s*$/i, ''))).map(s => `${s.name}: "…${s.ans.slice(-60)}"`);
+  const half = info.seats.filter(s => s.ans && cutOffEnding(s.ans)).map(s => `${s.name} (${cutOffEnding(s.ans)}): "…${s.ans.slice(-60)}"`);
   const cutMarks = info.seats.filter(s => /Cut short/i.test(s.all + ' ' + s.ans)).map(s => s.name).concat(/Cut short/i.test(info.page) ? [] : []);
   t.saw += `; seat answers ending mid-sentence: ${half.join(' | ') || 'none'}; seats marked "Cut short": ${/Cut short/i.test(info.page) ? 'yes' : 'none'}`;
   const ok = info.hasVerdict && seatLine.length === 3 && seatLine.every(s => s.named && s.answered) && LABEL_RE.test(by) && (!numbers || !!figLine) && half.length === 0;

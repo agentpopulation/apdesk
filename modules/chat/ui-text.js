@@ -179,3 +179,8 @@ export function uniqueOutputs(messages) {
   }
   return out;
 }
+/** Does the reply hold a Markdown table (a row with a pipe, then the line under the header)? True while it streams too, once
+ *  that line has started, so the bubble widens before the rows come in. */
+export function hasTable(t) { return /(?:^|\n)[^\n]*\|[^\n]*\n[ \t]*\|?[ \t]*:?-{2,}/.test(String(t || '')); }
+/** A short table cell ("Day 1", "Amber Fort", a price): kept on one line. */
+export function shortCell(t) { const s = String(t || '').trim(); return s.length > 0 && s.length <= 14 && s.split(/\s+/).length <= 3 && !/https?:\/\//.test(s); }

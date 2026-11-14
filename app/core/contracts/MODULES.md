@@ -59,7 +59,7 @@ export async function activate(ctx) {
 | `ctx.model` | the model door, see MODEL-DOOR.md |
 | `ctx.approval` | the approval door, see APPROVAL-DOOR.md |
 | `ctx.panic` | `ctx.panic.signal` (aborted on Panic), `ctx.panic.onStop(fn)` to kill child processes and browsers, `ctx.panic.halted` |
-| `ctx.jobs` | background jobs that outlive the browser: `ctx.jobs.start({ kind, title, agentId, chatId, input, run })`, `ctx.jobs.list()`, `ctx.jobs.get(id)`. See below. |
+| `ctx.jobs` | background jobs that outlive the browser: `ctx.jobs.start({ kind, title, agentId, chatId, input, run, quiet })`, `ctx.jobs.list()`, `ctx.jobs.get(id)`. See below. `quiet: true` marks a job the desk starts for its own upkeep (the nightly memory tidy): no finish notice, no menu count, not on Home or in the brief, listed under Housekeeping in Tasks; a quiet job that fails is still shown. A quiet job's `input` must be an object. Never mark work the owner asked for as quiet. |
 | `ctx.events.emit(type, data)` | pushes to every open browser over SSE (`/api/events`). Types the shell knows: `job`, `approval`, `chat`, `panic`, `modules`, `toast`. |
 | `ctx.agents` | `list()`, `get(id)`, `update(id, patch)`: the roster (name, role, personality, instructions, model main and fallback, tools) |
 | `ctx.settings.get(key)` | read-only view of app settings (theme, role, online, level, limits). Writing goes through the shell's Settings routes only. |

@@ -159,6 +159,89 @@ export function aboutSameBusiness(page, fieldWords) {
 }
 /** Kept for callers that pass plain text: the same rule on text alone. */
 export function sameBusiness(pageText, topics) { return aboutSameBusiness({ title: '', text: pageText }, topics).ok; }
+
+// ---- what a company sells. When the ask names a kind of product (software), a lead fits only when a page that was read says
+// that this company sells it: a field word of the ask next to a word of that kind ("payroll software", "HR platform", "HRMS"),
+// in words about the company itself. The company's own name never counts ("Ciel HR" says nothing about software), a list's
+// heading never counts for the names under it, and a company whose own words name another kind of business (staffing,
+// recruitment, consulting, IT services) is that business.
+const KINDS = [{ ask: /\b(software|saas|apps?|platforms?|hrms|hris|erp|crm)\b/i, word: /^(software|softwares|saas|app|apps|platform|platforms|hrms|hris|erp|crm|tool|tools|system|systems|suite|module|modules)$/ }];
+const OTHER_KIND = /\b(staffing|recruitment|recruiting|recruiters?|manpower|placements?|head-?hunt\w*|executive search|it services|it consulting|consultancy|consultants?|consulting|outsourcing|bpo|software development|web development|it solutions)\b/i;
+const DOING = new Set(('is are was offers offer provides provide sells sell builds build makes make develops develop runs run helps help delivers deliver ' +
+  'automates automate simplifies simplify powers power specialises specializes focuses creates create brings bring has have').split(' '));
+const SEP = new Set([':', '-', '–', '—', '|', '(']);
+const MARK = '\u0001';
+/** The ask's kind of product, or null when it names none (then fit is left to the field words, as before). */
+export function askKind(query) { return KINDS.find(k => k.ask.test(String(query || ''))) || null; }
+/** The text with the company's name (full and without generic field words) replaced by a marker. */
+function withoutName(text, company, askWords = []) {
+  const drop = new Set([...GENERIC_FIELD, ...askWords]);
+  const full = String(company || '').replace(/\(.*?\)/g, ' ').split(/[^\p{L}\p{N}&]+/u).filter(Boolean);
+  const core = companyKey(company).split(' ').filter(w => w && !drop.has(w) && !drop.has(w.replace(/s$/, '')));
+  let out = String(text || '');
+  for (const words of [full, core]) if (words.length && words.join('').length >= 2) out = out.replace(new RegExp(`(?<![\\p{L}\\p{N}])${words.map(reEsc).join('[^\\p{L}\\p{N}]+')}(?![\\p{L}\\p{N}])`, 'giu'), ` ${MARK} `);
+  return out;
+}
+const tokensOf = (s) => String(s || '').toLowerCase().match(new RegExp(`[\\p{L}\\p{N}]+|${MARK}|[:|(–—]|(?<=\\s)-(?=\\s)`, 'gu')) || [];
+const fieldTok = (tok, field) => !field.length || field.some(w => fieldHits(tok, w) > 0);
+/** One unit of text (a title, the opening lines or a sentence) says this company sells the ask's kind of product. own: the
+ *  company's own page, where every line is its own; elsewhere the words must follow its name with a doing word ("X sells
+ *  payroll software", "X, Y and Z sell HR software") or a separator ("X: HR software"). */
+function unitSells(unit, company, field, kind, own) {
+  const toks = tokensOf(withoutName(unit, company, field));
+  const kinds = toks.map((t, i) => kind.word.test(t) || (/^hr(ms|is)$/.test(t)) ? i : -1).filter(i => i >= 0);
+  for (const k of kinds) for (let f = Math.max(0, k - 4); f <= Math.min(toks.length - 1, k + 4); f++) {
+    if (!fieldTok(toks[f], field) || toks[f] === MARK) continue;
+    const e = Math.min(f, k);
+    if (own) return true;
+    const m = toks.lastIndexOf(MARK, e); if (m < 0) continue;
+    if (e - m <= 25 && (toks.slice(m + 1, e).some(t => DOING.has(t)) || (SEP.has(toks[m + 1]) && e - m <= 15))) return true;
+  }
+  return false;
+}
+/** The words on a page that say this company sells the ask's kind of product, or ''. own: the page is the company's own site
+ *  (its title, opening lines and every sentence count); otherwise only sentences that name the company. */
+export function sellsIn(text, company, query, { own = false, title = '' } = {}) {
+  const kind = askKind(query); if (!kind) return '';
+  const field = topicWords(query);
+  const units = own ? [title, String(text || '').slice(0, 300), ...sentencesOf(text)] : sentencesOf(text).filter(x => textNames(x, company));
+  for (const u of units) if (u && u.length <= 400 && unitSells(u, company, field, kind, own)) return u.replace(/\s+/g, ' ').trim().slice(0, 200);
+  return '';
+}
+/** The words that say the company is another kind of business than the ask names ("a recruitment and staffing company"), or ''.
+ *  own: its site's title and opening lines; otherwise sentences that name it. A unit that also says it sells the asked kind is no clash. */
+export function otherKindIn(text, company, query, { own = false, title = '' } = {}) {
+  const kind = askKind(query); if (!kind) return '';
+  const field = topicWords(query); const ask = String(query || '');
+  const units = own ? [title, String(text || '').slice(0, 300)] : sentencesOf(text).filter(x => textNames(x, company) && x.length <= 400);
+  const re = new RegExp(OTHER_KIND.source, 'gi');
+  for (const u of units) {
+    const bare = withoutName(u, company, field);
+    for (const m of bare.matchAll(re)) {
+      const next = tokensOf(bare.slice(m.index + m[0].length))[0] || '';
+      if (kind.word.test(next) || new RegExp(`\\b${reEsc(m[1])}\\b`, 'i').test(ask)) continue;   // "recruitment software" is software
+      if (!unitSells(u, company, field, kind, own)) return m[1].toLowerCase();
+    }
+  }
+  return '';
+}
+/**
+ * The one test of a candidate's own site, used by the search and by the real check: it names the company's business in the
+ * ask's field (aboutSameBusiness, with the company's own name taken out of the title and text first), it does not describe
+ * itself as another kind of business, and, when the ask names a kind of product, the words that say it sells it.
+ * Returns { ok, why, sells, other }.
+ */
+export function siteFits(page, { query = '', company = '', need = '' } = {}) {
+  const field = topicWords(query); const fieldOr = field.length ? field : topicWords(need);
+  const title = String(page?.title || ''); const text = String(page?.text || '');
+  const base = aboutSameBusiness({ title: withoutName(title, company, fieldOr).replaceAll(MARK, ' '), text: withoutName(text, company, fieldOr).replaceAll(MARK, ' ') }, fieldOr);
+  const other = otherKindIn(text, company, query, { own: true, title });
+  if (other) return { ok: false, why: `its own words say "${other}"`, sells: '', other };
+  if (!base.ok) return { ok: false, why: base.why, sells: '', other: '' };
+  if (!askKind(query)) return { ok: true, why: base.why, sells: '', other: '' };
+  const sells = sellsIn(text, company, query, { own: true, title });
+  return { ok: true, why: sells ? `it says "${sells.slice(0, 80)}"` : base.why, sells, other: '' };
+}
 /** "Kolam" and "Kolam HR" are one company: equal once generic words of the field (and of the ask) are dropped. */
 export function sameCompany(a, b, askWords = []) {
   const ka = companyKey(a), kb = companyKey(b);

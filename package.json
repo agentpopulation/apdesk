@@ -12,7 +12,7 @@
     "start": "node app/server.js",
     "test": "node --test --test-concurrency=1 \"test/**/*.test.js\" \"modules/**/*.test.js\"",
     "test:core": "node --test --test-concurrency=1 \"test/*.test.js\"",
-    "acceptance": "node tools/acceptance.mjs",
+    "acceptance": "node tools/acceptance/run.mjs",
     "zip": "node tools/make-zip.mjs"
   },
   "dependencies": {

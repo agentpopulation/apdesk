@@ -31,7 +31,8 @@ export async function gatherBrief(ctx, { topics = [], signal, since = null, sinc
   const sinceWords = since ? 'since the last brief' : 'since yesterday';
   since = since || new Date(Date.now() - sinceMs).toISOString();
   const sections = []; const sources = [];
-  const own = (j) => !String(j.kind).startsWith('flows.');
+  // flows runs are the brief itself; quiet jobs are the desk's own upkeep and show here only when they failed
+  const own = (j) => !String(j.kind).startsWith('flows.') && (!j.quiet || j.status === 'failed');
   const jobs = ctx.jobs.list({ limit: 200 });
   const running = jobs.filter(j => j.status === 'running' && own(j));
   const waitingJobs = jobs.filter(j => j.status === 'waiting' && own(j));

@@ -1,6 +1,6 @@
 // Chat page: rail of chats, the conversation at full width, the folding panel. Matches the Chat section of the approved preview.
 import { chipsFor } from '/ui/pages/home.js';
-import { cleanReply, uniqueOutputs, previewText, stepChips, footTag, waitLine } from '/modules/chat/ui-text.js';
+import { cleanReply, uniqueOutputs, previewText, stepChips, footTag, waitLine, hasTable, shortCell } from '/modules/chat/ui-text.js';
 
 const API = 'm/chat/';
 const PRESETS = [['everyone', 'Everyone'], ['sales-room', 'Sales room'], ['build-room', 'Build room']];
@@ -25,6 +25,7 @@ function md(ui, text) {
   const el = ui.h('div', { class: 'md', html: mdLib(text) });
   for (const a of el.querySelectorAll('a[href]')) { if (/^https?:/i.test(a.getAttribute('href'))) { a.target = '_blank'; a.rel = 'noopener noreferrer'; } }
   for (const t of el.querySelectorAll('table')) { const w = document.createElement('div'); w.className = 'scroll'; t.replaceWith(w); w.append(t); }
+  for (const c of el.querySelectorAll('th, td')) if (shortCell(c.textContent)) c.classList.add('nw');   // "Day 1" stays on one line
   return el;
 }
 
@@ -45,7 +46,12 @@ function css() {
   const s = document.createElement('style'); s.id = 'chat-css';
   s.textContent = `
 .chatv .talk{min-width:0}.chatv .who-t .nm{flex:1}
-.chatv .msg{overflow-wrap:anywhere}.chatv .msg .md p{margin:0 0 6px}.chatv .msg .md p:last-child{margin:0}
+.chatv .msg{overflow-wrap:anywhere;min-width:0}
+.chatv .msg.tbl{max-width:100%}
+.chatv .msg .scroll{overflow-x:auto;max-width:100%}
+.chatv .msg th,.chatv .msg td{overflow-wrap:normal;word-break:normal;min-width:7em;vertical-align:top}
+.chatv .msg th{hyphens:none}.chatv .msg td{overflow-wrap:break-word}
+.chatv .msg th.nw,.chatv .msg td.nw{white-space:nowrap;min-width:0}.chatv .msg .md p{margin:0 0 6px}.chatv .msg .md p:last-child{margin:0}
 .chatv .msg.it .card{margin-top:8px}.chatv .msg.it .card table{font-size:13px}
 .chatv .msg .steps{font-size:11.5px;color:var(--dim);margin-top:4px;display:flex;flex-wrap:wrap;gap:4px 10px}
 .chatv .msg.sys{align-self:center;background:none;color:var(--dim);font-size:12px;padding:2px 8px;animation:none}
@@ -156,7 +162,8 @@ async function render(el, ui, route) {
     if (m.status !== 'streaming') streaming.delete(m.id);
     const stick = nearBottom();
     const e = msgEl(m); const old = msgEls.get(m.id);
-    if (old) old.replaceWith(e); else { chatEl.querySelector(':scope > .empty')?.remove(); chatEl.insertBefore(e, queueEl || chatEl.querySelector(':scope > .approvals')); }
+    // a repaint of a bubble already on screen does not pop in again, so a streaming reply stays visible
+    if (old) { e.style.animation = 'none'; old.replaceWith(e); } else { chatEl.querySelector(':scope > .empty')?.remove(); chatEl.insertBefore(e, queueEl || chatEl.querySelector(':scope > .approvals')); }
     msgEls.set(m.id, e);
     if (stick || i < 0) toBottom();
   };
@@ -176,7 +183,7 @@ async function render(el, ui, route) {
     const tagText = footTag(m);
     const foot = tagText ? pill(tagText, tagText === 'Offline' ? 'wait' : 'stop') : null;
     const speak = !live && text && window.apdVoice?.speak ? btn('Read aloud', { kind: 'ghost sm', onClick: () => window.apdVoice.speak(text) }) : null;
-    return h('div', { class: 'msg it' + (wide ? ' wide' : ''), 'data-role': 'assistant', 'data-agent-id': m.agentId || '', 'data-status': m.status, dataset: { id: m.id } }, who, body, stepsEl, ...(m.cards || []).map(c => cardEl(c, m)), foot || speak ? h('div', { class: 'foot' }, foot, speak, h('span', { class: 'sub', style: { fontSize: '11px' } }, fmt.time(m.at))) : null);
+    return h('div', { class: 'msg it' + (wide ? ' wide' : '') + (hasTable(text) ? ' tbl' : ''), 'data-role': 'assistant', 'data-agent-id': m.agentId || '', 'data-status': m.status, dataset: { id: m.id } }, who, body, stepsEl, ...(m.cards || []).map(c => cardEl(c, m)), foot || speak ? h('div', { class: 'foot' }, foot, speak, h('span', { class: 'sub', style: { fontSize: '11px' } }, fmt.time(m.at))) : null);
   }
 
   // ---------- cards

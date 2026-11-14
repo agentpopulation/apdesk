@@ -9,9 +9,10 @@ function style() {
 .tk-group{display:flex;flex-direction:column;gap:8px}.tk-group>h3{margin:4px 0 0;display:flex;gap:8px;align-items:center}
 .tk-job{display:flex;flex-direction:column;gap:6px}.tk-job .top{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .tk-job .what{flex:2;min-width:160px}.tk-job .what .sub{overflow-wrap:anywhere}
+.tk-house>summary{cursor:pointer}.tk-house>summary h3{display:inline-flex;gap:8px;align-items:center}.tk-house>summary .sub{display:block;margin:2px 0 0 18px}.tk-house[open]>summary{margin-bottom:8px}
 .tk-ans{max-height:320px;overflow:auto;border-top:1px solid var(--line);padding-top:8px}
 .tk-form{display:flex;flex-direction:column;gap:10px;width:100%}.tk-form textarea{min-height:110px;width:100%;box-sizing:border-box}.tk-form label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--dim)}
-@media (max-width:860px){.tk-two{grid-template-columns:minmax(0,1fr);overflow:auto}.tk-col{overflow:visible}}`;
+@media (max-width:860px){.tk-two{grid-template-columns:minmax(0,1fr);grid-auto-rows:max-content;overflow:auto}.tk-col{overflow:visible}}`;
   document.head.append(s);
 }
 const ACTIVE = ['running', 'waiting'];
@@ -24,7 +25,7 @@ export const pages = {
       style();
       const { h, api, btn, pill, meter, empty, fmt, toast, md } = ui;
       el.classList.add('tasksv');
-      const jobs = new Map(); let approvals = []; let showAll = false; const open = new Set();
+      const jobs = new Map(); let approvals = []; let showAll = false; const open = new Set(); let house = null;
       const left = h('div', { class: 'tk-col' }); const right = h('div', { class: 'tk-col' });
       el.append(
         h('div', { class: 'row' }, h('h2', { style: { margin: 0 } }, ui.label('tasks', 'Tasks')), h('span', { class: 'grow' }), btn('New task', { onClick: newTask })),
@@ -58,7 +59,7 @@ export const pages = {
         const ans = answerOf(j);
         const card = h('div', { class: 'card tk-job' },
           h('div', { class: 'top' },
-            h('div', { class: 'what' }, h('b', null, j.title), h('div', { class: 'sub', title: detail }, `${who(j.agentId)} · ${when}${detail ? ' · ' + detail : ''}`)),
+            h('div', { class: 'what' }, h('b', null, j.title), h('div', { class: 'sub', title: detail }, `${j.quiet ? 'The desk' : who(j.agentId)} · ${when}${detail ? ' · ' + detail : ''}`)),
             active ? meter(j.progress || 0, { live: j.status === 'running' }) : null,
             pill(active && j.status === 'running' ? fmt.pct(j.progress) : word, kind),
             active ? btn('Stop', { kind: 'ghost sm', onClick: async () => { try { await api(`jobs/${j.id}/stop`, { method: 'POST' }); } catch (e) { toast(e.message, 'err'); } } }) : null),
@@ -73,21 +74,30 @@ export const pages = {
       const group = (title, n, items, emptyText) => h('div', { class: 'tk-group' }, h('h3', null, title, n ? pill(String(n)) : null), items.length ? items : [empty(emptyText)]);
       function paint() {
         const all = [...jobs.values()].sort((a, b) => String(b.created).localeCompare(String(a.created)));
-        const running = all.filter(j => j.status === 'running');
-        const waiting = all.filter(j => j.status === 'waiting');
-        const done = all.filter(j => !ACTIVE.includes(j.status));
+        // the desk's own upkeep (quiet jobs, such as the nightly Dream) goes under Housekeeping, closed; one that failed stays with the owner's work
+        const upkeep = all.filter(j => j.quiet && j.status !== 'failed');
+        const owners = all.filter(j => !upkeep.includes(j));
+        const running = owners.filter(j => j.status === 'running');
+        const waiting = owners.filter(j => j.status === 'waiting');
+        const done = owners.filter(j => !ACTIVE.includes(j.status));
         const shown = showAll ? done : done.slice(0, 12);
+        const stopped = ui.stoppedSection?.();
+        const keepOpen = !!house?.open;
+        house = upkeep.length ? h('details', { class: 'tk-group tk-house', open: keepOpen },
+          h('summary', null, h('h3', null, 'Housekeeping', pill(String(upkeep.length))), h('span', { class: 'sub' }, 'Upkeep the desk does by itself, such as tidying memory at night.')),
+          ...upkeep.slice(0, 20).map(jobCard)) : null;
         left.replaceChildren(
           group('Running', running.length, running.map(jobCard), 'Nothing is running.'),
-          group('Waiting for you', approvals.length + waiting.length, [...approvals.map(a => ui.approvalCard ? ui.approvalCard(a) : h('div', { class: 'card' }, a.title)), ...waiting.map(jobCard)], 'Nothing waits for you.'),
-          group('Done', done.length, [...shown.map(jobCard), done.length > shown.length ? btn(`Show all ${done.length}`, { kind: 'ghost sm', onClick: () => { showAll = true; paint(); } }) : null].filter(Boolean), 'Finished work waits here, even when the browser was closed.'));
+          group('Waiting for you', approvals.length + waiting.length, [...approvals.map(a => ui.approvalCard ? ui.approvalCard(a) : h('div', { class: 'card' }, a.title)), ...waiting.map(jobCard), stopped].filter(Boolean), 'Nothing waits for you.'),
+          group('Done', done.length, [...shown.map(jobCard), done.length > shown.length ? btn(`Show all ${done.length}`, { kind: 'ghost sm', onClick: () => { showAll = true; paint(); } }) : null].filter(Boolean), 'Finished work waits here, even when the browser was closed.'),
+          ...[house].filter(Boolean));
       }
       let t = null; const soon = () => { clearTimeout(t); t = setTimeout(paint, 120); };
       async function loadJobs() { const r = await api('m/tasks/jobs?limit=150'); jobs.clear(); for (const j of r.jobs) jobs.set(j.id, j); }
-      async function loadApprovals() { try { approvals = (await api('approvals')).pending || []; } catch { approvals = []; } }
+      async function loadApprovals() { try { approvals = (await api('approvals')).pending || []; } catch { approvals = []; } await ui.refreshStopped?.(); }
       ui.on('job', (j) => { if (j?.id) { jobs.set(j.id, { ...(jobs.get(j.id) || {}), ...j }); soon(); } });
       ui.on('approval', async () => { await loadApprovals(); soon(); });
-      ui.on('panic', async () => { await loadJobs(); paint(); });
+      ui.on('panic', async () => { await Promise.all([loadJobs(), loadApprovals()]); paint(); });
       ui.onLeave?.(() => clearTimeout(t));
       await Promise.all([loadJobs(), loadApprovals()]);
       paint();

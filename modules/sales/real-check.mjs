@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { testDesk } from '../../test/helpers/desk.js';
 import { createDesk } from '../../app/server.js';
 import { wikiSearch, fetchText } from './check-search.mjs';
-import { textNames, companyKey, siteMatches, strictEmail, sameBusiness, topicWords, sameCompany, namesCompany, askCountry } from './rules.js';
+import { textNames, companyKey, siteMatches, strictEmail, siteFits, askKind, topicWords, sameCompany, namesCompany, askCountry } from './rules.js';
 import { unsupportedClaims, senderNameProblems } from './claims.js';
 import { bodyProblem } from './parse.js';
 const press = async (kind, id) => (await call(`/api/m/${kind}/drafts/${id}/send`, { body: (await call(`/api/m/${kind}/drafts/${id}`)).json?.send })).json?.approvalId;   // the owner's press on "Approve and send": only now is the approval asked
@@ -91,8 +91,17 @@ try {
     const badMail = leads.filter(l => l.email && !strictEmail(l.email)).map(l => l.email);
     check('every mail address passes the strict pattern (no glued words)', badMail.length === 0, `${leads.filter(l => l.email).length} addresses: ${leads.filter(l => l.email).map(l => l.email).join(', ') || 'none'}${badMail.length ? '; bad: ' + badMail.join(', ') : ''}`);
     const wrongSite = [];
-    for (const l of ownPrimary) { try { const r = await fetchText(l.sources[0].url); if (!sameBusiness(r.text, topicWords(ASK))) wrongSite.push(`${l.company} <- ${l.sources[0].url}`); } catch {} }
-    check('own-site sources are about the same business as the ask', wrongSite.length === 0, `${ownPrimary.length - wrongSite.length} of ${ownPrimary.length} carry the ask's field words (${topicWords(ASK).join(', ')}) in the opening lines or several times; site step turned down ${out.sites?.wrongBusiness || 0} same-name site(s)${wrongSite.length ? '; not: ' + wrongSite.join('; ') : ''}`);
+    // the same test the job ran (siteFits), on the page read the way the job reads it (the Search module's reader, title included)
+    const reread = async (u) => { const s = core.modules.api('search'); if (s?.read) { try { return await s.read(u); } catch {} } return fetchText(u); };
+    for (const l of ownPrimary) { try { const r = await reread(l.sources[0].url); const f = siteFits(r, { query: ASK, company: l.company, need: l.need }); if (!f.ok) wrongSite.push(`${l.company} <- ${l.sources[0].url} (${f.why})`); } catch {} }
+    check('own-site sources are about the same business as the ask', wrongSite.length === 0, `${ownPrimary.length - wrongSite.length} of ${ownPrimary.length} pass the job's own site test (field words ${topicWords(ASK).join(', ')}; no other kind of business); site step turned down ${out.sites?.wrongBusiness || 0} site(s)${wrongSite.length ? '; not: ' + wrongSite.join('; ') : ''}`);
+    if (askKind(ASK)) {
+      const unsaid = leads.filter(l => !/What it sells, from https?:\/\/\S+: "/.test(l.findings || ''));
+      check('every lead carries the words of a read page that say what it sells', leads.length > 0 && unsaid.length === 0, `${leads.length - unsaid.length} of ${leads.length}; left out as another kind of business: ${out.rejected?.['another kind of business'] || 0}, as what it sells not checked: ${out.rejected?.['what it sells not checked'] || 0}${unsaid.length ? '; not: ' + unsaid.map(l => l.company).join(', ') : ''}`);
+      for (const l of leads.slice(0, 25)) info(`${l.company}: ${(String(l.findings || '').match(/What it sells, from .*$/) || ['what it sells: not said'])[0].slice(0, 260)}`);
+    }
+    const pairs = [...String(out.text || '').matchAll(/(\d+) of (\d+)/g)].map(m => [Number(m[1]), Number(m[2])]);
+    check('no "N of M" in the reply has N over M', pairs.every(([n, m]) => n <= m), String(out.text || '').slice(-260));
     const bee = leads.find(l => /^beehive/i.test(l.company));
     info(`Beehive: ${bee ? `listed with source ${bee.sources[0].url}, site ${bee.website || 'none'}, address ${bee.email || 'none'}` : 'not in the list'}`);
     check('no lead carries beehive.net (Beehive Broadband) as its site, source or address', !leads.some(l => /beehive\.net/.test(`${l.website} ${l.email} ${l.sources.map(x => x.url).join(' ')}`)), bee ? `${bee.company}: ${bee.sources[0].url}` : 'Beehive not listed');

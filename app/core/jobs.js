@@ -13,7 +13,8 @@ export class Jobs {
   row(r) {
     if (!r) return null;
     const j = (x) => { try { return x ? JSON.parse(x) : null; } catch { return null; } };
-    return { id: r.id, kind: r.kind, title: r.title, agentId: r.agent_id, chatId: r.chat_id, status: r.status, progress: r.progress, detail: r.detail, input: j(r.input), output: j(r.output), error: r.error, created: r.created, updated: r.updated, finished: r.finished };
+    const input = j(r.input);
+    return { id: r.id, kind: r.kind, title: r.title, quiet: input?.quiet === true, agentId: r.agent_id, chatId: r.chat_id, status: r.status, progress: r.progress, detail: r.detail, input, output: j(r.output), error: r.error, created: r.created, updated: r.updated, finished: r.finished };
   }
   list({ status, limit = 100 } = {}) {
     const rows = status ? this.s.all('SELECT * FROM jobs WHERE status = ? ORDER BY created DESC LIMIT ?', status, limit) : this.s.all('SELECT * FROM jobs ORDER BY created DESC LIMIT ?', limit);
@@ -29,10 +30,13 @@ export class Jobs {
     this.events.emit('job', job);
     return job;
   }
-  /** Start a job now. Returns the stored job at once; the work continues in the background. */
-  async start({ kind, title, agentId = null, chatId = null, input = null, run }) {
+  /** Start a job now. Returns the stored job at once; the work continues in the background.
+   *  quiet: the desk started it for its own upkeep, not the owner. It is kept in the input record (no new column) and read back as job.quiet;
+   *  the shell, Home and the brief leave a quiet job out unless it failed. */
+  async start({ kind, title, agentId = null, chatId = null, input = null, quiet = false, run }) {
     if (this.panic.halted) throw Object.assign(new Error('Everything is stopped. Press Resume first.'), { code: 'halted' });
     if (typeof run !== 'function') throw new Error('jobs.start needs run()');
+    if (quiet) input = { ...(input && typeof input === 'object' ? input : {}), quiet: true };
     const id = makeId('job_'); const t = now();
     this.s.run('INSERT INTO jobs (id, kind, title, agent_id, chat_id, status, progress, detail, input, created, updated) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)', id, kind, title, agentId, chatId, 'running', 'Starting', JSON.stringify(input), t, t);
     const ac = new AbortController();

@@ -216,6 +216,33 @@ export async function chatWithAgent(page, agentId, name) {
   return false;
 }
 
+// ---------------------------------------------------------------- judge (the runner's own yes/no model calls)
+/** Appended to every yes/no question the runner asks a judge model: the verdict is one word on the last line. */
+export const JUDGE_FORMAT = '\nGive one short reason first. Then end your reply with a last line that holds exactly one word: YES or NO.';
+/** The verdict in a judge's reply: 'YES', 'NO', or null when it cannot be read. The last line, stripped of markdown and
+ *  end punctuation, may be the word alone (any case, "Answer: YES" too); else the last upper-case YES or NO token in
+ *  the reply counts. Lower-case "yes" or "no" inside the reasoning is never read as a verdict. */
+export function judgeVerdict(text) {
+  const s = String(text ?? '');
+  const lines = s.split(/\r?\n/).map(l => l.replace(/[*_`#>"'\u201c\u201d.!:\s]+/g, ' ').trim()).filter(Boolean);
+  const m = (lines.at(-1) || '').match(/^(?:(?:final\s+)?(?:answer|verdict)\s+)?(yes|no)$/i);
+  if (m) return m[1].toUpperCase();
+  const all = [...s.matchAll(/\b(YES|NO)\b/g)];
+  return all.length ? all.at(-1)[1] : null;
+}
+/** Ask a judge model a yes/no question (JUDGE_FORMAT is appended). An unreadable answer is asked once more; still
+ *  unreadable gives verdict null, which a check must report as NOT CHECKED (or as a failure it already has), never PASS. */
+export async function askJudge(desk, prompt) {
+  const texts = [];
+  for (let i = 0; i < 2; i++) {
+    const j = await desk.ask(prompt + JUDGE_FORMAT);
+    const text = String(j.text || (j.error ? 'error: ' + j.error : '')); texts.push(text);
+    const verdict = j.text ? judgeVerdict(j.text) : null;
+    if (verdict) return { verdict, text, tries: i + 1 };
+  }
+  return { verdict: null, text: 'judge unclear: ' + texts.map(x => '"' + x.replace(/\s+/g, ' ').slice(0, 80) + '"').join(' then '), tries: 2 };
+}
+
 /** Known real-model label shapes (MODEL-DOOR.md "Naming the model"). */
 export const LABEL_RE = /^(Agent Population Router|Ollama|LAN node|OpenAI|Anthropic|OpenRouter|Groq|Google Gemini|Gemini|Mistral|DeepSeek|Together|Fireworks|Cerebras|xAI|Custom[^·]*) · \S/;
 export const hash = (buf) => crypto.createHash('sha1').update(buf).digest('hex').slice(0, 12);

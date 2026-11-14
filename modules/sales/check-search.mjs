@@ -35,5 +35,5 @@ export async function fetchText(url, { signal } = {}) {
   const r = await fetch(url, { headers: UA, signal, redirect: 'follow' });
   const html = await r.text();
   const { document } = parseHTML(html);
-  return { status: r.status, text: String(document.body?.textContent || html).replace(/\s+/g, ' '), html };
+  return { status: r.status, title: String(document.title || ''), text: String(document.body?.textContent || html).replace(/\s+/g, ' '), html };
 }

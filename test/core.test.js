@@ -197,6 +197,19 @@ test('jobs keep running without a browser and their result waits; agents can be 
   } finally { await t.close(); }
 });
 
+test('a job the desk starts for its own upkeep is marked quiet; the owner\'s jobs are not', async () => {
+  const t = await testDesk();
+  try {
+    const own = await t.core.jobs.start({ kind: 'test', title: 'Owner work', input: { a: 1 }, run: async () => ({ ok: 1 }) });
+    const upkeep = await t.core.jobs.start({ kind: 'test', title: 'Upkeep', quiet: true, input: { a: 2 }, run: async () => ({ ok: 1 }) });
+    assert.equal(own.quiet, false); assert.equal(upkeep.quiet, true);
+    const done = await t.core.jobs.wait(upkeep.id, 3000);
+    assert.equal(done.quiet, true, 'kept after it finishes'); assert.equal(done.input.a, 2, 'its input is unchanged');
+    assert.equal(t.core.jobs.list().find(j => j.id === upkeep.id).quiet, true);
+    assert.equal((await t.call('/api/jobs/' + upkeep.id)).json.quiet, true, 'the browser sees the mark');
+  } finally { await t.close(); }
+});
+
 test('the shell page carries the session, and static files are served only from ui/', async () => {
   const t = await testDesk();
   try {

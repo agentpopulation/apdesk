@@ -692,7 +692,7 @@ test('country evidence: for an ask that names a country a lead is kept only when
   // through the whole search (stubs): only the leads a page places in India are kept, and the reason says why the rest are missing
   const pad = ' Payroll software for small businesses, compared side by side.'.repeat(6);
   const pages = {
-    'https://list.example/in': { title: 'Best payroll software in India', text: 'Northwind People offers payroll software. Quillpay is a Pune-based payroll company. Harbor HR offers payroll software. Lumen Payroll offers payroll software.' + pad },
+    'https://list.example/in': { title: 'Best payroll software in India', text: 'Northwind People offers payroll software. Quillpay is a Pune-based payroll software company. Harbor HR offers payroll software. Lumen Payroll offers payroll software.' + pad },
     'https://www.harborhr.in/': { title: 'Harbor HR: payroll software', text: 'Harbor HR runs payroll software for small businesses. Payroll and HR in one place. '.repeat(3) },
     'https://www.lumenpayroll.example/': { title: 'Lumen Payroll: payroll software', text: 'Lumen Payroll runs payroll software for small teams everywhere. Call +1 415 555 0100. '.repeat(3) },
   };
@@ -716,7 +716,7 @@ test('country shortfall in the reply: "2 of 4 found that could be placed in Indi
   const names = ['Northwind People', 'Quillpay', 'Lumen Payroll', 'Tarang HR'];
   const t = await testDesk({ modules: ['sales'], script: findScript(names) });
   try {
-    stubSearch(t, { 'https://list.example/a': 'Northwind People offers HR software. Quillpay is a Pune-based payroll company. Lumen Payroll offers HR software. Tarang HR, based in Chennai, runs payroll.' + pad5 },
+    stubSearch(t, { 'https://list.example/a': 'Northwind People offers HR software. Quillpay is a Pune-based payroll software company. Lumen Payroll offers HR software. Tarang HR, based in Chennai, runs payroll software.' + pad5 },
       (q) => /official website/.test(q) ? [] : [{ url: 'https://list.example/a' }]);
     const s = await t.core.modules.runTool('leads_find', { query: 'Indian companies that sell HR or payroll software to small businesses', count: 4 }, { chatId: 'c1' });
     const out = (await t.core.jobs.wait(s.jobId, 60000)).output;
@@ -726,4 +726,88 @@ test('country shortfall in the reply: "2 of 4 found that could be placed in Indi
     assert.match(out.card.title, /^2 of 4 found that could be placed in India/);
     assert.deepEqual(out.card.rows.map(r => r[0]).sort(), ['Quillpay', 'Tarang HR']);
   } finally { await t.close(); }
+});
+
+// ---- the closing line counts the leads shown; fit needs a read page that says what the company sells
+const ofPairs = (s) => [...String(s).matchAll(/(\d+) of (\d+)/g)].map(m => [Number(m[1]), Number(m[2])]);
+test('closing line: every count is taken over the leads shown, never over candidates checked or merged away', async () => {
+  const pad = ' Trusted by small teams across India for their monthly pay runs.'.repeat(8);
+  const pages = {
+    'https://list.example/a': 'Nimbus People sells HR software. Nimbus Payroll sells payroll software. Nimbus Expense sells HR software. Acme HR sells HR software.' + pad,
+    'https://www.nimbus-fakeco.in/': 'Nimbus People, Nimbus Payroll and Nimbus Expense: HR and payroll software for small businesses. Write to sales@nimbus-fakeco.in.' + pad,
+    'https://www.acmehr-fakeco.in/': 'Acme HR builds HR software for small teams. Write to hello@acmehr-fakeco.in.' + pad,
+  };
+  const names = ['Nimbus People', 'Nimbus Payroll', 'Nimbus Expense', 'Acme HR'];
+  const t = await testDesk({ modules: ['sales'], script: findScript(names) });
+  try {
+    t.core.modules.active.set('search', { handle: null, api: {
+      async search(q) { if (/official website/.test(q)) return /^Nimbus/.test(q) ? [{ url: 'https://www.nimbus-fakeco.in/' }] : /^Acme/.test(q) ? [{ url: 'https://www.acmehr-fakeco.in/' }] : []; return [{ url: 'https://list.example/a' }]; },
+      async read(u) { const p = pages[u]; if (!p) throw new Error('404'); return { url: u, title: /list/.test(u) ? 'HR software list' : 'HR and payroll software', text: p }; } } });
+    const s = await t.core.modules.runTool('leads_find', { query: 'Companies that sell HR or payroll software to small businesses', count: 2 }, { chatId: 'c1' });
+    const out = (await t.core.jobs.wait(s.jobId, 60000)).output;
+    assert.equal(out.found, 2, out.text);
+    assert.match(out.text, /\b2 of 2 have their own site as the main source/, out.text);
+    for (const [n, m] of ofPairs(out.text)) assert.ok(n <= m, `"${n} of ${m}" in: ${out.text}`);
+    for (const [n, m] of ofPairs(out.card.title + ' ' + out.card.note)) assert.ok(n <= m, out.card.title);
+    assert.ok(out.sites.own <= out.found && out.sites.emails <= out.found, JSON.stringify(out.sites));
+    const mails = Number((out.text.match(/(\d+) carr(?:y|ies) a mail address/) || [0, 0])[1]);
+    assert.ok(mails >= 1 && mails <= 2, out.text);
+  } finally { await t.close(); }
+  const { closingLine, countClause } = await import('./find.js');
+  assert.equal(countClause(5, 2, 'have their own site as the main source'), '', 'a count over the number of leads is left out');
+  assert.equal(countClause(0, 2, 'x'), '');
+  assert.equal(countClause(1, 2, 'carry a mail address'), '1 of 2 carry a mail address');
+  const shown = [{ company: 'A', website: 'https://a.example', email: 'x@a.example', contactName: 'R. Rao', sources: [{ url: 'https://www.a.example/' }] }, { company: 'B', website: 'https://b.example', sources: [{ url: 'https://list.example/x' }] }];
+  const line = closingLine(shown);
+  assert.match(line, /1 of 2 have their own site as the main source/); assert.match(line, /1 of 2 carry a mail address/); assert.match(line, /1 of 2 name a contact person/);
+  assert.equal(closingLine([]), '');
+});
+
+test('fit: kept only when a read page says what the company itself sells; staffing, IT services and list-only names are left out', async () => {
+  const { checkRow, checkSites, findLeads } = await import('./find.js');
+  const { siteFits, sellsIn, sameBusiness } = await import('./rules.js');
+  const ASK = 'Indian companies that sell HR or payroll software to small businesses';
+  const pad = ' We are headquartered in Pune.'.repeat(8);
+  // a staffing firm with "HR" in its name: its own words say staffing, so the site is not taken as a fit
+  const staff = { url: 'https://www.tarnwellhr.example/', title: 'Tarnwell HR | Recruitment & Staffing Company', text: 'Tarnwell HR finds people for your teams. We are a recruitment and staffing company. HR support, HR hiring, HR advice.' + pad };
+  const sf = siteFits(staff, { query: ASK, company: 'Tarnwell HR' });
+  assert.equal(sf.ok, false, sf.why); assert.match(sf.other, /recruitment|staffing/);
+  // a payroll software maker: the title says it, the opening is marketing words; the job and the real check use this one function
+  const maker = { url: 'https://www.brindlepay.example/', title: 'Payroll software for small businesses | Brindle Pay', text: 'Grow faster. Delight your people. Work smarter, every single day, with less stress and more joy for everyone.' + pad };
+  const mf = siteFits(maker, { query: ASK, company: 'Brindle Pay' });
+  assert.equal(mf.ok, true, mf.why); assert.match(mf.sells, /Payroll software/);
+  assert.equal(sameBusiness(maker.text, ['hr', 'payroll']), false, 'text alone misses it: why the real check must use siteFits');
+  const fs = await import('node:fs');
+  const rc = fs.readFileSync(new URL('./real-check.mjs', import.meta.url), 'utf8');
+  assert.ok(/siteFits\(/.test(rc) && !/sameBusiness\(/.test(rc), 'the real check re-checks a site with the same function the job uses');
+  // a list page: a name in a "Top 25" heading list says nothing about what it sells; a sentence about the company does
+  const list = { url: 'https://toplists.example/top-25-hr-software', title: 'Top 25 HR software companies in India', text: 'Top 25 HR software companies in India: Orvane Infotech, Kelmora Systems, Brindle Pay, Tarnwell HR. Orvane Infotech is a global software and solutions company. Tarnwell HR is a recruitment and staffing company. Brindle Pay sells payroll software to small firms.' + pad };
+  const row = (company) => checkRow({ company, kind: 'company', fits: true, need: 'HR software' }, list, { query: ASK });
+  assert.ok(!row('Orvane Infotech').sells, 'a general software company: nothing read says it sells HR or payroll software');
+  assert.ok(!row('Kelmora Systems').sells, 'named in the list only');
+  assert.match(row('Tarnwell HR').otherKind, /recruitment|staffing/);
+  assert.match(row('Brindle Pay').sells.words, /sells payroll software/);
+  assert.equal(sellsIn('Ciel Payroll, Orvane Infotech and Kelmora Systems are listed below.', 'Kelmora Systems', ASK), '');
+  assert.ok(sellsIn('Acme HR, Quokka Payroll and Beta HR sell HR software.', 'Acme HR', ASK));
+  // the whole search: the real fit named only on the list is confirmed by its own site; the other two are left out with a reason
+  const sites = {
+    'https://www.orvane.example/': { title: 'Orvane Infotech | IT services and software development', text: 'Orvane Infotech delivers IT services, cloud and software development for global clients, including HR departments.' + pad },
+    'https://www.kelmora.example/': { title: 'Kelmora | HR and payroll software for growing teams', text: 'Kelmora Systems runs your HR and payroll in one place.' + pad },
+    'https://www.tarnwellhr.example/': staff, 'https://www.brindlepay.example/': maker,
+  };
+  const search = {
+    async search(q) {
+      if (/official website/.test(q)) { const k = q.split(' ')[0].toLowerCase(); const u = Object.keys(sites).find(x => x.includes(k)); return u ? [{ url: u }] : []; }
+      return [{ url: list.url }];
+    },
+    async read(u) { if (u === list.url) return list; const p = sites[u]; if (!p) throw new Error('404'); return { url: u, ...p }; },
+  };
+  const names = ['Orvane Infotech', 'Kelmora Systems', 'Brindle Pay', 'Tarnwell HR'];
+  const model = { async chat({ purpose, messages }) { if (purpose === 'plan') return { json: { queries: ['hr software india'] } }; const txt = messages[1].content; return { json: { leads: names.filter(n => txt.includes(n)).map(n => ({ page: 1, company: n, kind: 'company', fits: true, need: 'HR software' })) } }; } };
+  const r = await findLeads({ query: ASK, count: 4, search, model, budget: { extraRounds: 0, firstRounds: 1 } });
+  assert.deepEqual(r.leads.map(l => l.company).sort(), ['Brindle Pay', 'Kelmora Systems'], r.reason);
+  assert.ok(r.leads.every(l => /What it sells, from https?:\/\/\S+: "/.test(l.findings)), r.leads.map(l => l.findings).join(' | '));
+  assert.equal(r.rejected['another kind of business'], 2, JSON.stringify(r.rejected));
+  assert.match(r.reason, /2 were another kind of business than the ask/);
+  void checkSites;
 });

@@ -59,13 +59,22 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - A checked table file's reply is written only from the check, so no unconfirmed value is stated. Tool calls written as text run or are dropped, never shown. A started job's acknowledgement no longer says "No file was saved."
 - A model reply that stalls mid-stream is dropped after 45 seconds and the next model is tried; one model call stops trying new models after 170 seconds.
 - Deep research, the Council, swarms, lead search and browser tasks start only when the ask names them (or in Scout's, Closer's or Operator's own chat); otherwise the reply may say the option exists.
+- A plain question is answered in the chat: background tasks, hand-offs to other agents, schedules, chains of agents, web travel plans, site builds and outreach drafts start only when the ask is for them.
+- A file is written only when the ask is for a file, names a workspace file or folder, asks to save, edit, update or note something down, or the chat has an attached file.
+- Tables in chat replies keep whole words in their headers, keep short cells on one line, use the full width of the conversation, and scroll sideways when wider. A streaming reply no longer flickers.
+- Lead search: the closing line counts own sites, mail addresses and contacts over the leads shown, and never prints a count larger than the number of leads.
+- Lead search: when the ask names a kind of product, a lead is kept only when a page that was read says what the company itself sells; staffing, consulting and IT-services firms, and names that only appear on a list page, are left out with a stated reason.
+- The nightly memory tidy no longer looks like your work: no notice, menu count or Home line, and it stays out of the morning brief. It is listed under Housekeeping in Tasks, and you are told if it fails.
+- Notices appear in the top bar, so they no longer cover page titles or the chat header. A long Council Verdict line wraps instead of being cut off.
+- Home and Tasks also show what Panic cancelled, under Waiting for you.
+- Acceptance runner: file names with several dots are read whole, judge answers are read from a strict last-line YES or NO (unclear means "not checked", never a pass), Council answers that end on their Recommendation line count as complete, Panic is tested on a running research job, and `npm run acceptance` points at the real runner.
 
 ### Known weak points
 - No run of the 17 acceptance asks has passed every ask. Results vary with the free model that answers.
 - In the last full run (14 Nov 2026) two asks failed: the compare-table reply stated values the file marks "not checked", and the lead search returned some companies from the wrong country.
 - PDF documents made by the Office module leave out Hindi and other Indian-script text: the built-in PDF font has no such letters (seen 15 Nov 2026).
-- On a plain question a weak model may still save a small file nobody asked for (seen 15 Nov 2026).
-- The "Stopped by Panic" list shows in the top-bar pop-up and in Settings › Security, not yet on Home or Tasks.
+- A lead search may return fewer leads than asked when its page budget runs out; it says how many it found and why.
+- Code you approve in the Code module runs without isolation unless Docker is installed: it can read files on this PC, including the desk's own database.
 - Ask 2 (offline with a local model) has never been checked: no test run so far had Ollama installed.
 - Small local models (4B, 8B): not checked.
 - Offline does not cover programs the desk starts as separate processes, mail servers, or DNS lookups.

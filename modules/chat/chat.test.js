@@ -1288,5 +1288,113 @@ test('heavyAsked: every acceptance ask and suggestion chip gets its tool; nearby
   for (const s of ['What is the capital of Australia? Answer in one sentence.', 'Write a detailed 1500-word essay on the history of the printing press, with many sections. Do not stop early.', 'Compare three products into a table file: the Apple iPhone 16, the Samsung Galaxy S25 and the Google Pixel 9.', 'As a background task, write a 400-word brief on the history of the bicycle.', 'Every morning at 8, brief me.', 'In one minute, brief me.', 'Draft outreach to the top five.', 'Tell me in two lines what you do.', 'What is 7 times 6? Answer with the number only.', 'Make a revision plan for my exams', 'Plan a 6-week course',
     'Give me a simple three-step plan to start a balcony herb garden. Keep it short.', 'Plan a two-day trip to Jaipur for a family of four. Keep it short: a small table with day, morning, afternoon and evening.',
     'search the web for today\'s gold price', 'what is the research on sleep and memory?', 'Recent research shows coffee is fine. True?', 'What leads to inflation?', 'Who will lead the team?', 'Read this page: https://example.com/a', 'How do I clear my browser cache?', 'Give me a short study plan', 'Is property tax going up?'])
-    assert.deepEqual(kinds(s), [], s);
+    assert.deepEqual(kinds(s), [], s);  // the tools that start work beyond the turn, and file_write: each acceptance ask and chip that needs one opens it
+  const { startAsked, writeAsk, fileAsk, namesAgent } = await import('./coordinator.js');
+  const roster = [{ id: 'coordinator', name: 'Coordinator' }, { id: 'scout', name: 'Scout' }, { id: 'closer', name: 'Closer' }, { id: 'operator', name: 'Operator' }, { id: 'coder', name: 'Coder' }];
+  const starts = (s) => [...startAsked(s, { agents: roster, self: 'coordinator' })].sort();
+  const needs = {
+    'As a background task, write a 400-word brief on the history of the bicycle. I am closing the window and will come back for it.': ['task'],
+    'Every morning at 8, brief me.': ['schedule'], 'In one minute, brief me.': ['schedule'], 'Every morning at 8, brief me': ['schedule'], "Every Friday, list next week's check-ins": ['schedule'],
+    'Draft outreach to the top five.': ['outreach'], 'Draft outreach to the top five leads': ['outreach'], 'Draft a LinkedIn message for the top two leads.': ['outreach'], 'Draft a reply to my new booking request': ['outreach'],
+    'Research in depth: how have record efficiencies of perovskite solar cells changed since 2009, and what limits their commercial use? Give a cited report.': ['task'],
+    'Find 20 leads with sources: Indian companies that sell HR or payroll software to small businesses.': ['task'],
+  };
+  for (const [s, k] of Object.entries(needs)) assert.deepEqual(starts(s).filter(x => k.includes(x)), k, s);
+  for (const s of ['What is the capital of Australia? Answer in one sentence.', 'Write a detailed 1500-word essay on the history of the printing press, with many sections. Do not stop early.', 'Tell me in two lines what you do.', 'What is 7 times 6? Answer with the number only.', 'Reply with one word: ready', 'Make a revision plan for my exams', 'Plan a 6-week course',
+    'Give me a simple three-step plan to start a balcony herb garden. Keep it short.', 'Plan a two-day trip to Jaipur for a family of four. Keep it short: a small table with day, morning, afternoon and evening.',
+    'Write me a short poem', 'Take a closer look at this plan', 'Book a tour operator for Jaipur?', 'What is a supply chain?', 'Explain cash flow', 'What should I cook for dinner?', 'Compare my price with five nearby listings', 'Make a quiz from this file', 'Explain this file in plain words', 'Plan my day', 'Tell me the history of the scout movement'])
+    assert.deepEqual(starts(s), [], s);
+  // a name is a hand-off only when the owner hands the work over; the agent answering never counts
+  assert.equal(namesAgent('Ask the Operator to plan it', roster), true); assert.equal(namesAgent('@scout look into this', roster), true); assert.equal(namesAgent('Coder, fix the script', roster), true);
+  assert.equal(namesAgent('Take a closer look', roster), false); assert.equal(namesAgent('the scout movement', roster), false);
+  assert.deepEqual(starts('Coordinator, plan a two-day trip to Jaipur'), []);
+  // file_write: the file acceptance ask and the file chips keep it; plain asks do not get it
+  for (const s of ['Write a text file named acceptance-open-x.txt in the workspace containing the words: open level test.', 'Make a quiz from this file', 'Explain this file in plain words', 'Compare three products into a table file'])
+    assert.ok(fileAsk(s) || writeAsk(s), s);
+  for (const s of ['Give me a simple three-step plan to start a balcony herb garden. Keep it short.', 'Plan a two-day trip to Jaipur for a family of four. Keep it short: a small table with day, morning, afternoon and evening.', 'Write me a short poem', 'Write a detailed 1500-word essay on the history of the printing press, with many sections. Do not stop early.', 'Tell me in two lines what you do.'])
+    assert.ok(!fileAsk(s) && !writeAsk(s, { names: ['notes', 'reports', 'inbox'] }), s);
+});
+
+// ---- tools that start work beyond the turn, and file_write, are offered only when the ask is for them
+const STARTER_FAKES = [['task_create', 'tasks'], ['schedule_create', 'flows'], ['flow_create', 'flows'], ['travel_plan', 'life'], ['site_build', 'studio'], ['outreach_draft', 'sales'], ['file_write', 'files'], ['web_search', 'search']];
+const STARTER_NAMES = ['task_create', 'schedule_create', 'flow_create', 'travel_plan', 'site_build', 'outreach_draft'];
+const starterDesk = async () => {
+  const seen = [];
+  const t = await testDesk({ modules: ['chat', 'agents'], script: (b) => { seen.push({ tools: (b.tools || []).map(x => x.function.name), sys: b.messages[0].content }); return 'Here it is.'; } });
+  for (const [name, module] of STARTER_FAKES) t.core.modules.tools.set(name, { module, name, description: name, parameters: { type: 'object', properties: {} }, async run() { return { ok: false, error: 'not in this test' }; } });
+  const offer = async (chatId, text) => { seen.length = 0; await t.call(`/api/m/chat/chats/${chatId}/send`, { body: { text } }); await waitReply(t, chatId); return seen[0]; };
+  return { t, offer };
+};
+
+test('a plain ask is answered in the chat: no task, schedule, chain, web plan, site, drafts or file write is offered, and the prompt says so', async () => {
+  const { t, offer } = await starterDesk();
+  try {
+    const plain = ['Plan a two-day trip to Jaipur for a family of four. Keep it short: a small table with day, morning, afternoon and evening.', 'Give me a simple three-step plan to start a balcony herb garden. Keep it short.', 'Write me a short poem about the monsoon.'];
+    for (const chatId of ['dm-coordinator', 'everyone', 'dm-operator']) for (const ask of plain) {
+      const o = await offer(chatId, ask);
+      assert.deepEqual(o.tools.filter(n => STARTER_NAMES.includes(n) || n === 'file_write'), [], `${chatId}: ${ask}`);
+      assert.ok(o.tools.includes('web_search'), 'a quick web search stays');
+      assert.match(o.sys, /background task/i); assert.match(o.sys, /Answer a plain question yourself, here in the chat/);
+    }
+    // the ask says it should outlive the turn, or names who should do it, or is heavy: the task tool is offered
+    for (const ask of ['As a background task, write a 400-word brief on the history of the bicycle. I am closing the window and will come back for it.', 'Make this a background task: plan a two-day trip to Jaipur', 'Plan the Jaipur trip and keep working on it while I am away.', 'Ask the Operator to plan a two-day trip to Jaipur.', 'Research in depth: the Jaipur forts. Give a cited report.']) {
+      const o = await offer('dm-coordinator', ask);
+      assert.ok(o.tools.includes('task_create'), ask);
+    }
+    // an agent the owner hired is read from the roster, not from a fixed list
+    await t.call('/api/m/agents/hire', { body: { name: 'Meera' } });
+    assert.ok((await offer('dm-coordinator', 'Ask Meera to plan a two-day trip to Jaipur.')).tools.includes('task_create'));
+    assert.ok(!(await offer('dm-coordinator', 'Plan a two-day trip to Jaipur.')).tools.includes('task_create'));
+    // each other starter opens on its own words
+    const o = async (ask) => (await offer('dm-coordinator', ask)).tools;
+    assert.ok((await o('Every morning at 8, brief me.')).includes('schedule_create'));
+    assert.ok((await o('In one minute, brief me.')).includes('schedule_create'));
+    assert.ok((await o('Make a flow: Scout researches, then Coder writes it up.')).includes('flow_create'));
+    assert.ok((await o('Plan a day in Jaipur with sources and map links.')).includes('travel_plan'));
+    assert.ok((await o('Build a one-page website for my bakery.')).includes('site_build'));
+    assert.ok((await o('Draft outreach to the top five.')).includes('outreach_draft'));
+    // Closer's own chat keeps outreach drafts for any ask, as Scout's keeps research
+    assert.ok((await offer('dm-closer', 'Give me a simple three-step plan to start a balcony herb garden.')).tools.includes('outreach_draft'));
+    // the side panel's "Create a routine" prefill
+    assert.ok((await o('Every morning at 8, check the gold price')).includes('schedule_create'));
+  } finally { await t.close(); }
+});
+
+test('file_write is offered for a file ask, a named workspace file or folder, a write/save/edit verb or an attached file; held back otherwise', async () => {
+  const fs = await import('node:fs');
+  const { t, offer } = await starterDesk();
+  try {
+    fs.writeFileSync(t.core.storage.workspacePath('notes.md'), 'one\n');
+    const has = async (ask, chatId = 'dm-coder') => (await offer(chatId, ask)).tools.includes('file_write');
+    for (const ask of ['Tidy up my notes.', 'add a line to todo.md', 'Write a note in the notes folder.', 'Update my plan.', 'Edit the intro paragraph.', 'Note this down: call Ravi.', 'Rename it to plan-v2', 'Append the totals', 'Write it to plan.md', `Write a text file named acceptance-open-x.txt in the workspace containing the words: open level test.`, 'Save the plan'])
+      assert.equal(await has(ask), true, ask);
+    for (const ask of ['Write me a short poem', 'Give me a simple three-step plan to start a balcony herb garden. Keep it short.', 'Plan a two-day trip to Jaipur. Keep it short: a small table with day, morning, afternoon and evening.', 'Update me on the cricket score', 'What notes does a C major chord have?', 'Tell me about bicycles.'])
+      assert.equal(await has(ask), false, ask);
+    // an attached file opens it for the chat it is in
+    assert.equal(await has('summarise this', 'dm-scout'), false, 'no attachment yet');
+    const r = await fetch(`${t.base}/api/m/chat/chats/dm-scout/upload?name=list.txt`, { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'x-apd-session': t.desk.session }, body: 'milk\neggs\n' });
+    assert.equal(r.status, 200);
+    assert.equal(await has('summarise this', 'dm-scout'), true);
+  } finally { await t.close(); }
+  const { writeAsk } = await import('./coordinator.js');
+  assert.equal(writeAsk('Write me a short poem'), false);
+  assert.equal(writeAsk('write it down'), true);
+  assert.equal(writeAsk('Update the phone prices.'), true);
+  assert.equal(writeAsk('Give me an update'), false);
+});
+
+test('a table in a reply: the bubble widens as soon as the table starts, short cells stay on one line, and the chat styles keep words whole', async () => {
+  const { hasTable, shortCell } = await import('./ui-text.js');
+  assert.equal(hasTable('Here is the plan:\n| Day | Morning |\n|---|---|\n| Day 1 | Amber Fort |'), true);
+  assert.equal(hasTable('Here is the plan:\n\n| Day | Morning | Afternoon |\n|-----|--'), true, 'while it streams, once the line under the header starts');
+  assert.equal(hasTable('| Day | Morning |'), false, 'a header alone is not a table yet');
+  assert.equal(hasTable('Use a | b in the shell.'), false);
+  for (const s of ['Day 1', 'Amber Fort', 'Day', '₹1,200']) assert.equal(shortCell(s), true, s);
+  for (const s of ['Visit Amber Fort early, then lunch', 'Hawa Mahal and the City Palace museum', 'https://example.com/a/long/path']) assert.equal(shortCell(s), false, s);
+  // the rule that let a cell break anywhere stays outside tables; header cells never break inside a word; wide tables scroll
+  const src = (await import('node:fs')).readFileSync(new URL('./ui.js', import.meta.url), 'utf8');
+  assert.match(src, /\.chatv \.msg th,\s*\.chatv \.msg td\{[^}]*overflow-wrap:normal;word-break:normal/);
+  assert.match(src, /\.chatv \.msg th\{[^}]*hyphens:none/);
+  assert.match(src, /\.chatv \.msg \.scroll\{[^}]*overflow-x:auto/);
+  assert.match(src, /\.chatv \.msg\.tbl\{[^}]*max-width:100%/);
 });

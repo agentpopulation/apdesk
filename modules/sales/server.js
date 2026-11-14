@@ -2,7 +2,7 @@
 // Nothing is sent from here: an approved draft is handed to Mail, which asserts the send.person approval right before sending.
 import { SalesStore, STAGES, CHANNELS, stageId, stageLabel } from './store.js';
 import { parseDraftReply } from './parse.js';
-import { findLeads } from './find.js';
+import { findLeads, closingLine, leadCounts } from './find.js';
 import { companyKey, sameCompany } from './rules.js';
 import { unsupportedClaims, removeSentences, senderNameProblems, stripSenderNames, greetingNameProblems, fillerSentences, plainDefault, languageOf, scriptProblem } from './claims.js';
 
@@ -83,10 +83,12 @@ export async function activate(ctx) {
         const tableCard = leadsCard(saved, { query, reason, asked: count, where });
         card(`read ${r.pagesRead} pages, ${saved.length} leads`, 1, 'done');
         job.card(tableCard);
-        const siteLine = r.sites ? ` ${r.sites.own} of ${saved.length} have their own site as the main source${r.sites.emails ? `; ${r.sites.emails} mail address${r.sites.emails === 1 ? '' : 'es'} taken from those sites` : ''}. Contacts a page did not give are marked not checked.` : '';
+        // every number in this line is counted over the rows saved and shown now (closingLine), never over candidates checked
+        const siteLine = saved.length ? ' ' + closingLine(saved) : '';
+        const sites = { ...(r.sites || {}), ...leadCounts(saved) };
         const text = (saved.length >= count ? `Found ${saved.length} leads, each with a page that names it${where ? ` and places it in ${where}` : ''}. They are in the pipeline as New. Nothing is sent.`
           : `${saved.length} of ${count} found${where ? ` that could be placed in ${where}` : ''}: ${reason}. They are in the pipeline as New. Nothing is sent. Press Find more to keep looking from here.`) + siteLine;
-        return { leadIds: saved.map(l => l.id), sites: r.sites, searches: r.searches, ms: r.ms, rounds: r.rounds, extraRounds: r.extraRounds, found: saved.length, asked: count, pagesRead: r.pagesRead, queries: r.queries, rejected: r.rejected, reason, label: r.label, text, card: tableCard };
+        return { leadIds: saved.map(l => l.id), sites, searches: r.searches, ms: r.ms, rounds: r.rounds, extraRounds: r.extraRounds, found: saved.length, asked: count, pagesRead: r.pagesRead, queries: r.queries, rejected: r.rejected, reason, label: r.label, text, card: tableCard };
       } });
     return { ok: true, jobId: job.id, text: `Looking for ${count} leads now. Progress and the table will appear here.` };
   }

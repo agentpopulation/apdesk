@@ -136,6 +136,23 @@ test('brief: section titles show the true count; cut sections end with "and N mo
   } finally { await t.close(); }
 });
 
+test('brief: the desk\'s own upkeep is left out of what was done; a failed upkeep job still shows', async () => {
+  const t = await testDesk({ modules: ['tasks', 'flows'], script: () => 'x' });
+  try {
+    const mine = await t.core.jobs.start({ kind: 'tasks.run', title: 'Compare suppliers', agentId: 'scout', run: async () => ({ summary: 'ok' }) });
+    const tidy = await t.core.jobs.start({ kind: 'memory.dream', title: 'Dream: tidy memories', quiet: true, run: async () => ({ merged: 0 }) });
+    const broke = await t.core.jobs.start({ kind: 'memory.dream', title: 'Dream: broke', quiet: true, run: async () => { throw new Error('no model'); } });
+    for (const j of [mine, tidy, broke]) await t.core.jobs.wait(j.id, 5000);
+    const ctx = { settings: t.core.settings, jobs: t.core.jobs, approval: { listPending: () => [] }, agents: t.core.agents, modules: { api: () => null } };
+    const facts = await gatherBrief(ctx, {});
+    const text = composeBrief({ facts });
+    assert.match(text, /Compare suppliers: done/);
+    assert.doesNotMatch(text, /tidy memories/);
+    assert.match(text, /Dream: broke: failed/);
+    assert.equal(facts.counts.done, 1);
+  } finally { await t.close(); }
+});
+
 test('brief opening line is built from counts; the model prompt and keepCheckedNumbers are gone', () => {
   assert.equal(openingLine({ done: 2, unfinished: 1, waiting: 0 }), '2 finished, 1 did not finish, nothing waits for you.');
   assert.equal(openingLine({ running: 1, waiting: 3 }), '1 running, 3 wait for you.');

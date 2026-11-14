@@ -5,6 +5,7 @@ const CSS = `
 .cn-main{display:flex;flex-direction:column;gap:12px;min-height:0;overflow:auto;padding:2px}
 .cn-side{display:flex;flex-direction:column;gap:6px;min-height:0;overflow:auto}
 .cn-side .card{padding:9px 12px;width:100%}
+.cn-side .cn-vote{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;min-width:0;border-radius:10px}
 .cn-ans{max-height:min(240px,24vh);overflow:auto;white-space:pre-wrap}
 .cn-q{flex:1;min-width:220px}
 .cn select{max-width:100%;font-size:12.5px}
@@ -50,7 +51,7 @@ async function render(el, ui, routeArg) {
     side.replaceChildren(h('div', { class: 'row' }, h('b', null, 'Past Verdicts'), h('span', { class: 'grow' }), btn('New question', { kind: 'ghost sm', onClick: async () => { st.roomId = null; st.room = null; st.run = null; await loadDefaults(); paint(); paintSide(); } })),
       ...(r.rooms.length ? r.rooms.map(rm => h('button', { class: 'card hov', 'aria-current': rm.id === st.roomId ? 'true' : null, style: rm.id === st.roomId ? { borderColor: 'var(--accent)' } : null, onclick: async () => { st.roomId = rm.id; await loadRoom(rm.id); paint(); paintSide(); } },
         h('b', { style: { display: 'block', fontSize: '13px' } }, rm.question.length > 90 ? rm.question.slice(0, 89) + '…' : rm.question),
-        h('div', { class: 'row', style: { marginTop: '4px' } }, rm.voteLine ? pill(rm.voteLine, 'ok') : pill(STATUS[rm.status] || 'Not run', rm.status === 'running' ? 'run' : rm.status === 'failed' ? 'stop' : ''), h('span', { class: 'sub' }, fmt.when(rm.updated))))) : [empty('No Council has met yet.')]));
+        h('div', { class: 'row', style: { marginTop: '4px' } }, rm.voteLine ? h('span', { class: 'pill ok cn-vote', 'data-vote': '', title: rm.voteLine }, rm.voteLine) : pill(STATUS[rm.status] || 'Not run', rm.status === 'running' ? 'run' : rm.status === 'failed' ? 'stop' : ''), h('span', { class: 'sub' }, fmt.when(rm.updated))))) : [empty('No Council has met yet.')]));
   };
   const STATUS = { running: 'Meeting', done: 'Done', failed: 'Failed', stopped: 'Stopped', interrupted: 'Interrupted' };
 

@@ -62,7 +62,7 @@ Draft an email to the first lead. I will approve it before it goes.
 ## 📸 A quick look
 
 <p align="center">
-  <img src="docs/images/models.png" alt="The Models page: the free router is on from the first run, and every other provider waits for your key" width="100%">
+  <img src="docs/images/chat.png" alt="The Chat page: a real reply from the Coordinator, answered by a free model through the built-in router, with the team on the left" width="100%">
 </p>
 
 <table>
@@ -76,7 +76,7 @@ Draft an email to the first lead. I will approve it before it goes.
   </tr>
 </table>
 
-<sub>Screenshots taken from this code on 15 Nov 2026, on a fresh desk with no keys added.</sub>
+<sub>Screenshots taken from this code on 15 Nov 2026, on a fresh desk with no keys added. The chat reply is a real answer from a free model, not a mock-up.</sub>
 
 ## 🚀 Quick start
 
@@ -130,6 +130,10 @@ Every model call in the whole desk goes through one door, so one place decides w
 | **Agent Population Router** | Built in. Uses free models that need no sign-in. If you run your own router at `http://127.0.0.1:8787/v1`, the desk uses that. | Free |
 | **Ollama** | Local models at `http://127.0.0.1:11434`. The only source used when you go Offline. | Free, on your hardware |
 | **Your own keys** | OpenRouter, OpenAI, Anthropic, Groq, Gemini, or any OpenAI-compatible address. Typed in under Models. Several keys per provider. | Yours to decide |
+
+<p align="center">
+  <img src="docs/images/models.png" alt="The Models page: the free router is on from the first run, and every other provider waits for your key" width="100%">
+</p>
 
 OpenRouter is used with **free models only** until you switch paid models on in Settings › Payments and spend.
 
@@ -194,22 +198,23 @@ This is version **0.1.0**, a first public release. We only state what was measur
 
 | What was measured | Result | When |
 |---|---|---|
-| Automated tests (`npm test`), Linux x64, Node 22 | 234 of 234 pass | 15 Nov 2026 |
+| Automated tests (`npm test`), Linux x64, Node 22 | 242 of 242 pass | 15 Nov 2026 |
 | Start-up check (`node tools/smoke.mjs --quick`): every module loads and every page opens in a real browser | 30 modules found, 16 on, 13 switch on and off, 0 pages with problems | 15 Nov 2026 |
-| 17 acceptance asks, answered by real free models, one full run | 14 passed, 2 failed, 1 not checked | 14 Nov 2026, on the build before this one |
-| Safety probes in `tools/safety` | All hold, with one accepted limit listed below | 14 Nov 2026 |
+| 17 acceptance asks, answered by real free models, one full run | 14 passed, 2 failed, 1 not checked | 15 Nov 2026, on the build before the last round of changes |
+| Safety probes in `tools/safety` | All hold, with one accepted limit listed below | 15 Nov 2026 |
 
 This exact code has not yet had its own full run of the 17 asks. When it has, this table will be updated.
 
 **Known limits today**
 
-- **No run has passed all 17 asks yet.** The two that failed last time: the compare-table ask (the reply stated values that the file itself marks "not checked") and the find-leads ask (some leads were from the wrong country).
+- **No run has passed all 17 asks yet.** The two that failed in the last full run: the Panic ask (a long writing request was saved as a file instead of streaming, so Panic could not be pressed on running work) and the find-leads ask (17 of the 20 leads asked for, with a wrong count line). Both have been changed since.
 - **Local models through Ollama are wired but not checked.** No test run so far had Ollama installed.
 - **Free models can be slow or busy.** The chat shows what it is waiting for, and a turn ends with a plain message if no model answers within 150 seconds.
 - **PDF documents made by the desk leave out Hindi and other Indian-script text.** The built-in PDF font has no such letters. Seen on 15 Nov 2026.
 - **Results change with the model that answers.** Weak free models call the wrong tool more often. Give an agent a stronger model for research, leads and tables.
 - **Offline has edges.** It does not cover programs the desk starts as separate processes, or DNS lookups.
-- **The code sandbox is not isolation** unless Docker is installed. Its approval card says so.
+- **The code sandbox is not isolation** unless Docker is installed. Code you approve can read files on your PC, including the desk's own database. Its approval card says so, and the Code module is off until you switch it on.
+- **A lead search may return fewer leads than you asked for.** It keeps only companies that a page it read places in your country and shows to sell what you asked about, and it says how many it found and why.
 - **After Panic, a module's own timer keeps ticking.** Everything it tries through the desk's doors is refused while halted.
 
 The full list is in [`CHANGELOG.md`](CHANGELOG.md) under "Known weak points". Found something? Tell us on X.
