@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apd-session" content="__APD_SESSION__">
+<meta name="apd-version" content="__APD_VERSION__">
+<title>AP Desk</title>
+<script src="/ui/boot.js"></script>
+<link rel="stylesheet" href="/ui/shell.css">
+</head>
+<body>
+<div class="win" id="win">
+  <div class="bar">
+    <div><button class="home" id="home" aria-label="Home" title="Home"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M2 7.5 8 2.5l6 5V14H9.8v-4H6.2v4H2z"/></svg></button><span class="name">AP Desk</span></div>
+    <nav class="menu" id="menu" aria-label="Places"></nav>
+    <div><button class="badge wait" id="waiting" hidden title="Waiting for you"></button><button class="tool" id="theme" title="White or black theme">Black theme</button><button class="panic" id="panic" title="Stop everything now">Panic</button></div>
+  </div>
+  <div class="pane" id="pane">
+    <section class="view" id="view"></section>
+    <div class="pop" id="pop" hidden></div>
+    <div class="halt" id="halt" hidden><div class="card"><b>Everything is stopped</b><span>All agents, jobs and browsers have halted. Nothing runs until you say so.</span><button class="btn" id="resume">Resume</button></div></div>
+    <div class="modal" id="modal" hidden></div>
+  </div>
+  <div class="onb" id="onb" hidden><div class="card"><div><h2>What do you mainly use the desk for?</h2><p class="sub">This only arranges the desk for you. You can change it or switch everything on in Settings.</p></div><div class="roles" id="roles"></div><div class="row"><span class="grow"></span><button class="btn ghost" id="onb-skip">Skip, show everything</button></div></div></div>
+</div>
+<div class="toasts" id="toasts"></div>
+<script type="module" src="/ui/shell.js"></script>
+</body>
+</html>

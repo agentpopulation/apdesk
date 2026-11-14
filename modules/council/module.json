@@ -1,0 +1,19 @@
+{
+  "id": "council",
+  "number": 10,
+  "name": "Council",
+  "description": "Three seats answer, rank each other without names, and give one Verdict. Each seat names the model that wrote it.",
+  "kind": "core",
+  "defaultOn": true,
+  "menu": [],
+  "pages": ["council"],
+  "settings": [],
+  "agentTabs": [],
+  "tools": ["council_ask"],
+  "requires": [],
+  "npm": {},
+  "attribution": [
+    "karpathy/llm-council (no licence stated in the repo) https://github.com/karpathy/llm-council: the three-stage method (answer, anonymous ranking, chairman); no code or prompt text copied"
+  ],
+  "status": "works"
+}

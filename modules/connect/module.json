@@ -1,0 +1,20 @@
+{
+  "id": "connect",
+  "number": 26,
+  "name": "Connect (MCP)",
+  "description": "Add MCP servers (a program or a web address). Their tools become tools your agents can use, when you tick them.",
+  "kind": "switch-on",
+  "defaultOn": false,
+  "menu": [{ "id": "connect", "label": "Connect", "order": 111 }],
+  "pages": ["connect"],
+  "settings": [],
+  "agentTabs": [],
+  "tools": ["mcp_call"],
+  "requires": [],
+  "npm": { "@modelcontextprotocol/sdk": "^1.32.2" },
+  "attribution": [
+    "@modelcontextprotocol/sdk (MIT) https://github.com/modelcontextprotocol/typescript-sdk: the MCP client",
+    "@modelcontextprotocol/server-filesystem (MIT) https://github.com/modelcontextprotocol/servers: the reference server used for the check, fetched with npx"
+  ],
+  "status": "partial"
+}

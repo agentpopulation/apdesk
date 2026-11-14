@@ -1,0 +1,17 @@
+{
+  "id": "flows",
+  "number": 12,
+  "name": "Flows and Schedules",
+  "description": "Schedules that run on time in your zone, the morning brief, and chains of agents. Every run shows in Tasks.",
+  "kind": "core",
+  "defaultOn": true,
+  "menu": [],
+  "pages": ["flows"],
+  "settings": [],
+  "agentTabs": [],
+  "tools": ["schedule_create", "schedule_list", "flow_create"],
+  "requires": [],
+  "npm": { "croner": "^11.0.0" },
+  "attribution": ["croner (MIT) https://github.com/Hexagon/croner"],
+  "status": "works"
+}

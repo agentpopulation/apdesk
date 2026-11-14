@@ -1,0 +1,17 @@
+{
+  "id": "social",
+  "number": 19,
+  "name": "Social",
+  "description": "Write posts for LinkedIn, X, Facebook, Instagram, Reddit and YouTube, rewrite them per network, and approve each one before it goes out.",
+  "kind": "switch-on",
+  "defaultOn": false,
+  "menu": [{ "id": "social", "label": "Social", "order": 30 }],
+  "pages": ["social"],
+  "settings": [{ "id": "social", "label": "Social accounts" }],
+  "agentTabs": [],
+  "tools": ["social_draft"],
+  "requires": [],
+  "npm": {},
+  "attribution": [],
+  "status": "partial"
+}

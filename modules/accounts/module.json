@@ -1,0 +1,18 @@
+{
+  "id": "accounts",
+  "number": 23,
+  "name": "Accounts and Lock",
+  "description": "A screen lock for the desk's window with a PIN, optional two-step codes from an authenticator app, and locking after a quiet time.",
+  "kind": "switch-on",
+  "defaultOn": false,
+  "boot": true,
+  "menu": [],
+  "pages": [],
+  "settings": [{ "id": "accounts", "label": "Accounts and lock" }],
+  "agentTabs": [],
+  "tools": [],
+  "requires": [],
+  "npm": {},
+  "attribution": [],
+  "status": "works"
+}

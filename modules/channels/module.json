@@ -1,0 +1,17 @@
+{
+  "id": "channels",
+  "number": 20,
+  "name": "Channels",
+  "description": "Talk to your desk from Telegram on your phone, and get a push on ntfy when a job finishes or something waits for you. Messages to anyone else wait for your approval.",
+  "kind": "switch-on",
+  "defaultOn": false,
+  "menu": [],
+  "pages": [],
+  "settings": [{ "id": "channels", "label": "Channels and mail" }],
+  "agentTabs": [],
+  "tools": ["channel_draft"],
+  "requires": [],
+  "npm": {},
+  "attribution": ["ntfy (Apache-2.0 / GPL-2.0) https://github.com/binwiederhier/ntfy: push protocol used over plain HTTP"],
+  "status": "partial"
+}

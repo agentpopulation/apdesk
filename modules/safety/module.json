@@ -1,0 +1,17 @@
+{
+  "id": "safety",
+  "number": 14,
+  "name": "Safety",
+  "description": "The security level, auto-approve, what each level does, the waiting list, a check of the doors, and a guard that marks instructions hidden in web pages, mail and files.",
+  "kind": "core",
+  "defaultOn": true,
+  "menu": [],
+  "pages": [],
+  "settings": [{ "id": "security", "label": "Security" }],
+  "agentTabs": [],
+  "tools": [],
+  "requires": [],
+  "npm": {},
+  "attribution": [],
+  "status": "works"
+}

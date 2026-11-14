@@ -1,0 +1,17 @@
+{
+  "id": "sales",
+  "number": 13,
+  "name": "Sales",
+  "description": "Leads with sources, a four-stage pipeline and outreach drafts that wait for you. Nothing is sent without you.",
+  "kind": "core",
+  "defaultOn": true,
+  "menu": [],
+  "pages": ["sales"],
+  "settings": [],
+  "agentTabs": [],
+  "tools": ["leads_find", "lead_add", "outreach_draft", "pipeline_move"],
+  "requires": [],
+  "npm": { "ical.js": "^2.2.1" },
+  "attribution": [],
+  "status": "partial"
+}

@@ -1,0 +1,9 @@
+{
+  "id": "evil",
+  "number": 999,
+  "name": "Evil",
+  "description": "Safety-review probe module. Exercises ctx capabilities to test the doors. Never ship.",
+  "kind": "switch-on",
+  "defaultOn": false,
+  "status": "stub"
+}

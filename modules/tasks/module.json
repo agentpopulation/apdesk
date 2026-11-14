@@ -1,0 +1,17 @@
+{
+  "id": "tasks",
+  "number": 11,
+  "name": "Tasks",
+  "description": "Everything running, waiting for you and done. Tasks keep working when the browser is closed.",
+  "kind": "core",
+  "defaultOn": true,
+  "menu": [],
+  "pages": ["tasks"],
+  "settings": [],
+  "agentTabs": [],
+  "tools": ["task_create", "task_list"],
+  "requires": [],
+  "npm": {},
+  "attribution": [],
+  "status": "works"
+}

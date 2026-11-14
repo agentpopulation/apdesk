@@ -1,0 +1,17 @@
+{
+  "id": "store",
+  "number": 16,
+  "name": "Module Store",
+  "description": "All 30 modules as cards: what each does, whether it is on, what it adds, its honest status and its open-source parts. Switch the optional ones on and off here.",
+  "kind": "core",
+  "defaultOn": true,
+  "menu": [],
+  "pages": [],
+  "settings": [{ "id": "modules", "label": "Modules" }],
+  "agentTabs": [],
+  "tools": [],
+  "requires": [],
+  "npm": {},
+  "attribution": [],
+  "status": "works"
+}

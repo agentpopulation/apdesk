@@ -1,0 +1,39 @@
+{
+  "name": "agent-population-desk",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AP Desk (Agent Population Desk): a local desktop of agents. One door for models, one door for approvals, Panic everywhere.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node app/server.js",
+    "test": "node --test --test-concurrency=1 \"test/**/*.test.js\" \"modules/**/*.test.js\"",
+    "test:core": "node --test --test-concurrency=1 \"test/*.test.js\"",
+    "acceptance": "node tools/acceptance.mjs",
+    "zip": "node tools/make-zip.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@mozilla/readability": "^0.6.0",
+    "adm-zip": "^0.6.1",
+    "croner": "^11.0.0",
+    "docx": "^9.15.3",
+    "dompurify": "^3.4.17",
+    "exceljs": "^4.4.0",
+    "ical.js": "^2.2.1",
+    "imapflow": "^2.11.0",
+    "linkedom": "^0.18.15",
+    "mailparser": "^3.14.3",
+    "marked": "^18.2.0",
+    "nodemailer": "^10.5.0",
+    "pdfkit": "^0.20.2",
+    "playwright-core": "^1.64.1",
+    "smtp-server": "^3.21.4",
+    "systeminformation": "^5.33.21",
+    "turndown": "^7.2.5",
+    "unpdf": "^1.9.1"
+  }
+}

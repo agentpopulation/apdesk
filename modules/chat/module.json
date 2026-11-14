@@ -1,0 +1,17 @@
+{
+  "id": "chat",
+  "number": 1,
+  "name": "Chat and Coordinator",
+  "description": "Chats with one agent or a group. The Coordinator answers, uses tools and hands work to the agent that owns it.",
+  "kind": "core",
+  "defaultOn": true,
+  "menu": [],
+  "pages": ["chat"],
+  "settings": [],
+  "agentTabs": [],
+  "tools": [],
+  "requires": [],
+  "npm": {},
+  "attribution": ["marked (MIT) https://github.com/markedjs/marked", "DOMPurify (Apache-2.0 or MPL-2.0) https://github.com/cure53/DOMPurify"],
+  "status": "works"
+}

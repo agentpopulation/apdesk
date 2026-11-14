@@ -1,0 +1,10 @@
+// Mailbox presets: IMAP and SMTP hosts and a setup note for common providers.
+export const PROVIDERS = Object.freeze({
+  gmail: { label: 'Gmail / Google Workspace', domains: ['gmail.com', 'googlemail.com'], imap: { host: 'imap.gmail.com', port: 993, tls: 'ssl' }, smtp: { host: 'smtp.gmail.com', port: 465, tls: 'ssl' }, note: 'Turn on 2-Step Verification, then create an app password. One app password works for reading and sending.' },
+  outlook: { label: 'Outlook.com / Microsoft 365', domains: ['outlook.com', 'hotmail.com', 'live.com', 'msn.com'], imap: { host: 'outlook.office365.com', port: 993, tls: 'ssl' }, smtp: { host: 'smtp.office365.com', port: 587, tls: 'starttls' }, note: 'Microsoft has turned off password sign-in for many accounts. If sign-in fails, this mailbox needs Microsoft sign-in, which the desk does not have yet.' },
+  yahoo: { label: 'Yahoo Mail', domains: ['yahoo.com', 'ymail.com'], imap: { host: 'imap.mail.yahoo.com', port: 993, tls: 'ssl' }, smtp: { host: 'smtp.mail.yahoo.com', port: 465, tls: 'ssl' }, note: 'Needs an app password.' },
+  icloud: { label: 'iCloud Mail', domains: ['icloud.com', 'me.com', 'mac.com'], imap: { host: 'imap.mail.me.com', port: 993, tls: 'ssl' }, smtp: { host: 'smtp.mail.me.com', port: 587, tls: 'starttls' }, note: 'Create an app-specific password in your Apple Account.' },
+  zoho: { label: 'Zoho Mail', domains: ['zoho.com', 'zohomail.com', 'zohomail.in'], imap: { host: 'imap.zoho.com', port: 993, tls: 'ssl' }, smtp: { host: 'smtp.zoho.com', port: 465, tls: 'ssl' }, note: 'Turn on IMAP in Zoho Mail settings and use an app password. India accounts use imap.zoho.in and smtp.zoho.in.' },
+  other: { label: 'Other mailbox', domains: [], imap: { host: '', port: 993, tls: 'ssl' }, smtp: { host: '', port: 465, tls: 'ssl' }, note: 'Ask your mail provider for the IMAP and SMTP server names.' },
+});
+export function presetFor(email) { const d = String(email || '').split('@')[1]?.toLowerCase() || ''; return Object.entries(PROVIDERS).find(([, p]) => p.domains.includes(d))?.[0] || 'other'; }

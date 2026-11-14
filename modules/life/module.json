@@ -1,0 +1,21 @@
+{
+  "id": "life",
+  "number": 28,
+  "name": "Life",
+  "description": "Weather for your city, a day plan for a trip with its sources, and exchange rates. Off until you want it.",
+  "kind": "switch-on",
+  "defaultOn": false,
+  "menu": [{ "id": "life", "label": "Life", "order": 112 }],
+  "pages": ["life"],
+  "settings": [],
+  "agentTabs": [],
+  "tools": ["weather", "travel_plan"],
+  "requires": [],
+  "npm": {},
+  "attribution": [
+    "Open-Meteo (CC BY 4.0 data, AGPL-3.0 server) https://open-meteo.com: keyless forecast",
+    "Frankfurter (MIT) https://github.com/lineofflight/frankfurter: keyless exchange rates from the European Central Bank",
+    "OpenStreetMap (ODbL) https://www.openstreetmap.org: map links"
+  ],
+  "status": "works"
+}

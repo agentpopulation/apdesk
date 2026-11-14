@@ -1,0 +1,17 @@
+{
+  "id": "mail",
+  "number": 17,
+  "name": "Mail",
+  "description": "Inbox, drafts and allowed senders. Nothing is sent without you.",
+  "kind": "switch-on",
+  "defaultOn": false,
+  "menu": [{ "id": "mail", "label": "Mail", "order": 90 }],
+  "pages": ["mail"],
+  "settings": [{ "id": "mail", "label": "Mail accounts" }],
+  "agentTabs": [],
+  "tools": ["mail_draft"],
+  "requires": [],
+  "npm": { "nodemailer": "^10.5.0", "imapflow": "^2.11.0", "mailparser": "^3.14.3", "smtp-server": "^3.21.4" },
+  "attribution": ["nodemailer (MIT-0) https://github.com/nodemailer/nodemailer", "imapflow (MIT) https://github.com/postalsys/imapflow", "mailparser (MIT) https://github.com/nodemailer/mailparser", "smtp-server (MIT-0, real check only) https://github.com/nodemailer/smtp-server"],
+  "status": "partial"
+}

@@ -1,0 +1,17 @@
+{
+  "id": "browser",
+  "number": 5,
+  "name": "Browser and Computer",
+  "description": "Each agent has its own browser with its own profile. Watch it work, take over, hand back.",
+  "kind": "core",
+  "defaultOn": true,
+  "menu": [],
+  "pages": [],
+  "settings": [],
+  "agentTabs": ["computer"],
+  "tools": ["browser_task"],
+  "requires": [],
+  "npm": { "playwright-core": "^1.64.1" },
+  "attribution": ["Playwright (Apache-2.0) https://github.com/microsoft/playwright"],
+  "status": "works"
+}

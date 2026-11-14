@@ -1,0 +1,17 @@
+{
+  "id": "studio",
+  "number": 29,
+  "name": "Studio",
+  "description": "Build a small one-page website from a short brief, and replay a saved question against two models side by side.",
+  "kind": "switch-on",
+  "defaultOn": false,
+  "menu": [{ "id": "studio", "label": "Studio", "order": 113 }],
+  "pages": ["studio"],
+  "settings": [],
+  "agentTabs": [],
+  "tools": ["site_build"],
+  "requires": [],
+  "npm": {},
+  "attribution": [],
+  "status": "works"
+}

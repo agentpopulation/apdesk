@@ -1,0 +1,31 @@
+{
+  "id": "search",
+  "number": 3,
+  "name": "Search",
+  "description": "One web search and one page reader for every agent. Keyless first (your own SearXNG, DuckDuckGo, Wikipedia, Hacker News); Serper, Brave, Tavily, Exa or Jina when you add a key on the Models page.",
+  "kind": "core",
+  "defaultOn": true,
+  "menu": [],
+  "pages": [],
+  "settings": [],
+  "agentTabs": [],
+  "tools": [
+    "web_search",
+    "web_read"
+  ],
+  "requires": [],
+  "npm": {
+    "@mozilla/readability": "^0.6.0",
+    "linkedom": "^0.18.15",
+    "turndown": "^7.2.5",
+    "unpdf": "^1.9.1"
+  },
+  "attribution": [
+    "SearXNG (AGPL-3.0) https://github.com/searxng/searxng (optional sidecar, called over its JSON API)",
+    "@mozilla/readability (Apache-2.0)",
+    "linkedom (ISC)",
+    "turndown (MIT)",
+    "unpdf (MIT) https://github.com/unjs/unpdf"
+  ],
+  "status": "works"
+}

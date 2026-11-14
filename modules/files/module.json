@@ -1,0 +1,17 @@
+{
+  "id": "files",
+  "number": 6,
+  "name": "Files and Knowledge",
+  "description": "The workspace explorer, the Bin, folders you open on this PC, and the Knowledge folder agents read.",
+  "kind": "core",
+  "defaultOn": true,
+  "menu": [],
+  "pages": ["files"],
+  "settings": [],
+  "agentTabs": [],
+  "tools": ["file_write", "file_read", "file_list", "knowledge_search"],
+  "requires": [],
+  "npm": { "adm-zip": "^0.6.1", "unpdf": "^1.9.1" },
+  "attribution": ["adm-zip (MIT) https://github.com/cthackers/adm-zip", "unpdf (MIT) https://github.com/unjs/unpdf"],
+  "status": "works"
+}

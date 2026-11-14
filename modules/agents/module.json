@@ -1,0 +1,17 @@
+{
+  "id": "agents",
+  "number": 8,
+  "name": "Agents and Skills",
+  "description": "Hire and retire agents, their profile, skills and which tools each may use.",
+  "kind": "core",
+  "defaultOn": true,
+  "menu": [],
+  "pages": ["agents"],
+  "settings": [],
+  "agentTabs": ["profile", "tools"],
+  "tools": ["agent_update"],
+  "requires": [],
+  "npm": {},
+  "attribution": [],
+  "status": "works"
+}

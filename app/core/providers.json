@@ -1,0 +1,313 @@
+{
+ "note": "Keyed providers the model door knows. OpenAI-compatible unless api says otherwise. Prices are USD per million tokens, rough, for the spend estimate only; 0 means unknown or free.",
+ "providers": {
+  "openai": {
+   "name": "OpenAI",
+   "baseUrl": "https://api.openai.com/v1",
+   "api": "openai",
+   "env": "OPENAI_API_KEY",
+   "defaultModel": "gpt-4.1-mini",
+   "signup": "https://platform.openai.com/api-keys",
+   "tier": "paid"
+  },
+  "anthropic": {
+   "name": "Anthropic",
+   "baseUrl": "https://api.anthropic.com/v1",
+   "api": "anthropic",
+   "env": "ANTHROPIC_API_KEY",
+   "defaultModel": "claude-sonnet-5-5",
+   "signup": "https://console.anthropic.com/",
+   "tier": "paid"
+  },
+  "openrouter": {
+   "name": "OpenRouter",
+   "baseUrl": "https://openrouter.ai/api/v1",
+   "api": "openai",
+   "env": "OPENROUTER_API_KEY",
+   "defaultModel": "google/gemma-4-31b-it:free",
+   "signup": "https://openrouter.ai/keys",
+   "altModels": [
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "google/gemma-4-26b-a4b-it:free"
+   ],
+   "tier": "free-signup",
+   "freeNote": "Free models only (ids ending in :free). About 50 requests a day on a new account."
+  },
+  "groq": {
+   "name": "Groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "api": "openai",
+   "env": "GROQ_API_KEY",
+   "defaultModel": "llama-3.3-70b-versatile",
+   "signup": "https://console.groq.com/keys",
+   "tier": "free-signup",
+   "freeNote": "Free tier: about 30 requests a minute per model."
+  },
+  "gemini": {
+   "name": "Google Gemini",
+   "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+   "api": "openai",
+   "env": "GEMINI_API_KEY",
+   "defaultModel": "gemini-3.6-flash",
+   "signup": "https://aistudio.google.com/apikey",
+   "altModels": [
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite"
+   ],
+   "tier": "free-signup",
+   "freeNote": "Free tier from Google AI Studio. Google may use free-tier prompts to improve its models."
+  },
+  "mistral": {
+   "name": "Mistral",
+   "baseUrl": "https://api.mistral.ai/v1",
+   "api": "openai",
+   "env": "MISTRAL_API_KEY",
+   "defaultModel": "mistral-small-latest",
+   "signup": "https://console.mistral.ai/api-keys",
+   "tier": "free-signup",
+   "freeNote": "Free experiment tier with low limits."
+  },
+  "deepseek": {
+   "name": "DeepSeek",
+   "baseUrl": "https://api.deepseek.com/v1",
+   "api": "openai",
+   "env": "DEEPSEEK_API_KEY",
+   "defaultModel": "deepseek-chat",
+   "signup": "https://platform.deepseek.com/api_keys",
+   "tier": "paid"
+  },
+  "together": {
+   "name": "Together",
+   "baseUrl": "https://api.together.xyz/v1",
+   "api": "openai",
+   "env": "TOGETHER_API_KEY",
+   "defaultModel": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+   "signup": "https://api.together.ai/settings/api-keys",
+   "tier": "paid"
+  },
+  "fireworks": {
+   "name": "Fireworks",
+   "baseUrl": "https://api.fireworks.ai/inference/v1",
+   "api": "openai",
+   "env": "FIREWORKS_API_KEY",
+   "defaultModel": "accounts/fireworks/models/llama-v3p3-70b-instruct",
+   "signup": "https://fireworks.ai/account/api-keys",
+   "tier": "paid"
+  },
+  "cerebras": {
+   "name": "Cerebras",
+   "baseUrl": "https://api.cerebras.ai/v1",
+   "api": "openai",
+   "env": "CEREBRAS_API_KEY",
+   "defaultModel": "llama-3.3-70b",
+   "signup": "https://cloud.cerebras.ai/",
+   "tier": "free-signup",
+   "freeNote": "Free tier with daily token limits."
+  },
+  "xai": {
+   "name": "xAI",
+   "baseUrl": "https://api.x.ai/v1",
+   "api": "openai",
+   "env": "XAI_API_KEY",
+   "defaultModel": "grok-3-mini",
+   "signup": "https://console.x.ai/",
+   "tier": "paid"
+  },
+  "nvidia": {
+   "name": "NVIDIA NIM",
+   "baseUrl": "https://integrate.api.nvidia.com/v1",
+   "api": "openai",
+   "env": "NVIDIA_API_KEY",
+   "defaultModel": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "signup": "https://build.nvidia.com/settings/api-keys",
+   "tier": "free-signup",
+   "freeNote": "Free credits on sign-up. Limits vary by model."
+  },
+  "zai": {
+   "name": "Z.ai GLM",
+   "baseUrl": "https://api.z.ai/api/paas/v4",
+   "api": "openai",
+   "env": "ZAI_API_KEY",
+   "defaultModel": "glm-4-flash",
+   "signup": "https://open.bigmodel.cn/usercenter/apikeys",
+   "tier": "free-signup",
+   "freeNote": "Free flash model, one request at a time."
+  },
+  "cohere": {
+   "name": "Cohere",
+   "baseUrl": "https://api.cohere.ai/compatibility/v1",
+   "api": "openai",
+   "env": "COHERE_API_KEY",
+   "defaultModel": "command-r-plus",
+   "signup": "https://dashboard.cohere.com/api-keys",
+   "tier": "free-signup",
+   "freeNote": "Trial key: about 1,000 requests a month."
+  },
+  "cloudflare": {
+   "name": "Cloudflare Workers AI",
+   "baseUrl": "",
+   "api": "openai",
+   "env": "CLOUDFLARE_API_TOKEN",
+   "defaultModel": "@cf/meta/llama-3.1-8b-instruct",
+   "signup": "https://dash.cloudflare.com/profile/api-tokens",
+   "tier": "free-signup",
+   "freeNote": "Daily free allowance. Needs your account id in the base URL: https://api.cloudflare.com/client/v4/accounts/<account id>/ai/v1"
+  },
+  "custom": {
+   "name": "Custom (OpenAI-compatible)",
+   "baseUrl": "",
+   "api": "openai",
+   "env": "LLM_API_KEY",
+   "defaultModel": "",
+   "signup": "",
+   "tier": "custom"
+  }
+ },
+ "prices": [
+  {
+   "match": "gpt-4.1-mini",
+   "in": 0.4,
+   "out": 1.6
+  },
+  {
+   "match": "gpt-4.1",
+   "in": 2,
+   "out": 8
+  },
+  {
+   "match": "gpt-4o-mini",
+   "in": 0.15,
+   "out": 0.6
+  },
+  {
+   "match": "gpt-4o",
+   "in": 2.5,
+   "out": 10
+  },
+  {
+   "match": "o4-mini",
+   "in": 1.1,
+   "out": 4.4
+  },
+  {
+   "match": "claude-opus",
+   "in": 15,
+   "out": 75
+  },
+  {
+   "match": "claude-sonnet",
+   "in": 3,
+   "out": 15
+  },
+  {
+   "match": "claude-haiku",
+   "in": 0.8,
+   "out": 4
+  },
+  {
+   "match": "gemini-2.5-pro",
+   "in": 1.25,
+   "out": 10
+  },
+  {
+   "match": "gemini-2.5-flash",
+   "in": 0.3,
+   "out": 2.5
+  },
+  {
+   "match": "gemini",
+   "in": 0.1,
+   "out": 0.4
+  },
+  {
+   "match": "deepseek",
+   "in": 0.27,
+   "out": 1.1
+  },
+  {
+   "match": "mistral-large",
+   "in": 2,
+   "out": 6
+  },
+  {
+   "match": "mistral",
+   "in": 0.2,
+   "out": 0.6
+  },
+  {
+   "match": "grok",
+   "in": 0.3,
+   "out": 0.5
+  },
+  {
+   "match": ":free",
+   "in": 0,
+   "out": 0
+  },
+  {
+   "match": "llama",
+   "in": 0.6,
+   "out": 0.6
+  }
+ ],
+ "usdRates": {
+  "USD": 1,
+  "INR": 88,
+  "EUR": 0.89,
+  "GBP": 0.76,
+  "AED": 3.67,
+  "SAR": 3.75,
+  "MYR": 4.06,
+  "CNY": 6.67
+ },
+ "freeRouter": {
+  "note": "No-sign-in upstreams for the built-in Agent Population Router. Re-checked 13 Nov 2026: OVH and Pollinations answered; LLM7 timed out; Kilo now needs a token and was dropped. Limits are tight (OVH about 2 requests a minute per model per address). Tool calls: gpt-oss-120b, Llama 3.3 70B and Qwen3.8-27B on OVH make native tool calls (checked 13 Nov); Mistral Small and Pollinations do not, so they are skipped when a call needs tools.",
+  "upstreams": [
+   {
+    "id": "ovh",
+    "name": "OVHcloud AI Endpoints",
+    "baseUrl": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+    "models": [
+     "gpt-oss-120b",
+     "Meta-Llama-3_3-70B-Instruct",
+     "Qwen3.8-27B",
+     "Mistral-Small-3.2-24B-Instruct-2506",
+     "gpt-oss-20b"
+    ],
+    "logsOrTrains": false,
+    "limit": "About 2 requests a minute per model per address",
+    "noTools": [
+     "Mistral-Small-3.2-24B-Instruct-2506"
+    ]
+   },
+   {
+    "id": "pollinations",
+    "name": "Pollinations",
+    "baseUrl": "https://text.pollinations.ai/openai",
+    "chatPath": "",
+    "models": [
+     "openai-fast"
+    ],
+    "logsOrTrains": "unknown",
+    "limit": "Shared; on 13 Nov its free budget ran out during the day and it answered with a notice, which the door treats as a failure",
+    "noTools": [
+     "openai-fast"
+    ]
+   },
+   {
+    "id": "llm7",
+    "name": "LLM7.io",
+    "baseUrl": "https://api.llm7.io/v1",
+    "models": [
+     "GLM-5.3-Flash",
+     "DeepSeek-V4-Flash-0731"
+    ],
+    "key": "unused",
+    "logsOrTrains": "unknown",
+    "limit": "Off by default: answered \"temporarily busy\" without a token on 13 Nov 2026",
+    "enabled": false
+   }
+  ]
+ }
+}

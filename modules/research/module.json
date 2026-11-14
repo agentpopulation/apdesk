@@ -1,0 +1,17 @@
+{
+  "id": "research",
+  "number": 4,
+  "name": "Research",
+  "description": "Deep research with numbered sources that were read and checked, the Council, and a swarm of agents working in parallel.",
+  "kind": "core",
+  "defaultOn": true,
+  "menu": [],
+  "pages": ["research"],
+  "settings": [],
+  "agentTabs": [],
+  "tools": ["research_deep", "research_swarm"],
+  "requires": ["search"],
+  "npm": { "pdfkit": "^0.20.2", "docx": "^9.15.3" },
+  "attribution": ["GPT Researcher (Apache-2.0) https://github.com/assafelovic/gpt-researcher: the plan, research, write flow, re-written", "pdfkit (MIT)", "docx (MIT)"],
+  "status": "works"
+}

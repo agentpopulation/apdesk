@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 300" width="1280" height="300" role="img" aria-label="You ask, the Coordinator hands work to agents, every model call and every risky action passes a door you control, and everything stays on your PC">
+  <defs>
+    <linearGradient id="a" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4f9dff"/><stop offset="1" stop-color="#6a1fd0"/></linearGradient>
+    <linearGradient id="b" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22c58b"/><stop offset="1" stop-color="#0e8f7a"/></linearGradient>
+    <linearGradient id="c" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb020"/><stop offset="1" stop-color="#ff7a3d"/></linearGradient>
+    <linearGradient id="d" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff5c7a"/><stop offset="1" stop-color="#e0308c"/></linearGradient>
+  </defs>
+  <rect width="1280" height="300" rx="24" fill="#12122a"/>
+  <g font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" fill="#ffffff" text-anchor="middle">
+    <g transform="translate(40 60)"><rect width="250" height="180" rx="20" fill="url(#a)"/><text x="125" y="62" font-size="40">💬</text><text x="125" y="108" font-size="24" font-weight="800">You ask</text><text x="125" y="138" font-size="16" opacity="0.95">in plain words,</text><text x="125" y="160" font-size="16" opacity="0.95">in the Chat page</text></g>
+    <g transform="translate(355 60)"><rect width="250" height="180" rx="20" fill="url(#b)"/><text x="125" y="62" font-size="40">🤝</text><text x="125" y="108" font-size="24" font-weight="800">Agents work</text><text x="125" y="138" font-size="16" opacity="0.95">search, read, write,</text><text x="125" y="160" font-size="16" opacity="0.95">browse, make files</text></g>
+    <g transform="translate(670 60)"><rect width="250" height="180" rx="20" fill="url(#c)"/><text x="125" y="62" font-size="40">🚪</text><text x="125" y="108" font-size="24" font-weight="800">Two doors</text><text x="125" y="138" font-size="16" opacity="0.95">one for every model call,</text><text x="125" y="160" font-size="16" opacity="0.95">one for every approval</text></g>
+    <g transform="translate(985 60)"><rect width="250" height="180" rx="20" fill="url(#d)"/><text x="125" y="62" font-size="40">🏠</text><text x="125" y="108" font-size="24" font-weight="800">Stays with you</text><text x="125" y="138" font-size="16" opacity="0.95">one data folder on your PC,</text><text x="125" y="160" font-size="16" opacity="0.95">Panic on every screen</text></g>
+    <g fill="none" stroke="#ffffff" stroke-opacity="0.7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M302 150 H343 M333 140 L343 150 L333 160"/><path d="M617 150 H658 M648 140 L658 150 L648 160"/><path d="M932 150 H973 M963 140 L973 150 L963 160"/>
+    </g>
+  </g>
+</svg>

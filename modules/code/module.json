@@ -1,0 +1,20 @@
+{
+  "id": "code",
+  "number": 25,
+  "name": "Code and Sandbox",
+  "description": "Run a short JavaScript or Python program in a sandbox folder, with a time limit and no keys. Always asks you first.",
+  "kind": "switch-on",
+  "defaultOn": false,
+  "menu": [{ "id": "code", "label": "Code", "order": 110 }],
+  "pages": ["code"],
+  "settings": [],
+  "agentTabs": [],
+  "tools": ["code_run"],
+  "requires": [],
+  "npm": {},
+  "attribution": [
+    "Docker Engine (Apache-2.0) https://github.com/moby/moby: optional container sandbox when Docker is running",
+    "Aider (Apache-2.0) https://github.com/Aider-AI/aider: optional sidecar pointed at the desk's router endpoint"
+  ],
+  "status": "works"
+}

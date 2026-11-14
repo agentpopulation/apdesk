@@ -1,0 +1,27 @@
+{
+  "id": "voice",
+  "number": 21,
+  "name": "Voice",
+  "description": "Talk to the desk and hear it read aloud. Works in Edge and Chrome with no install; uses whisper.cpp and Piper on this PC when you point it at them, or ElevenLabs with your key.",
+  "kind": "switch-on",
+  "defaultOn": false,
+  "menu": [],
+  "pages": [],
+  "settings": [
+    {
+      "id": "voice",
+      "label": "Voice"
+    }
+  ],
+  "agentTabs": [],
+  "tools": [],
+  "requires": [],
+  "npm": {},
+  "attribution": [
+    "whisper.cpp (MIT) https://github.com/ggml-org/whisper.cpp: optional local speech to text, run as a separate program",
+    "Piper (MIT, archived; successor piper1-gpl is GPL-3.0) https://github.com/rhasspy/piper: optional local text to speech, run as a separate program",
+    "ElevenLabs API (hosted, the owner's own key) https://elevenlabs.io/docs/api-reference: optional text to speech and speech to text"
+  ],
+  "status": "partial",
+  "boot": true
+}

@@ -1,0 +1,17 @@
+{
+  "id": "models",
+  "number": 2,
+  "name": "Models and Router",
+  "description": "Which models answer right now, the Agent Population Router, keys, model per agent, local models, LAN nodes and the hardware scan.",
+  "kind": "core",
+  "defaultOn": true,
+  "menu": [{ "id": "models", "label": "Models", "order": 70 }],
+  "pages": ["models"],
+  "settings": [],
+  "agentTabs": ["model"],
+  "tools": ["model_test"],
+  "requires": [],
+  "npm": { "systeminformation": "^5.33.21" },
+  "attribution": ["systeminformation (MIT) https://github.com/sebhildebrandt/systeminformation", "Ollama (MIT) https://github.com/ollama/ollama, used over its local HTTP API"],
+  "status": "partial"
+}

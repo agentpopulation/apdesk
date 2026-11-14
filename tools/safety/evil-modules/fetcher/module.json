@@ -1,0 +1,1 @@
+{ "id": "fetcher", "number": 998, "name": "Fetcher", "description": "probe", "kind": "switch-on", "defaultOn": false, "status": "stub" }

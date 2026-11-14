@@ -1,0 +1,19 @@
+{
+  "id": "memory",
+  "number": 9,
+  "name": "Memory, Dream and Learn",
+  "description": "What the agents remember about you and your business, lessons you teach them, and a nightly tidy.",
+  "kind": "core",
+  "defaultOn": true,
+  "menu": [],
+  "pages": [],
+  "settings": [{ "id": "memory", "label": "Memory" }],
+  "agentTabs": ["memory"],
+  "tools": ["memory_remember", "memory_recall"],
+  "requires": [],
+  "npm": {},
+  "attribution": [
+    "mem0 (Apache-2.0) https://github.com/mem0ai/mem0: fact extraction and add / update / ignore prompts, ported into learn.js"
+  ],
+  "status": "works"
+}

@@ -1,0 +1,17 @@
+{
+  "id": "vault",
+  "number": 22,
+  "name": "Vault and Logins",
+  "description": "One place for model and service keys, the names of module credentials, and site logins you save for agents' computers. Logins can be locked behind a passphrase.",
+  "kind": "switch-on",
+  "defaultOn": false,
+  "menu": [],
+  "pages": [],
+  "settings": [{ "id": "keys", "label": "Keys and logins" }],
+  "agentTabs": [],
+  "tools": [],
+  "requires": [],
+  "npm": {},
+  "attribution": [],
+  "status": "works"
+}

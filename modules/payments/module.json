@@ -1,0 +1,17 @@
+{
+  "id": "payments",
+  "number": 24,
+  "name": "Payments and Spend",
+  "description": "Spend limits per item, day and month, what was spent, and a log of every spend request. The desk never pays by itself.",
+  "kind": "switch-on",
+  "defaultOn": false,
+  "menu": [],
+  "pages": [],
+  "settings": [{ "id": "payments", "label": "Payments and spend" }],
+  "agentTabs": [],
+  "tools": ["spend_request"],
+  "requires": [],
+  "npm": {},
+  "attribution": [],
+  "status": "works"
+}

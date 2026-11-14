@@ -1,0 +1,17 @@
+{
+  "id": "backup",
+  "number": 15,
+  "name": "Backup",
+  "description": "Back up the database and the workspace into one zip outside the data folder, restore it, read the activity log, and see the version, folders and licences.",
+  "kind": "core",
+  "defaultOn": true,
+  "menu": [],
+  "pages": [],
+  "settings": [{ "id": "backup", "label": "Backup" }],
+  "agentTabs": [],
+  "tools": ["backup_now"],
+  "requires": [],
+  "npm": { "adm-zip": "^0.6.1" },
+  "attribution": ["adm-zip (MIT) https://github.com/cthackers/adm-zip"],
+  "status": "works"
+}

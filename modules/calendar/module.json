@@ -1,0 +1,17 @@
+{
+  "id": "calendar",
+  "number": 18,
+  "name": "Calendar",
+  "description": "A calendar on this PC: month, week, day and list, with .ics import and export. Agents ask before adding.",
+  "kind": "switch-on",
+  "defaultOn": false,
+  "menu": [{ "id": "calendar", "label": "Calendar", "order": 91 }],
+  "pages": ["calendar"],
+  "settings": [],
+  "agentTabs": [],
+  "tools": ["calendar_add", "calendar_list"],
+  "requires": [],
+  "npm": {},
+  "attribution": [],
+  "status": "partial"
+}
