@@ -14,7 +14,9 @@ const r = await ctx.model.chat({
   purpose: 'chat'|'plan'|'research'|'draft'|'council'|'embed'|'vision'|'code'|'small',  // for logs, spend and model picks
   model?: { provider, model },  // explicit pick (Models page "test this", Council seats). Still goes through the door.
   signal?: AbortSignal,         // chained with Panic
-  onDelta?: (text) => void      // streaming; the final r.text is complete either way
+  onDelta?: (text) => void,     // streaming; the final r.text is complete either way
+  onReset?: () => void,         // a target streamed some text and then failed: clear it, the next target streams afresh
+  streamGapMs?, deadlineMs?, timeoutMs?   // per-call limits, see Time limits
 });
 // r = { text, json?, toolCalls: [{ id, name, args }], model: 'qwen2.5:14b', provider: 'ollama',
 //       label: 'Ollama · qwen2.5:14b', usage: { input, output }, ms, attempts: [{ provider, model, ok, error? }] }
@@ -57,7 +59,14 @@ Models shows every way to get a model or a service, grouped, so the owner can st
 2. Explicit `model` if given.
 3. The agent's `main`, then `fallback` (both `{ provider, model }`, set on the Agents and Models pages).
 4. The default chain (setting `model.defaultChain`; entries are `router`, `ollama`, `keyed`, or a provider id such as `gemini`): router (free models) -> ollama (first chat model) -> every keyed provider with a live key, in the owner's order.
-5. Each provider is tried with its keys in order; a key on cooldown (429, 401) is skipped; after `attempts.length >= 4` the door stops and throws `all_failed`.
+5. Each provider is tried with its keys in order; a key on cooldown (429, 401) is skipped; after `attempts.length >= 6` the door stops and throws `all_failed`. Six, not four: the built-in router alone gives up to four targets, so four would never reach Ollama or a keyed provider.
+
+## Time limits
+
+- First byte: a hop waits at most `timeoutMs` for the provider's first byte (default 60 s on the built-in router, 180 s elsewhere).
+- Stream gap: a streamed reply that sends nothing for 45 s (`STREAM_GAP_MS`, per call `streamGapMs`) is dropped as an ordinary failed hop and the next target is tried. A stream that keeps sending is never cut.
+- Total: no new hop starts 170 s after the call began (`CHAT_DEADLINE_MS`, per call `deadlineMs`), and a hop's first-byte wait never runs past that; the call then ends `all_failed` with its attempts. A hop that is already streaming is not cut.
+- Stop and Panic always end the call as `aborted`, never as a failed hop.
 
 Offline: the chain is reduced to `ollama` and `lan` entries. Online/Offline is a setting (`online`), changed from the chip under the message box or Settings › Network. It is not a per-call flag.
 

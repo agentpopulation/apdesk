@@ -1,9 +1,11 @@
 // Reply text the owner sees: no tool-call narration, no tool markup, no job lines the model wrote, no internal ids.
 // Used by the server (stored replies) and the browser (streamed text). Plain ES module, no imports.
 
+// any id in the desk's own shape: a short prefix, an underscore, 12 base-36 characters with a digit and a letter (rep_k3j9x2m1q8zt)
+const DESK_ID = /`?\b[a-z]{1,6}_(?=[a-z0-9]{0,11}\d)(?=[a-z0-9]{0,11}[a-z])[a-z0-9]{12}\b`?/g;
 /** Internal ids (job_..., ap_..., lead_...) never reach the owner's screen. */
 export function hideIds(t) {
-  return String(t || '').replace(/\s*\(?\b(?:with |and )?(?:the )?(?:job |task |approval )?(?:id|ID)[:\s]+`?[a-z]{1,6}_[a-z0-9]{6,}`?\)?/g, '').replace(/`?\b(?:job|ap|lead|call|key|sec|draft|task|run)_[a-z0-9]{8,}\b`?/g, '').replace(/\s*\(\s*\)/g, '').replace(/\s*(?:“”|‘’|(?<!`)``(?!`))/g, '').replace(/\b(?:Check|Use|Note) the (?:job|task) ID\b[^.!?\n]*[.!?]?/gi, '').replace(/ {2,}/g, ' ').replace(/ ([.,])/g, '$1');
+  return String(t || '').replace(/\s*\(?\b(?:with |and )?(?:the )?(?:job |task |approval )?(?:id|ID)[:\s]+`?[a-z]{1,6}_[a-z0-9]{6,}`?\)?/g, '').replace(/`?\b(?:job|ap|lead|call|key|sec|draft|task|run)_[a-z0-9]{8,}\b`?/g, '').replace(DESK_ID, '').replace(/\s*\(\s*\)/g, '').replace(/\s*(?:“”|‘’|(?<!`)``(?!`))/g, '').replace(/\b(?:Check|Use|Note) the (?:job|task) ID\b[^.!?\n]*[.!?]?/gi, '').replace(/ {2,}/g, ' ').replace(/ ([.,])/g, '$1');
 }
 
 /** Strip what a model writes about tools instead of calling them, and job or card lines only real cards may show. */
@@ -11,6 +13,8 @@ const TOOL_JSON = /^\s*\{\s*"(?:tool|function)"\s*:|^\s*\{\s*"name"\s*:\s*"[\w.-
 /** Tool-call markup a model may write: <tool_call> blocks, <function=...> blocks, <|call|>-style blocks and stray <|token|> marks. */
 const stripMarkup = (s) => s.replace(/<tool_call>[\s\S]*?(<\/tool_call>|$)/gi, '').replace(/<function[=\s][\s\S]*?(<\/function>|$)/gi, '').replace(/<\|?(?:tool_calls?|python_tag|call)\|?>[\s\S]*?(<\|?\/?(?:tool_calls?|eom|eot|call)\|?>|$)/gi, '');
 const HARMONY = /<\|(?:start|channel|message|constrain|call|end|return)\|>[^\n]*/g;   // gpt-oss style tool-call lines
+// chat-template tokens (<|eot_id|>, <|start_header_id|>assistant<|end_header_id|>, <|im_end|>) and Mistral's [TOOL_CALLS] line
+const TEMPLATE = (s) => s.replace(/<\|start_header_id\|>[^<\n]*<\|end_header_id\|>/g, '').replace(/<\|[a-z][a-z0-9_]*\|>/g, '').replace(/\[TOOL_CALLS\][^\n]*/g, '');
 // a line that is a function call addressed to one of our tools ({"name": "web_search", "arguments": ...}, {"tool": "file_write", ...})
 const TOOL_JSON_LINE = /^\s*\{\s*"(?:tool|function|name)"\s*:\s*"[a-z]+_[a-z_]+"\s*,\s*"(?:args|arguments|parameters|input)"\s*:.*\}\s*$/gm;
 const FENCE_IDS = /\b(?:job|ap|lead|call|key|sec|draft|task|run)_(?=[a-z0-9]{0,11}\d)[a-z0-9]{12}\b/g;   // the desk's own ids (prefix + 12 base-36 characters)
@@ -21,13 +25,13 @@ export function cleanReply(t) {
     if (i % 2) {
       if (TOOL_JSON.test(seg.replace(/^```[\w+-]*[^\n]*\n?/, ''))) return '';
       const open = seg.match(/^```[^\n]*\n?/)[0]; const body = seg.slice(open.length, -3);
-      const b = stripMarkup(body.replace(HARMONY, '')).replace(TOOL_JSON_LINE, '').replace(FENCE_IDS, '');
+      const b = TEMPLATE(stripMarkup(body.replace(HARMONY, ''))).replace(TOOL_JSON_LINE, '').replace(FENCE_IDS, '');
       if (b === body) return seg;
       return b.trim() ? open + b.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '') + (b.endsWith('\n') ? '' : '\n') + '```' : '';
     }
     let s = seg;
-    s = stripMarkup(s.replace(HARMONY, ''));
-    s = s.replace(/^\s*\{\s*"(?:tool|function)"\s*:\s*"[^"]+"[\s\S]*?\}\s*$/gm, '').replace(/^\s*\{\s*"name"\s*:\s*"[\w.-]+"\s*,\s*"(?:arguments|parameters|args)"\s*:[\s\S]*?\}\s*$/gm, '');
+    s = TEMPLATE(stripMarkup(s.replace(HARMONY, '')));
+    s = s.replace(/^\s*\{\s*"(?:tool|function)"\s*:\s*"[^"]+"[\s\S]*?\}\s*$/gm, '').replace(/^\s*\{\s*"type"\s*:\s*"function"\s*,[\s\S]*?\}\s*$/gm, '').replace(/^\s*\{\s*"name"\s*:\s*"[\w.-]+"\s*,\s*"(?:arguments|parameters|args)"\s*:[\s\S]*?\}\s*$/gm, '');
     s = s.replace(/\(?\s*I (?:called|used|ran|will call|am calling|'ll call) `?\w+`? with \{[\s\S]*?\}\s*\.?\s*\)?/gi, '');
     s = s.replace(/\(?\s*(?:Calling|Using) (?:the )?`?\w+_\w+`? (?:tool )?with \{[\s\S]*?\}\s*\.?\s*\)?/g, '');
     s = s.replace(/\[\s*(?:Job|Task|Table shown|Table|File|Draft(?: waiting for the owner)?|Report|Sources|Progress)\s*:[^\]\n]*\]/gi, '');
@@ -74,8 +78,8 @@ export function codeBlocks(text) {
 /** In text a model wrote: a sentence or line that says a named file was saved, updated, written, created, generated, exported or
  *  attached (active or passive) is removed when no write step in this turn or job wrote that file, whether or not an older file
  *  of that name exists. A sentence that only names a file ("the figures are in phones.xlsx") stays. Text the desk builds by code
- *  from its own records is never passed here. */
-export function dropFileClaims(text, writtenPaths = []) {
+ *  from its own records is never passed here. jobStarted: a background job began in this turn, so no closing line is added. */
+export function dropFileClaims(text, writtenPaths = [], { jobStarted = false } = {}) {
   const written = new Set([...writtenPaths].filter(Boolean).map(baseOf));
   let removed = 0; let inCode = false;
   const lines = String(text || '').split('\n').map(line => {
@@ -92,7 +96,9 @@ export function dropFileClaims(text, writtenPaths = []) {
     return (dropped ? kept.filter(p => !/^\s*status\s*:|saved to (?:the |your )?workspace/i.test(p)) : kept).join(' ');
   });
   let out = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-  if (removed) out += (out ? '\n\n' : '') + (written.size ? 'Only the files shown as cards here were saved.' : 'No file was saved.');
+  // the closing line is for a turn that claimed a file and made none; a turn that started a background job says nothing about
+  // files yet: the job has not finished, and its files reach the chat when it does
+  if (removed && !jobStarted) out += (out ? '\n\n' : '') + (written.size ? 'Only the files shown as cards here were saved.' : 'No file was saved.');
   return { text: out, removed };
 }
 
@@ -131,10 +137,36 @@ export function stepChips(steps, nameOf = (id) => id || '', replyStatus = 'done'
   return out.map(c => `${c.head}${c.n > 1 ? ` ${c.n} times` : ''}${c.tail}`);
 }
 
-/** Plain one-line preview of a reply for the chat list: no markdown marks. */
+const TABLE_RULE = /^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+const TABLE_ROW = /^\s*\|(.*)\|\s*$/;
+/** A Markdown table as plain words: the rule lines go, each row's cells are joined with " · ", rows too. */
+function tablesAsWords(t) {
+  const out = []; let block = [];
+  const flush = () => { if (block.length) out.push(block.join(' · ')); block = []; };
+  for (const line of String(t).split('\n')) {
+    if (TABLE_RULE.test(line) && /-/.test(line)) continue;
+    const row = line.match(TABLE_ROW);
+    if (row) { const cells = row[1].split('|').map(c => c.trim()).filter(Boolean); if (cells.length) block.push(cells.join(' · ')); continue; }
+    flush(); out.push(line);
+  }
+  flush();
+  // a table already flattened onto one line: its rule runs and pipes go
+  return out.join('\n').replace(/\|?(?:\s*:?-{3,}:?\s*\|)+/g, ' ').replace(/(?:\s*\|\s*)+/g, ' · ').replace(/(?:\s*·\s*){2,}/g, ' · ').replace(/(^|\n|:)\s*·\s*/g, '$1 ').replace(/\s*·\s*($|\n)/g, '$1');
+}
+/** The line under the typing dots while a model call waits: what the desk waits for, for how long, and when it stops. */
+export function waitLine(wait, nowMs = Date.now()) {
+  if (!wait || !wait.text) return '';
+  const secs = Math.max(0, Math.round((nowMs - Date.parse(wait.since)) / 1000)) || 0;
+  const limit = Number(wait.limitS) || 0;
+  return `${wait.text} · ${secs} s` + (limit && secs >= Math.min(20, limit / 2) ? `. Some models are slow; the desk stops waiting at ${limit} s.` : '');
+}
+
+/** Plain one-line preview of a reply for the chat list and Home: no markdown marks, no table rules or pipes. */
 export function previewText(t) {
-  return String(t || '').replace(/```[\s\S]*?```/g, ' ').replace(/^\s{0,3}#{1,6}\s*/gm, '').replace(/^\s*(?:[-*+•]|\d+[.)])\s+/gm, '').replace(/^\s*>\s?/gm, '')
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/(\*\*|__|\*|_|~~|`)(\S(?:[\s\S]*?\S)?)\1/g, '$2').replace(/\|/g, ' ').replace(/^\s*:?-{3,}:?\s*$/gm, '').replace(/\s+/g, ' ').trim();
+  return tablesAsWords(String(t || '').replace(/```[\s\S]*?```/g, ' ')).replace(/^\s{0,3}#{1,6}\s*/gm, '').replace(/^\s*(?:[-*+•]|\d+[.)])\s+/gm, '').replace(/^\s*>\s?/gm, '')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    // emphasis marks: the shortest span on one line, so "**1** · *Amber Fort*" pairs each mark with its own
+    .replace(/(\*\*|__|~~)(?=\S)([^\n]*?\S)\1/g, '$2').replace(/\*(?=\S)([^*\n]*?\S)?\*/g, '$1').replace(/(?<!\w)_(?=\S)([^_\n]*?\S)?_(?!\w)/g, '$1').replace(/`([^`\n]+)`/g, '$1').replace(/^\s*:?-{3,}:?\s*$/gm, '').replace(/\s+/g, ' ').trim();
 }
 
 /** Files made in a chat, one row per path, newest first. */

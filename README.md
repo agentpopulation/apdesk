@@ -194,7 +194,7 @@ This is version **0.1.0**, a first public release. We only state what was measur
 
 | What was measured | Result | When |
 |---|---|---|
-| Automated tests (`npm test`), Linux x64, Node 22 | 217 of 217 pass | 15 Nov 2026 |
+| Automated tests (`npm test`), Linux x64, Node 22 | 234 of 234 pass | 15 Nov 2026 |
 | Start-up check (`node tools/smoke.mjs --quick`): every module loads and every page opens in a real browser | 30 modules found, 16 on, 13 switch on and off, 0 pages with problems | 15 Nov 2026 |
 | 17 acceptance asks, answered by real free models, one full run | 14 passed, 2 failed, 1 not checked | 14 Nov 2026, on the build before this one |
 | Safety probes in `tools/safety` | All hold, with one accepted limit listed below | 14 Nov 2026 |
@@ -205,8 +205,8 @@ This exact code has not yet had its own full run of the 17 asks. When it has, th
 
 - **No run has passed all 17 asks yet.** The two that failed last time: the compare-table ask (the reply stated values that the file itself marks "not checked") and the find-leads ask (some leads were from the wrong country).
 - **Local models through Ollama are wired but not checked.** No test run so far had Ollama installed.
-- **Free models can be slow or busy.** On 15 Nov 2026 one plain chat question got no answer in over four minutes.
-- **A table inside a chat reply can show as plain text** instead of a table. Seen on 15 Nov 2026.
+- **Free models can be slow or busy.** The chat shows what it is waiting for, and a turn ends with a plain message if no model answers within 150 seconds.
+- **PDF documents made by the desk leave out Hindi and other Indian-script text.** The built-in PDF font has no such letters. Seen on 15 Nov 2026.
 - **Results change with the model that answers.** Weak free models call the wrong tool more often. Give an agent a stronger model for research, leads and tables.
 - **Offline has edges.** It does not cover programs the desk starts as separate processes, or DNS lookups.
 - **The code sandbox is not isolation** unless Docker is installed. Its approval card says so.

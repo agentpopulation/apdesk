@@ -1,6 +1,6 @@
 // Chat page: rail of chats, the conversation at full width, the folding panel. Matches the Chat section of the approved preview.
 import { chipsFor } from '/ui/pages/home.js';
-import { cleanReply, uniqueOutputs, previewText, stepChips, footTag } from '/modules/chat/ui-text.js';
+import { cleanReply, uniqueOutputs, previewText, stepChips, footTag, waitLine } from '/modules/chat/ui-text.js';
 
 const API = 'm/chat/';
 const PRESETS = [['everyone', 'Everyone'], ['sales-room', 'Sales room'], ['build-room', 'Build room']];
@@ -55,7 +55,8 @@ function css() {
 .chatv .drawer .line>div:first-child b,.chatv .drawer .line .d{overflow-wrap:anywhere;word-break:break-word}.chatv .drawer .line>.pill,.chatv .drawer .line>.btn{flex-shrink:0;align-self:flex-start}
 .chatv .compose .btn.stop{background:var(--stop)}
 .chatv .under .mini b{font-weight:500}
-.chatv .msg.me .md a{color:#fff}`;
+.chatv .msg.me .md a{color:#fff}
+.chatv .msg .waiting{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.chatv .msg .wait{font-size:12px;color:var(--dim)}`;
   document.head.append(s);
 }
 
@@ -91,7 +92,9 @@ async function render(el, ui, route) {
   const streaming = new Map();    // message id -> text so far
   let curId = route?.parts?.[0] || null;
   if (!curId) { try { curId = localStorage.getItem('apd-chat') || 'everyone'; } catch { curId = 'everyone'; } }
-  ui.onLeave(() => { alive = false; });
+  // the seconds on a waiting reply tick once a second
+  const waitTick = setInterval(() => { for (const w of chatEl.querySelectorAll('.wait[data-wait]')) { try { w.textContent = waitLine(JSON.parse(w.dataset.wait)); } catch {} } }, 1000);
+  ui.onLeave(() => { alive = false; clearInterval(waitTick); });
 
   const openFile = (p) => { if (typeof ui.openFile === 'function') ui.openFile(p); else location.hash = '#/files?path=' + encodeURIComponent(p || ''); };
   const agentName = (id) => ui.agent(id)?.name || (id === 'coordinator' ? 'Coordinator' : 'Agent');
@@ -168,7 +171,8 @@ async function render(el, ui, route) {
     const who = h('span', { class: 'who' }, agentName(m.agentId), m.label ? [' · ', h('span', { class: 'mdl' }, m.label)] : null, m.meta?.note ? ' · ' + m.meta.note : null);
     const steps = (m.meta?.steps || []).filter(s => s.tool);
     const stepsEl = steps.length ? h('div', { class: 'steps' }, stepChips(steps, agentName, m.status).map(t => h('span', null, t))) : null;
-    const body = text ? md(ui, text) : live ? h('span', { class: 'typing' }, h('span'), h('span'), h('span')) : null;
+    const waitEl = live && m.meta?.wait ? h('span', { class: 'wait', 'data-wait': JSON.stringify(m.meta.wait) }, waitLine(m.meta.wait)) : null;
+    const body = text ? md(ui, text) : live ? h('div', { class: 'waiting' }, h('span', { class: 'typing' }, h('span'), h('span'), h('span')), waitEl) : null;
     const tagText = footTag(m);
     const foot = tagText ? pill(tagText, tagText === 'Offline' ? 'wait' : 'stop') : null;
     const speak = !live && text && window.apdVoice?.speak ? btn('Read aloud', { kind: 'ghost sm', onClick: () => window.apdVoice.speak(text) }) : null;

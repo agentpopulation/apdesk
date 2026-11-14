@@ -404,3 +404,71 @@ test('Offline: localhost and 127.0.0.1 are one host; only the local model addres
     await assert.rejects(() => fetch('http://127.0.0.1:8787/v1/models'), (e) => e.code === 'offline');
   } finally { await t.close(); }
 });
+
+// A desk whose router is the fake and whose next target is a keyed custom model on the same fake: the script tells them
+// apart by model id (router 'fake-model', keyed 'next-model').
+async function twoTargets(script) {
+  const t = await testDesk({ script });
+  t.core.model.addKey('custom', 'sk-test-12345678', 'test', { baseUrl: t.fake.baseUrl, model: 'next-model' });
+  return t;
+}
+
+test('model door: a stream that stalls after its headers or mid-reply is dropped after the gap, and the next target answers', async () => {
+  for (const stallAfter of [0, 3]) {
+    const t = await twoTargets((b) => b.model === 'next-model' ? 'from the next model' : { text: 'the first model starts and then stops', stallAfter });
+    try {
+      let got = ''; let resets = 0; const t0 = Date.now();
+      const r = await t.core.model.chat({ messages: [{ role: 'user', content: 'hi' }], onDelta: (d) => { got += d; }, onReset: () => { resets++; got = ''; }, streamGapMs: 300 });
+      assert.ok(Date.now() - t0 < 3000, 'dropped at the gap, stallAfter=' + stallAfter);
+      assert.equal(r.text, 'from the next model'); assert.equal(r.provider, 'custom'); assert.equal(got, 'from the next model');
+      assert.equal(resets, stallAfter ? 1 : 0, 'the shown text is cleared only when the dropped hop had shown some');
+      assert.equal(r.attempts[0].provider, 'router'); assert.equal(r.attempts[0].ok, false); assert.match(r.attempts[0].error, /stopped coming/);
+    } finally { await t.close(); }
+  }
+});
+
+test('model door: a stream that keeps sending is never cut by the gap timer, however long it takes', async () => {
+  const t = await twoTargets((b) => b.model === 'next-model' ? 'wrong target' : { text: 'one two three four five six seven eight', chunkDelayMs: 120 });
+  try {
+    const t0 = Date.now();
+    const r = await t.core.model.chat({ messages: [{ role: 'user', content: 'count' }], onDelta: () => {}, streamGapMs: 400 });
+    assert.ok(Date.now() - t0 > 1000, 'took longer than the gap in total');
+    assert.equal(r.text, 'one two three four five six seven eight'); assert.equal(r.provider, 'router'); assert.equal(r.attempts.length, 1);
+  } finally { await t.close(); }
+});
+
+test('model door: after the total deadline no new hop starts and the call ends all_failed with the attempts', async () => {
+  const t = await twoTargets((b) => b.model === 'next-model' ? 'should not be asked' : { status: 500, text: 'slow and broken', delayMs: 500 });
+  try {
+    await assert.rejects(() => t.core.model.chat({ messages: [{ role: 'user', content: 'hi' }], deadlineMs: 300 }), (e) => {
+      assert.equal(e.code, 'all_failed'); assert.equal(e.attempts[0].provider, 'router'); assert.match(e.message, /within 0\.3 seconds|No model answered/);
+      return true;
+    });
+    assert.ok(!t.fake.calls.some(c => c.model === 'next-model'), 'the keyed target was never called');
+    // a deadline that is long enough lets the chain move on
+    const r = await t.core.model.chat({ messages: [{ role: 'user', content: 'hi' }], deadlineMs: 5000 });
+    assert.equal(r.text, 'should not be asked'); assert.equal(r.provider, 'custom');
+    // the first-byte wait of a hop never runs past the deadline
+    const t2 = await twoTargets(() => ({ text: 'late', delayMs: 3000 }));
+    try { const t0 = Date.now(); await assert.rejects(() => t2.core.model.chat({ messages: [{ role: 'user', content: 'hi' }], deadlineMs: 400 }), (e) => e.code === 'all_failed'); assert.ok(Date.now() - t0 < 1500, 'ended near the deadline'); }
+    finally { await t2.close(); }
+  } finally { await t.close(); }
+});
+
+test('model door: Stop or Panic during a stalled stream ends the call as aborted, not as a provider error', async () => {
+  const t = await twoTargets((b) => b.model === 'next-model' ? 'should not be asked' : { text: 'starts and then stops', stallAfter: 2 });
+  try {
+    const ac = new AbortController(); setTimeout(() => ac.abort(), 200);
+    await assert.rejects(() => t.core.model.chat({ messages: [{ role: 'user', content: 'hi' }], onDelta: () => {}, signal: ac.signal, streamGapMs: 5000 }), (e) => e.code === 'aborted');
+    setTimeout(() => t.call('/api/panic', { body: {} }), 200);
+    await assert.rejects(() => t.core.model.chat({ messages: [{ role: 'user', content: 'hi' }], onDelta: () => {}, streamGapMs: 5000 }), (e) => e.code === 'aborted');
+    assert.ok(!t.fake.calls.some(c => c.model === 'next-model'), 'no fallback after a stop');
+  } finally { await t.close(); }
+});
+
+test('model door: the stop-after-attempts number in the contract matches the code', async () => {
+  const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'app', 'core', 'model-door.js'), 'utf8');
+  const doc = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'app', 'core', 'contracts', 'MODEL-DOOR.md'), 'utf8');
+  const n = Number(src.match(/const MAX_ATTEMPTS = (\d+)/)[1]);
+  assert.match(doc, new RegExp(`attempts\\.length >= ${n}\\b`));
+});

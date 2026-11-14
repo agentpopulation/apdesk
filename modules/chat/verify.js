@@ -137,9 +137,17 @@ function passage(text, at, len) {
 /** Sentences that promise later work ("let me check the specs before finalizing") are removed from a final reply. */
 export function dropPromises(text) {
   const re = /\b(?:let me|let's|i(?:'ll| will| am going to|'m going to)|i need to|we need to|i should)\s+(?:now\s+|first\s+|still\s+)?(?:check|verify|confirm|finali[sz]e|double-check|look (?:into|up)|get back|update|re-?check|validate)\b/i;
-  const parts = String(text || '').split(/(?<=[.!?])\s+|\n/);
-  const kept = parts.filter(p => !re.test(p));
-  return { text: kept.join(' ').replace(/\s+\n/g, '\n').trim(), dropped: parts.length - kept.length };
+  // line by line, so the reply keeps its line breaks (tables, lists, paragraphs); sentences are split only inside a line
+  let dropped = 0; let inCode = false;
+  const lines = String(text || '').split('\n').map(line => {
+    if (/^\s*```/.test(line)) { inCode = !inCode; return line; }
+    if (inCode) return line;   // code stays as written
+    const parts = line.split(/(?<=[.!?])[ \t]+/);
+    const kept = parts.filter(p => !re.test(p));
+    dropped += parts.length - kept.length;
+    return kept.length < parts.length ? kept.join(' ').trimEnd() : line;
+  });
+  return { text: lines.join('\n').replace(/\n{3,}/g, '\n\n').trim(), dropped };
 }
 
 // ---- a unit the header already names

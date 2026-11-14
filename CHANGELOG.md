@@ -54,13 +54,17 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - With "reduce motion" set in the system, the desk stops its decorative animations.
 - Windows zip trimmed from 39.9 MB to 18.4 MB: packages ship without type declarations, source maps, docs, tests, examples or browser-only builds. Every module and heavy package was checked from the unzipped copy.
 - Sales tests and fixtures use invented companies and domains only.
+- A chat reply no longer sits silent: the chat shows what the desk is waiting for, and a model that gives no reply or new text within 150 seconds ends the turn with a plain message and Try again.
+- Tables and lists in replies keep their line breaks. A table in the answer no longer makes a file; Excel, Word and PDF files are made only when the ask is for a file. Home previews show plain words.
+- A checked table file's reply is written only from the check, so no unconfirmed value is stated. Tool calls written as text run or are dropped, never shown. A started job's acknowledgement no longer says "No file was saved."
+- A model reply that stalls mid-stream is dropped after 45 seconds and the next model is tried; one model call stops trying new models after 170 seconds.
+- Deep research, the Council, swarms, lead search and browser tasks start only when the ask names them (or in Scout's, Closer's or Operator's own chat); otherwise the reply may say the option exists.
 
 ### Known weak points
 - No run of the 17 acceptance asks has passed every ask. Results vary with the free model that answers.
 - In the last full run (14 Nov 2026) two asks failed: the compare-table reply stated values the file marks "not checked", and the lead search returned some companies from the wrong country.
-- Free models can be slow or busy: on 15 Nov 2026 one plain chat question got no answer in over four minutes.
-- A table inside a chat reply can show as plain text (seen 15 Nov 2026).
 - PDF documents made by the Office module leave out Hindi and other Indian-script text: the built-in PDF font has no such letters (seen 15 Nov 2026).
+- On a plain question a weak model may still save a small file nobody asked for (seen 15 Nov 2026).
 - The "Stopped by Panic" list shows in the top-bar pop-up and in Settings › Security, not yet on Home or Tasks.
 - Ask 2 (offline with a local model) has never been checked: no test run so far had Ollama installed.
 - Small local models (4B, 8B): not checked.

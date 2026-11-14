@@ -1050,3 +1050,243 @@ test('no unit inference: only a cell that is exactly a number in the unit its he
   ]);
   assert.deepEqual(unifyUnits(['Phone', 'Network', 'Screen'], [['A', '5G', '6.7 inches'], ['B', '4G', '6.1']]).rows, [['A', '5G', '6.7 inches'], ['B', '4G', '6.1']], 'no header unit: nothing changes');
 });
+
+// ---- chat defects found on 15 Nov 2026: each test failed before its fix
+const kvSet = (t, k, v) => t.core.storage.kvScope('m:chat').set(k, v);
+
+test('a model that does not answer: the reply shows that the desk is waiting, then ends with a plain message at the wait limit', async () => {
+  const t = await testDesk({ modules: ['chat', 'agents'], script: () => ({ text: 'too late', delayMs: 4000 }) });
+  try {
+    kvSet(t, 'modelWaitMs', 800);
+    const t0 = Date.now();
+    await t.call('/api/m/chat/chats/dm-coordinator/send', { body: { text: 'Give me a simple three-step plan to start a balcony herb garden. Keep it short.' } });
+    let waiting = null;
+    for (let i = 0; i < 30 && !waiting; i++) { await new Promise(r => setTimeout(r, 50)); const m = (await t.call('/api/m/chat/chats/dm-coordinator/messages')).json.messages.at(-1); if (m.status === 'streaming' && m.meta.wait) waiting = m.meta.wait; }
+    assert.ok(waiting, 'the reply carries what the desk waits for'); assert.match(waiting.text, /Waiting for a model to answer/); assert.ok(waiting.limitS > 0);
+    const { last } = await waitReply(t, 'dm-coordinator');
+    assert.ok(Date.now() - t0 < 3500, 'ended at the limit, not when the model finally answered');
+    assert.equal(last.status, 'error'); assert.match(last.text, /No model answered within/); assert.doesNotMatch(last.text, /too late/);
+    assert.ok(!last.meta.wait, 'the waiting line is cleared'); assert.ok(last.cards.some(c => c.kind === 'actions'), 'Try again');
+  } finally { await t.close(); }
+});
+
+test('a reply that keeps streaming is not cut by the wait limit: the limit counts from the last piece of text', async () => {
+  const t = await testDesk({ modules: ['chat', 'agents'], script: () => ({ text: 'one two three four five six', chunkDelayMs: 250 }) });
+  try {
+    kvSet(t, 'modelWaitMs', 600);
+    await t.call('/api/m/chat/chats/dm-coordinator/send', { body: { text: 'Count to six.' } });
+    const { last } = await waitReply(t, 'dm-coordinator');
+    assert.equal(last.status, 'done'); assert.equal(last.text, 'one two three four five six');
+  } finally { await t.close(); }
+});
+
+test('a Markdown table after a text line keeps its line breaks in the stored reply; a promise line still goes', async () => {
+  const table = "Here's your Jaipur plan:\n| Day | Morning | Afternoon | Evening |\n|-----|---------|-----------|---------|\n| 1 | Amber Fort | City Palace | Chokhi Dhani |\n| 2 | Hawa Mahal | Jantar Mantar | Bazaars |";
+  const t = await testDesk({ modules: ['chat', 'agents'], script: () => table + '\n\nLet me check the opening hours before you go.\n- Carry water.\n- Book ahead.' });
+  try {
+    await t.call('/api/m/chat/chats/dm-coordinator/send', { body: { text: 'Plan a two-day trip to Jaipur for a family of four. Keep it short: a small table with day, morning, afternoon and evening.' } });
+    const { last } = await waitReply(t, 'dm-coordinator');
+    assert.ok(last.text.startsWith(table), JSON.stringify(last.text));
+    assert.doesNotMatch(last.text, /Let me check/); assert.match(last.text, /\n- Carry water\.\n- Book ahead\./);
+  } finally { await t.close(); }
+  const { dropPromises } = await import('./verify.js');
+  assert.deepEqual(dropPromises('Line one.\nLine two. Let me verify it.\n\n| a | b |\n|---|---|'), { text: 'Line one.\nLine two.\n\n| a | b |\n|---|---|', dropped: 1 });
+  assert.equal(dropPromises('Code:\n```js\n// I will update this later.\nrun();\n```').text, 'Code:\n```js\n// I will update this later.\nrun();\n```');
+});
+
+test('a table in the answer is not a file: table_file and doc_file are offered only when the ask is for a file', async () => {
+  const offers = [];
+  const t = await testDesk({ modules: ['chat', 'agents'], script: (b) => { offers.push((b.tools || []).map(x => x.function.name)); return 'Here it is.'; } });
+  try {
+    for (const name of ['table_file', 'doc_file']) t.core.modules.tools.set(name, { module: 'office', name, description: name, parameters: { type: 'object', properties: {} }, async run() { return { ok: false, error: 'not in this test' }; } });
+    await t.call('/api/m/chat/chats/dm-coordinator/send', { body: { text: 'Plan a two-day trip to Jaipur for a family of four. Keep it short: a small table with day, morning, afternoon and evening.' } });
+    await waitReply(t, 'dm-coordinator');
+    assert.ok(offers.length && offers.every(o => !o.includes('table_file') && !o.includes('doc_file')), JSON.stringify(offers));
+  } finally { await t.close(); }
+  const { fileAsk } = await import('./coordinator.js');
+  for (const s of ['Plan a two-day trip to Jaipur. Keep it short: a small table with day, morning, afternoon and evening.', 'Show it as a table', 'Give me a simple three-step plan to start a balcony herb garden.', 'Write a short essay on rain', 'List the top five forts', 'Tabulate the costs in the reply', 'What files do you need from me? Just tell me in chat.'.replace(/files/, 'details')])
+    assert.equal(fileAsk(s), false, s);
+  for (const s of ['Compare three laptops into a table file', 'Put that in Excel', 'Export it as CSV', 'Make a spreadsheet of the costs', 'Save the plan', 'Give me a PDF of this', 'I want a Word document of the plan', 'Make it downloadable', 'Write it to plan.md', 'as an xlsx please'])
+    assert.equal(fileAsk(s), true, s);
+});
+
+test('Home "Pick up where you left off": the preview of a table reply is clean plain text', async () => {
+  const { previewText } = await import('./ui-text.js');
+  const raw = "Here's your Jaipur plan:\n| Day | Morning | Afternoon | Evening |\n|-----|---------|-----------|---------|\n| 1 | **Amber Fort** | City Palace | Chokhi Dhani |\n## Tips\n> Go early";
+  const p = previewText(raw);
+  assert.equal(p, "Here's your Jaipur plan: Day · Morning · Afternoon · Evening · 1 · Amber Fort · City Palace · Chokhi Dhani Tips Go early");
+  assert.doesNotMatch(previewText("Plan: | Day | Morning | |-----|---------| | 1 | Fort |"), /[|]|-{2,}/, 'a table already flattened to one line');
+  // a real reply's table with bold day numbers and italic places
+  assert.equal(previewText('**2-Day Jaipur Itinerary**\n\n| Day | Morning |\n|-----|---------|\n| **1** | Visit *Amber Fort* (start early) |\n| **2** | Hike to *Nahargarh Fort* |'), '2-Day Jaipur Itinerary Day · Morning · 1 · Visit Amber Fort (start early) · 2 · Hike to Nahargarh Fort');
+  assert.equal(previewText('Use user_name and `npm test`, _not_ this.'), 'Use user_name and npm test, not this.');
+  const t = await testDesk({ modules: ['chat', 'agents'] });
+  try {
+    t.core.modules.api('chat').postMessage('dm-scout', { text: raw });
+    const rec = t.core.modules.api('chat').recent(10).find(c => c.id === 'dm-scout');
+    assert.doesNotMatch(rec.last, /[|#>*]|-{3,}/);
+  } finally { await t.close(); }
+});
+
+test('a checked table file: the reply is the code-written summary and the file; the model\'s sentence with an unconfirmed value is not shown', async () => {
+  let n = 0;
+  const cols = ['Laptop', 'Price (USD)', 'Weight (kg)'];
+  const t = await testDesk({ modules: ['chat', 'agents'], script: () => {
+    n++;
+    if (n === 1) return { toolCalls: [{ name: 'web_search', args: { query: 'Laptop A Laptop B' } }] };
+    if (n === 2) return { toolCalls: [{ name: 'web_read', args: { url: 'https://example.com/laptops' } }] };
+    if (n === 3) return { toolCalls: [{ name: 'table_file', args: { title: 'Laptops', columns: cols, rows: [['Laptop A', '999', '1.2'], ['Laptop B', '1299', '1.9']] } }] };
+    return 'Done. Laptop B costs $1,299 and weighs 1.9 kg, the heaviest of the two. Laptop A is $999.';
+  } });
+  try {
+    t.core.modules.tools.set('web_search', { module: 'search', name: 'web_search', description: 'search', parameters: { type: 'object', properties: { query: { type: 'string' } } }, async run() { return { results: [{ title: 'Laptops', url: 'https://example.com/laptops' }] }; } });
+    t.core.modules.tools.set('web_read', { module: 'search', name: 'web_read', description: 'read', parameters: { type: 'object', properties: { url: { type: 'string' } } }, async run(args) { return { url: args.url, title: 'Laptops', text: 'Laptop A costs $999 and weighs 1.2 kg. Laptop B is a bigger machine.' }; } });
+    t.core.modules.tools.set('table_file', { module: 'office', name: 'table_file', description: 'table', parameters: { type: 'object', properties: {} }, async run() { return { ok: true, path: 'tables/laptops.xlsx', name: 'laptops.xlsx' }; } });
+    await t.call('/api/m/chat/chats/dm-coder/send', { body: { text: 'Compare the price and weight of Laptop A and Laptop B into a table file.' } });
+    const { last } = await waitReply(t, 'dm-coder');
+    assert.doesNotMatch(last.text, /1,?299|1\.9/, last.text);
+    assert.match(last.text, /tables\/laptops\.xlsx/); assert.match(last.text, /2 of 4 cells confirmed/);
+  } finally { await t.close(); }
+});
+
+test('a tool call written as text runs as a tool call when it parses; markup that does not parse never reaches the screen', async () => {
+  const seen = []; let n = 0;
+  const t = await testDesk({ modules: ['chat', 'agents'], script: (b) => {
+    n++;
+    if (b.messages.some(m => /Result of fx_echo/.test(String(m.content)))) return 'The echo said hi.';
+    return '<|python_tag|>{"name": "fx_echo", "parameters": {"x": "hi"}}<|eom_id|>';
+  } });
+  try {
+    fixtureTool(t, seen);
+    await t.call('/api/m/chat/chats/dm-coder/send', { body: { text: 'echo hi for me' } });
+    const { last } = await waitReply(t, 'dm-coder');
+    assert.equal(seen.length, 1); assert.deepEqual(seen[0].args, { x: 'hi' });
+    assert.equal(last.text, 'The echo said hi.'); assert.equal(last.status, 'done');
+  } finally { await t.close(); }
+  // markup that never parses: asked once more, then a plain sentence
+  let m = 0;
+  const t2 = await testDesk({ modules: ['chat', 'agents'], script: () => { m++; return '<tool_call>{"name": "fx_echo", "arguments": {"x": '; } });
+  try {
+    fixtureTool(t2, []);
+    await t2.call('/api/m/chat/chats/dm-coder/send', { body: { text: 'echo it' } });
+    const { last } = await waitReply(t2, 'dm-coder');
+    assert.doesNotMatch(last.text, /tool_call|fx_echo|[{}<>]/); assert.match(last.text, /could not be run/);
+    assert.ok(m <= 3, 'asked at most once more after the JSON retry: ' + m);
+  } finally { await t2.close(); }
+  const { textToolCall } = await import('./coordinator.js');
+  const names = ['web_search', 'fx_echo'];
+  assert.deepEqual(textToolCall('{"type": "function", "name": "web_search", "parameters": {"query": "jaipur"}}', names), { calls: [{ name: 'web_search', args: { query: 'jaipur' } }] });
+  assert.deepEqual(textToolCall('<function=web_search>{"query": "forts"}</function>', names), { calls: [{ name: 'web_search', args: { query: 'forts' } }] });
+  assert.deepEqual(textToolCall('[web_search(query="amber fort hours")]', names), { calls: [{ name: 'web_search', args: { query: 'amber fort hours' } }] });
+  assert.deepEqual(textToolCall('```json\n{"tool": "fx_echo", "args": {"x": "1"}}\n```', names), { calls: [{ name: 'fx_echo', args: { x: '1' } }] });
+  for (const s of ['Here is the JSON you asked for: {"name": "Asha", "age": 7}', '{"name": "Asha", "age": 7}', 'Use web_search(query) to look things up.', 'A plain answer.'])
+    assert.equal(textToolCall(s, names), null, s);
+  assert.deepEqual(textToolCall('<|python_tag|>{"name": "send_money", "parameters": {}}', names), { markup: true }, 'a tool that is not offered is not run');
+  const { cleanReply } = await import('./ui-text.js');
+  assert.equal(cleanReply('Hello there.<|eot_id|><|start_header_id|>assistant<|end_header_id|>'), 'Hello there.');
+  assert.equal(cleanReply('Started it (rep_k3j9x2m1q8zt).\n[TOOL_CALLS][{"name": "web_search", "arguments": {}}]'), 'Started it.');
+  assert.equal(cleanReply('Use snake_case names like user_name.'), 'Use snake_case names like user_name.');
+  assert.equal(cleanReply('Looking it up.\n{"type": "function", "name": "web_search", "parameters": {"query": "x"}}'), 'Looking it up.');
+});
+
+test('a turn that starts a background job never says "No file was saved."; a turn that claimed a file and made none still does', async () => {
+  const t = await testDesk({ modules: ['chat', 'agents'], script: (b) => b.messages.at(-1).role === 'tool' ? 'Deep research has started. The report will be saved as reports/edge-data-centres.md when it finishes.' : { toolCalls: [{ name: 'research_deep', args: { question: 'edge data centres in India' } }] } });
+  try {
+    t.core.modules.tools.set('research_deep', { module: 'research', name: 'research_deep', description: 'deep research job', parameters: { type: 'object', properties: { question: { type: 'string' } } }, async run() { return { ok: true, started: true, jobId: 'job_abc123def456' }; } });
+    await t.call('/api/m/chat/chats/dm-scout/send', { body: { text: 'Research edge data centres in India in depth.' } });
+    const { last } = await waitReply(t, 'dm-scout');
+    assert.doesNotMatch(last.text, /No file was saved/); assert.match(last.text, /Deep research has started/);
+  } finally { await t.close(); }
+  const { dropFileClaims } = await import('./ui-text.js');
+  assert.equal(dropFileClaims('I saved it as reports/a.md.', []).text, 'No file was saved.');
+  assert.equal(dropFileClaims('Started. It will be saved as reports/a.md.', [], { jobStarted: true }).text, 'Started.');
+});
+
+test('a JSON answer with raw line breaks inside its string (not valid JSON) shows only the answer, never the JSON around it', async () => {
+  const t = await testDesk({ modules: ['chat', 'agents'], script: () => '{"answer":"Amber Fort opens at 8 am.\n\nWould you like more detail?"}' });
+  try {
+    t.core.modules.tools.set('fx_echo', { module: 'search', name: 'fx_echo', description: 'Echo for tests', parameters: { type: 'object', properties: { x: { type: 'string' } } }, async run() { return {}; } });
+    await t.call('/api/m/chat/settings', { method: 'PUT', body: { jsonProviders: ['router'] } });
+    await t.call('/api/m/chat/chats/dm-scout/send', { body: { text: 'When does Amber Fort open?' } });
+    const { last } = await waitReply(t, 'dm-scout');
+    assert.equal(last.text, 'Amber Fort opens at 8 am.\n\nWould you like more detail?');
+  } finally { await t.close(); }
+  const { looseAnswer } = await import('./coordinator.js');
+  assert.equal(looseAnswer('```json\n{"answer": "Say \\"hi\\".\nBye."}\n```'), 'Say "hi".\nBye.');
+  assert.equal(looseAnswer('{"answer": "a", "tool": "x"}'), null, 'not a lone answer');
+  assert.equal(looseAnswer('The answer is {"answer": "x"}'), null);
+});
+
+// ---- heavy background tools are offered only when the ask names that work
+const HEAVY_FAKES = [['research_deep', 'research'], ['research_swarm', 'research'], ['council_ask', 'council'], ['leads_find', 'sales'], ['browser_task', 'browser'], ['web_search', 'search']];
+const offerDesk = async () => {
+  const seen = [];
+  const t = await testDesk({ modules: ['chat', 'agents'], script: (b) => { seen.push({ tools: (b.tools || []).map(x => x.function.name), sys: b.messages[0].content }); return 'Here it is.'; } });
+  for (const [name, module] of HEAVY_FAKES) t.core.modules.tools.set(name, { module, name, description: name, parameters: { type: 'object', properties: {} }, async run() { return { ok: false, error: 'not in this test' }; } });
+  const offer = async (chatId, text) => { seen.length = 0; await t.call(`/api/m/chat/chats/${chatId}/send`, { body: { text } }); await waitReply(t, chatId); return seen[0]; };
+  return { t, offer };
+};
+const HEAVY_NAMES = ['research_deep', 'research_swarm', 'council_ask', 'leads_find', 'browser_task'];
+
+test('plain asks are offered no heavy tool, with one line that says those start only when asked; a light search stays', async () => {
+  const { t, offer } = await offerDesk();
+  try {
+    for (const ask of ['Give me a simple three-step plan to start a balcony herb garden. Keep it short.', 'Plan a two-day trip to Jaipur for a family of four. Keep it short: a small table with day, morning, afternoon and evening.']) {
+      const o = await offer('dm-coordinator', ask);
+      assert.deepEqual(o.tools.filter(n => HEAVY_NAMES.includes(n)), [], ask);
+      assert.ok(o.tools.includes('web_search'), 'a quick web search stays: ' + ask);
+      assert.match(o.sys, /start only when the owner asks for them; if one would help, say so in one sentence\./);
+    }
+    const r = await offer('dm-coordinator', 'Research in depth: how have perovskite cells changed since 2009? Give a cited report.');
+    assert.ok(r.tools.includes('research_deep')); assert.ok(!r.tools.includes('council_ask'));
+    // Scout's own chat keeps the research tools for any ask; Closer's keeps lead search; the Council is never kept by an agent
+    const s = await offer('dm-scout', 'Give me a simple three-step plan to start a balcony herb garden.');
+    assert.ok(s.tools.includes('research_deep') && s.tools.includes('research_swarm') && !s.tools.includes('leads_find') && !s.tools.includes('council_ask'), JSON.stringify(s.tools));
+    const c = await offer('dm-closer', 'Give me a simple three-step plan to start a balcony herb garden.');
+    assert.ok(c.tools.includes('leads_find') && !c.tools.includes('research_deep'), JSON.stringify(c.tools));
+    // nothing held back: no line
+    const all = await offer('dm-scout', 'Ask the council, then find leads and research it in a swarm of agents; use your browser.');
+    assert.ok(HEAVY_NAMES.every(n => all.tools.includes(n))); assert.doesNotMatch(all.sys, /start only when the owner asks/);
+  } finally { await t.close(); }
+});
+
+test('a scheduled or background turn made to research or find leads still gets its tools: the gate reads the stored work, not the context note', async () => {
+  const { t } = await offerDesk();
+  const seen = [];
+  t.fake.calls.length = 0;
+  try {
+    const { CONTEXT_HEAD } = await import('./coordinator.js');
+    const api = t.core.modules.api('chat');
+    await api.ask({ agentId: 'coordinator', text: 'Find 5 leads with sources: bakeries in Pune', quiet: true, note: 'Scheduled: leads' });
+    await api.ask({ agentId: 'coordinator', text: `Write a short note on rain.\n\n${CONTEXT_HEAD}\n"""\nOwner: research the monsoon in depth\n"""`, quiet: true, note: 'Background task: note' });
+    for (const b of t.fake.calls) seen.push((b.tools || []).map(x => x.function.name));
+    assert.ok(seen[0].includes('leads_find'), JSON.stringify(seen[0]));
+    assert.ok(!seen.at(-1).includes('research_deep'), 'words in the context note never open the gate');
+  } finally { await t.close(); }
+});
+
+test('heavyAsked: every acceptance ask and suggestion chip gets its tool; nearby phrases on both sides', async () => {
+  const { heavyAsked } = await import('./coordinator.js');
+  const kinds = (s) => [...heavyAsked(s)].sort();
+  const want = {
+    'Research in depth: how have record efficiencies of perovskite solar cells changed since 2009, and what limits their commercial use? Give a cited report.': ['research'],
+    'Find 20 leads with sources: Indian companies that sell HR or payroll software to small businesses.': ['leads'],
+    'Find 5 leads with sources: bakeries in Pune': ['leads'],
+    "Use your browser, read only, one page at a time: open https://en.wikipedia.org/wiki/Tenzing_Norgay, find who he first climbed Everest with": ['browser'],
+    'A 10-person sales team: buy a CRM at about 1,500 rupees per user per month, or build one in-house in three months? Ask the Council.': ['council'],
+    'Research a topic in depth': ['research'], 'Find 20 leads with sources': ['leads'], 'Find 20 leads with sources for my product': ['leads'],
+    'Research this company before my call': ['research'], 'Research a market in depth': ['research'], 'Ask the Council: build or buy?': ['council'],
+    "Research three sources for tomorrow's lesson": ['research'], 'Research this topic and cite sources': ['research'],
+    'look into our three competitors in depth and write a report with sources': ['research'],
+    'Do a deep dive on solid-state batteries': ['research'], 'Investigate why our churn went up': ['research'], 'Write me a report on EV charging in India': ['research'],
+    'Run a swarm on this': ['swarm'], 'Use 20 agents in parallel to compare these vendors': ['swarm'],
+    'What is the verdict of three seats on this?': ['council'],
+    'Find companies that sell solar panels in Kerala': ['leads'], 'Find customers who might buy our CRM': ['leads'], 'List prospects for our bakery supplies': ['leads'],
+    'Go to https://example.com and read the pricing': ['browser'], 'Open the site and check the opening hours': ['browser'], 'Do it in the browser': ['browser'],
+  };
+  for (const [s, k] of Object.entries(want)) assert.deepEqual(kinds(s).filter(x => x !== 'research' || k.includes('research')), k, s);
+  // the other acceptance asks and chips name no heavy work
+  for (const s of ['What is the capital of Australia? Answer in one sentence.', 'Write a detailed 1500-word essay on the history of the printing press, with many sections. Do not stop early.', 'Compare three products into a table file: the Apple iPhone 16, the Samsung Galaxy S25 and the Google Pixel 9.', 'As a background task, write a 400-word brief on the history of the bicycle.', 'Every morning at 8, brief me.', 'In one minute, brief me.', 'Draft outreach to the top five.', 'Tell me in two lines what you do.', 'What is 7 times 6? Answer with the number only.', 'Make a revision plan for my exams', 'Plan a 6-week course',
+    'Give me a simple three-step plan to start a balcony herb garden. Keep it short.', 'Plan a two-day trip to Jaipur for a family of four. Keep it short: a small table with day, morning, afternoon and evening.',
+    'search the web for today\'s gold price', 'what is the research on sleep and memory?', 'Recent research shows coffee is fine. True?', 'What leads to inflation?', 'Who will lead the team?', 'Read this page: https://example.com/a', 'How do I clear my browser cache?', 'Give me a short study plan', 'Is property tax going up?'])
+    assert.deepEqual(kinds(s), [], s);
+});

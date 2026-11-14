@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { makeStore } from './store.js';
 import { makeCoordinator, cardKey } from './coordinator.js';
-import { dropFileClaims } from './ui-text.js';
+import { dropFileClaims, previewText } from './ui-text.js';
 
 const TEXT_EXT = /\.(txt|md|markdown|csv|tsv|json|js|mjs|ts|py|html?|css|xml|ya?ml|ini|log|sql|sh|bat|ps1|rtf)$/i;
 
@@ -200,7 +200,8 @@ export async function activate(ctx) {
       return { chatId: c.id, messageId: m.id };
     },
     createChat({ title, members } = {}) { const c = store.create({ title, members }); emit({ type: 'chats' }); return c; },
-    recent(n = 6) { return store.list().filter(c => c.last).slice(0, n).map(c => ({ id: c.id, title: c.title || ctx.agents.get(c.members[0])?.name || 'Chat', last: c.last, updated: c.updated })); },
+    // what Home shows under "Pick up where you left off": plain words (a value stored before the preview was cleaned is cleaned here)
+    recent(n = 6) { return store.list().filter(c => c.last).slice(0, n).map(c => ({ id: c.id, title: c.title || ctx.agents.get(c.members[0])?.name || 'Chat', last: previewText(c.last), updated: c.updated })); },
     /** A full Coordinator turn, for schedules and channels. */
     async ask({ chatId, agentId, text, signal, jobId, quiet = false, note = null } = {}) {
       const c = chatId ? resolveChat(chatId) : agentId ? store.direct(agentId) : store.chat('everyone');

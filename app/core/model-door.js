@@ -7,7 +7,13 @@ import { id as makeId, now } from './storage.js';
 const CATALOG = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'providers.json'), 'utf8'));
 export const PROVIDERS = CATALOG.providers;
 export const FREE_ROUTER = CATALOG.freeRouter;
+// Attempts per call. The built-in router alone gives up to 4 targets, so 6 lets a call that the free router cannot answer
+// still reach Ollama and the first keyed model (MODEL-DOOR.md, Choosing).
 const MAX_ATTEMPTS = 6;
+/** A streamed reply that sends nothing for this long is dropped and the next target is tried (per call: opts.streamGapMs). */
+export const STREAM_GAP_MS = 45000;
+/** No new hop starts after this long from the start of a call (per call: opts.deadlineMs). At least the chat's own wait. */
+export const CHAT_DEADLINE_MS = 170000;
 // Free upstreams sometimes return their own notice as an ordinary reply (seen from Pollinations on 13 Nov 2026).
 const NOTICE = /reached its budget|raise the key budget|enter\.pollinations\.ai|rate limit exceeded|quota exceeded|please sign in|model is (currently )?(unavailable|overloaded)/i;
 const ENV_KEYS = ['OPENROUTER_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GROQ_API_KEY', 'GEMINI_API_KEY', 'MISTRAL_API_KEY', 'DEEPSEEK_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'CEREBRAS_API_KEY', 'XAI_API_KEY'];
@@ -130,18 +136,26 @@ export class ModelDoor {
     if (!online) chain = chain.filter(c => this.isLocal(c.provider));   // an explicit pick of an online model is refused offline too
     if (!chain.length) throw new ModelError(online ? 'no_provider' : 'offline', online ? 'No model is set up. Add a key or start Ollama or the router in Models.' : 'The desk is offline and no local model is running. Start Ollama or go online.');
     const attempts = [];
+    const limit = Number(opts.deadlineMs) > 0 ? Number(opts.deadlineMs) : CHAT_DEADLINE_MS;
+    const deadline = Date.now() + limit; let late = false;
+    let shown = false;   // a target already streamed text: the caller is told to clear it before the next one streams
+    const onDelta = opts.onDelta ? (d) => { shown = true; opts.onDelta(d); } : undefined;
+    const hopOpts = { ...opts, onDelta };
     for (const step of chain) {
       if (attempts.length >= MAX_ATTEMPTS) break;
       if (signal.aborted) throw new ModelError('aborted', 'Stopped.', { attempts });
+      if (Date.now() >= deadline) { late = true; break; }
       const targets = await this.targets(step, opts);
       if (!targets.length) { attempts.push({ provider: step.provider, model: step.model, ok: false, error: 'not available' }); continue; }
       for (const t of targets) {
         if (attempts.length >= MAX_ATTEMPTS) break;
+        if (Date.now() >= deadline) { late = true; break; }
         // a paid model is not called once today's or this month's spend has reached the owner's limit
         if (t.key && this.priceOf(t.model) && this.spendGuard) { const over = this.spendGuard(); if (over) { attempts.push({ provider: t.provider, model: t.model, ok: false, error: `not called: your ${over} is reached` }); continue; } }
         const t0 = Date.now();
         try {
-          const r = await this.callOne(t, opts, signal);
+          if (shown) { shown = false; try { opts.onReset?.(); } catch {} }
+          const r = await this.callOne(t, hopOpts, signal, deadline - Date.now());
           const ms = Date.now() - t0;
           attempts.push({ provider: t.provider, model: t.model, ok: true, ms });
           this.last.set(t.provider, { ok: true, at: now(), model: t.model, ms });
@@ -159,8 +173,9 @@ export class ModelDoor {
           this.log('model', t.provider, t.model, 'failed:', e.message);
         }
       }
+      if (late) break;
     }
-    throw new ModelError('all_failed', 'No model answered. ' + attempts.map(a => `${this.label(a.provider, a.model)}: ${a.error}`).join('; '), { attempts });
+    throw new ModelError('all_failed', (late ? `No model answered within ${limit / 1000} seconds. ` : 'No model answered. ') + attempts.map(a => `${this.label(a.provider, a.model)}: ${a.error}`).join('; '), { attempts });
   }
   /** Concrete (provider, model, baseUrl, key) targets for one chain step. */
   async targets(step, opts = {}) {
@@ -216,11 +231,12 @@ export class ModelDoor {
     const name = provider === 'router' ? 'Agent Population Router' : provider === 'ollama' ? 'Ollama' : String(provider).startsWith('lan:') ? 'LAN node' : (PROVIDERS[provider]?.name || provider);
     return model ? `${name} · ${model}${via ? ' (' + via + ')' : ''}` : name;
   }
-  async callOne(t, opts, signal) {
-    if (t.api === 'anthropic') return this.callAnthropic(t, opts, signal);
-    return this.callOpenAI(t, opts, signal);
+  /** leftMs: time left before the call's deadline; a hop's wait for its first byte never runs past it. */
+  async callOne(t, opts, signal, leftMs = Infinity) {
+    if (t.api === 'anthropic') return this.callAnthropic(t, opts, signal, leftMs);
+    return this.callOpenAI(t, opts, signal, leftMs);
   }
-  async callOpenAI(t, opts, signal) {
+  async callOpenAI(t, opts, signal, leftMs = Infinity) {
     const body = { model: t.model, messages: opts.messages, stream: !!opts.onDelta };
     if (opts.temperature != null) body.temperature = opts.temperature;
     if (opts.maxTokens) body.max_tokens = opts.maxTokens;
@@ -230,13 +246,13 @@ export class ModelDoor {
     const headers = { 'content-type': 'application/json', ...t.headers };
     if (t.key) headers.authorization = 'Bearer ' + t.key;
     if (t.provider === 'openrouter') { headers['http-referer'] = 'http://127.0.0.1:3960'; headers['x-title'] = 'AP Desk'; }
-    const r = await this.http(t.baseUrl + (t.chatPath ?? '/chat/completions'), { method: 'POST', headers, body: JSON.stringify(body), signal }, opts.timeoutMs || (t.via ? 60000 : 180000));
+    const r = await this.http(t.baseUrl + (t.chatPath ?? '/chat/completions'), { method: 'POST', headers, body: JSON.stringify(body), signal }, Math.max(1, Math.min(opts.timeoutMs || (t.via ? 60000 : 180000), leftMs)));
     if (!r.ok) { const txt = await r.text().catch(() => ''); throw Object.assign(new Error(`HTTP ${r.status} ${short(txt)}`), { status: r.status }); }
     let text = ''; let toolCalls = []; let usage = null;
     let finish = null;
     if (body.stream) {
       const acc = new Map(); let lastSlot = 0;
-      for await (const ev of sse(r.body, signal)) {
+      for await (const ev of sse(r.body, signal, opts.streamGapMs || STREAM_GAP_MS)) {
         if (ev === '[DONE]') break;
         let j; try { j = JSON.parse(ev); } catch { continue; }
         const ch = j.choices?.[0]; const d = ch?.delta || {};
@@ -276,7 +292,7 @@ export class ModelDoor {
     if (t.via && NOTICE.test(out.text.slice(0, 400))) throw Object.assign(new Error('The free provider answered with a notice, not a reply: ' + short(out.text)), { status: 429 });
     return out;
   }
-  async callAnthropic(t, opts, signal) {
+  async callAnthropic(t, opts, signal, leftMs = Infinity) {
     const sys = opts.messages.filter(m => m.role === 'system').map(m => m.content).join('\n');
     const msgs = [];
     for (const m of opts.messages) {
@@ -289,12 +305,12 @@ export class ModelDoor {
     if (sys) body.system = sys;
     if (opts.temperature != null) body.temperature = opts.temperature;
     if (opts.tools?.length) body.tools = opts.tools.map(f => ({ name: f.name, description: f.description, input_schema: f.parameters || { type: 'object', properties: {} } }));
-    const r = await this.http(t.baseUrl + '/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': t.key, 'anthropic-version': '2023-06-01' }, body: JSON.stringify(body), signal }, opts.timeoutMs || 180000);
+    const r = await this.http(t.baseUrl + '/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': t.key, 'anthropic-version': '2023-06-01' }, body: JSON.stringify(body), signal }, Math.max(1, Math.min(opts.timeoutMs || 180000, leftMs)));
     if (!r.ok) { const txt = await r.text().catch(() => ''); throw Object.assign(new Error(`HTTP ${r.status} ${short(txt)}`), { status: r.status }); }
     let text = ''; const toolCalls = []; let usage = null; let finish = null;
     if (body.stream) {
       let cur = null;
-      for await (const ev of sse(r.body, signal)) {
+      for await (const ev of sse(r.body, signal, opts.streamGapMs || STREAM_GAP_MS)) {
         let j; try { j = JSON.parse(ev); } catch { continue; }
         if (j.type === 'content_block_start' && j.content_block?.type === 'tool_use') cur = { id: j.content_block.id, name: j.content_block.name, args: '' };
         else if (j.type === 'content_block_delta') { if (j.delta?.type === 'text_delta') { text += j.delta.text; try { opts.onDelta(j.delta.text); } catch {} } else if (j.delta?.type === 'input_json_delta' && cur) cur.args += j.delta.partial_json; }
@@ -369,9 +385,13 @@ export class ModelDoor {
     const ac = new AbortController(); const t = setTimeout(() => ac.abort('timeout'), timeoutMs);
     const onAbort = () => ac.abort('aborted'); init.signal?.addEventListener('abort', onAbort, { once: true });
     // The caller's signal stays wired to the request for the whole body, so Panic cuts a reply mid-stream.
-    // The timeout covers only the wait for the first byte.
+    // The timeout covers only the wait for the first byte; a streamed body has its own gap timer (sse).
     try { return await this.fetch(url, { ...init, signal: ac.signal }); }
-    catch (e) { if (init.signal?.aborted) throw Object.assign(new Error('Stopped'), { code: 'aborted', name: 'AbortError' }); throw e; }
+    catch (e) {
+      if (init.signal?.aborted) throw Object.assign(new Error('Stopped'), { code: 'aborted', name: 'AbortError' });
+      if (ac.signal.reason === 'timeout') throw new Error(`No answer within ${Math.round(timeoutMs / 100) / 10} seconds`);
+      throw e;
+    }
     finally { clearTimeout(t); }
   }
   /** What a module gets. Keys are managed by the Models module through these calls; values never come back. */
@@ -388,13 +408,25 @@ export class ModelDoor {
   }
 }
 
-async function* sse(body, signal) {
+/** Server-sent events from a streamed body. gapMs: nothing at all arriving for this long drops the stream with an ordinary
+ *  provider error (code 'stalled'), so the chain moves on; any bytes, keep-alive lines too, restart the wait. */
+async function* sse(body, signal, gapMs = 0) {
   const reader = body.getReader(); const dec = new TextDecoder(); let buf = '';
+  const read = () => {
+    if (!gapMs) return reader.read();
+    let timer;
+    const gap = new Promise((_, no) => { timer = setTimeout(() => no(Object.assign(new Error(`The reply stopped coming for ${Math.round(gapMs / 100) / 10} seconds`), { code: 'stalled' })), gapMs); });
+    return Promise.race([reader.read(), gap]).finally(() => clearTimeout(timer));
+  };
   try {
     while (true) {
       if (signal?.aborted) { try { await reader.cancel(); } catch {} throw Object.assign(new Error('Stopped'), { code: 'aborted', name: 'AbortError' }); }
       let value, done;
-      try { ({ value, done } = await reader.read()); } catch (e) { if (signal?.aborted) throw Object.assign(new Error('Stopped'), { code: 'aborted', name: 'AbortError' }); throw e; }
+      try { ({ value, done } = await read()); } catch (e) {
+        if (signal?.aborted) throw Object.assign(new Error('Stopped'), { code: 'aborted', name: 'AbortError' });
+        if (e.code === 'stalled') reader.cancel().catch(() => {});   // closes the connection; the pending read settles on its own
+        throw e;
+      }
       if (done) break;
       buf += dec.decode(value, { stream: true });
       let i; while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i).replace(/\r$/, ''); buf = buf.slice(i + 1); if (line.startsWith('data:')) yield line.slice(5).trim(); }

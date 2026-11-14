@@ -3,7 +3,10 @@
 import http from 'node:http';
 
 /**
- * script: (body, n) => string | { text, toolCalls: [{ name, args }], status, delayMs, chunkDelayMs, finish }   (finish: 'length' = the reply was cut off)
+ * script: (body, n) => string | { text, toolCalls: [{ name, args }], status, delayMs, chunkDelayMs, finish, stallAfter, stallMs }
+ *   finish: 'length' = the reply was cut off.
+ *   stallAfter: n = a streamed reply sends its headers and n words, then sends nothing for stallMs (default: until the client
+ *   hangs up), then the rest. stallAfter: 0 stalls right after the headers.
  * Default: echoes "FAKE: <last user message>".
  */
 export async function startFakeLlm(script) {
@@ -22,9 +25,11 @@ export async function startFakeLlm(script) {
     if (out.status && out.status !== 200) { res.writeHead(out.status, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ error: { message: out.text || 'fake error' } })); }
     const tool_calls = (out.toolCalls || []).map((t, i) => ({ id: 'call_' + i, type: 'function', function: { name: t.name, arguments: JSON.stringify(t.args || {}) } }));
     if (body.stream) {
-      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.writeHead(200, { 'content-type': 'text/event-stream' }); res.flushHeaders();
       const words = String(out.text || '').split(/(\s+)/).filter(Boolean);
-      for (const w of words) { if (res.destroyed) return; res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: w } }] })}\n\n`); await new Promise(r => setTimeout(r, out.chunkDelayMs ?? 5)); }
+      const stall = () => new Promise(r => { const tm = out.stallMs != null ? setTimeout(r, out.stallMs) : null; res.once('close', () => { clearTimeout(tm); r(); }); });
+      if (out.stallAfter === 0) await stall();
+      for (const [i, w] of words.entries()) { if (res.destroyed) return; if (out.stallAfter && i === out.stallAfter) { await stall(); if (res.destroyed) return; } res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: w } }] })}\n\n`); await new Promise(r => setTimeout(r, out.chunkDelayMs ?? 5)); }
       // out.noIndex: send parallel calls the way Gemini does, each complete in its own chunk and with no index
       if (tool_calls.length && out.noIndex) for (const t of tool_calls) res.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [t] } }] })}\n\n`);
       else if (tool_calls.length) res.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: tool_calls.map((t, index) => ({ index, ...t })) } }] })}\n\n`);
