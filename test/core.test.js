@@ -61,6 +61,46 @@ test('Panic stops a streaming reply, a running job and a waiting approval, and b
   } finally { await t.close(); }
 });
 
+test('Panic: the approvals it cancels are kept as stopped by Panic, shown until dismissed, and counted once on Resume', async () => {
+  const t = await testDesk({ modules: ['safety'] });
+  try {
+    const toasts = []; t.core.events.on((type, data) => { if (type === 'toast') toasts.push(data); });
+    t.core.settings.set('security.level', 'strict');
+    const a = t.core.approval.request({ action: 'file.write', title: 'Write a.txt', agentId: 'coder' });
+    // a request made inside a job carries a child of the Panic signal; Panic must still record it as stopped by Panic
+    const b = t.core.approval.request({ action: 'send.person', title: 'Mail the supplier', agentId: 'seller', payload: { to: 'x@example.com' }, signal: t.core.panic.child() });
+    await new Promise(r => setTimeout(r, 50));
+    await t.call('/api/panic', { body: {} });
+    const [ra, rb] = await Promise.all([a, b]);
+    assert.equal(ra.ok, false); assert.equal(ra.reason, 'halted'); assert.equal(rb.ok, false); assert.equal(rb.reason, 'halted');
+    // nothing was approved, nothing can be sent
+    assert.equal(t.core.approval.forModule().get(rb.id).status, 'halted');
+    assert.throws(() => t.core.approval.assertGranted(rb.id, 'send.person', { to: 'x@example.com' }), (e) => e.code === 'not_granted');
+    let list = (await t.call('/api/m/safety/stopped')).json.items;
+    assert.deepEqual(list.map(x => x.title).sort(), ['Mail the supplier', 'Write a.txt']);
+    const mail = list.find(x => x.title === 'Mail the supplier');
+    assert.equal(mail.agentId, 'seller'); assert.equal(mail.action, 'send.person'); assert.ok(mail.decided);
+    assert.equal(toasts.length, 0, 'no notice while still stopped');
+    await t.call('/api/panic/resume', { method: 'POST' });
+    assert.equal(toasts.length, 1); assert.match(toasts[0].text, /2 requests/);
+    // a second Panic with nothing waiting gives no notice on Resume
+    await t.call('/api/panic', { body: {} }); await t.call('/api/panic/resume', { method: 'POST' });
+    assert.equal(toasts.length, 1);
+    // approving a stopped item does nothing: it stays cancelled
+    await t.call(`/api/approvals/${ra.id}/approve`, { method: 'POST' });
+    assert.equal(t.core.approval.forModule().get(ra.id).status, 'halted');
+    // only the owner dismisses; dismissing keeps the record, it only leaves the list
+    assert.equal((await t.call('/api/m/safety/stopped/dismiss', { body: { id: ra.id }, session: false })).status, 403);
+    await t.call('/api/m/safety/stopped/dismiss', { body: { id: ra.id } });
+    list = (await t.call('/api/m/safety/stopped')).json.items;
+    assert.deepEqual(list.map(x => x.title), ['Mail the supplier']);
+    await t.call('/api/m/safety/stopped/dismiss', { body: { all: true } });
+    assert.equal((await t.call('/api/m/safety/stopped')).json.items.length, 0);
+    assert.equal(t.core.approval.forModule().get(ra.id).status, 'halted');
+    assert.equal(t.core.approval.listPending().length, 0);
+  } finally { await t.close(); }
+});
+
 test('approval door: Open allows a file write, Careful asks once per job, send to a person always asks', async () => {
   const t = await testDesk({ modulesDir: FIX });
   try {

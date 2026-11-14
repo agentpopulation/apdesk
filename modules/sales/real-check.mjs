@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { testDesk } from '../../test/helpers/desk.js';
 import { createDesk } from '../../app/server.js';
 import { wikiSearch, fetchText } from './check-search.mjs';
-import { textNames, companyKey, siteMatches, strictEmail, sameBusiness, topicWords, sameCompany, namesCompany } from './rules.js';
+import { textNames, companyKey, siteMatches, strictEmail, sameBusiness, topicWords, sameCompany, namesCompany, askCountry } from './rules.js';
 import { unsupportedClaims, senderNameProblems } from './claims.js';
 import { bodyProblem } from './parse.js';
 const press = async (kind, id) => (await call(`/api/m/${kind}/drafts/${id}/send`, { body: (await call(`/api/m/${kind}/drafts/${id}`)).json?.send })).json?.approvalId;   // the owner's press on "Approve and send": only now is the approval asked
@@ -45,6 +45,8 @@ try {
     const t0 = Date.now();
     const started = await core.modules.runTool('leads_find', { query: ASK, count: COUNT }, { chatId: CHAT, agentId: 'coordinator' });
     check('leads_find starts a job', started.ok && started.jobId, started.text);
+    const repeat = await core.modules.runTool('leads_find', { query: `Please look up: ${ASK.toLowerCase()}`, count: COUNT }, { chatId: CHAT, agentId: 'coordinator' });
+    check('a reworded repeat in the same chat while it runs returns the running search, no second job', repeat.already && repeat.jobId === started.jobId, repeat.text);
     const job = await core.jobs.wait(started.jobId, 900000);
     const out = job?.output || {};
     const progressLines = cards.filter(c => c.kind === 'progress').map(c => c.detail);
@@ -64,6 +66,12 @@ try {
     check('every lead has a source URL that returns 200', leads.length > 0 && ok200 === leads.length, `${ok200} of ${leads.length}`);
     check('every source page names its company', leads.length > 0 && named === leads.length, `${named} of ${leads.length}${bad.length ? '; not: ' + bad.slice(0, 4).join('; ') : ''}`);
     for (const l of leads.slice(0, 25)) info(`${l.company} | ${l.contactName || 'contact not checked'} | ${l.need.slice(0, 70)} | ${l.sources[0].url}`);
+    const askC = askCountry(ASK);
+    if (askC) {
+      const unplaced = leads.filter(l => !String(l.findings || '').includes(`Placed in ${askC.label} by `));
+      check(`every lead is placed in ${askC.label} by a page that was read (the evidence is in its findings)`, leads.length > 0 && unplaced.length === 0, `${leads.length - unplaced.length} of ${leads.length}; left out for want of a place: ${out.rejected?.['not placed in the country'] || 0}`);
+      for (const l of leads.slice(0, 25)) info(`${l.company}: ${(String(l.findings || '').match(/Placed in .*$/) || ['not placed'])[0].slice(0, 200)}`);
+    }
     const invented = leads.filter(l => l.email && !l.sources.length);
     if (seeds.length) {
       const clash = leads.filter(l => seeds.some(x => sameCompany(x.company, l.company, topicWords(ASK)) || (l.website && x.website && new URL(l.website).hostname.replace(/^www\./, '') === new URL(x.website).hostname.replace(/^www\./, ''))));

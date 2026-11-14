@@ -4,7 +4,7 @@
 import crypto from 'node:crypto';
 import { FORMATS, guessFormat } from './formats.js';
 import { liveSlots, spread, modelNote, figuresNote } from './seats.js';
-import { answerMessages, rankMessages, chairMessages, parseRanking, aggregate, parseJson, toLastSentence, wholeSentences, continueMessages, joinContinuation, agreeMessages, agreement, rankLineFor } from './stages.js';
+import { answerMessages, rankMessages, chairMessages, parseRanking, aggregate, parseJson, toLastSentence, wholeSentences, continueMessages, joinContinuation, agreement, rankLineFor, parseRecommendation, recommendMessages } from './stages.js';
 
 const uid = (p) => p + crypto.randomBytes(6).toString('hex');
 const nowIso = () => new Date().toISOString();
@@ -118,7 +118,13 @@ export async function activate(ctx) {
               catch (e) { if (signal.aborted || e.code === 'halted' || e.code === 'aborted') throw e; }
               if (still) { text = toLastSentence(text) || text.replace(/\s+\S*$/, '') + '…'; cut = true; }
             }
-            answers[i] = { ...answers[i], text, cut, label: r.label, fellBack: r.fellBack, setLabel: label(s.model), ms: r.ms };
+            // the seat's own recommendation line; on a miss, the same model is asked once for that line alone
+            let recommendation = parseRecommendation(text);
+            if (text && !recommendation) {
+              try { const c = await ctx.model.chat({ purpose: 'council', messages: recommendMessages(msgs, text), maxTokens: 200, temperature: 0.2, signal, model: { provider: r.provider, model: r.model } }); recommendation = parseRecommendation(c.text, { bare: true }); }
+              catch (e) { if (signal.aborted || e.code === 'halted' || e.code === 'aborted') throw e; }
+            }
+            answers[i] = { ...answers[i], text, cut, recommendation, label: r.label, fellBack: r.fellBack, setLabel: label(s.model), ms: r.ms };
           } catch (e) { if (signal.aborted || e.code === 'halted' || e.code === 'aborted') throw e; answers[i].error = e.message; }
           done++; saveRun(runId, { answers });
           const msg = answers[i].text ? `${s.name} answered (${answers[i].label})` : `${s.name} could not answer`;
@@ -131,12 +137,6 @@ export async function activate(ctx) {
         const letters = order.map((_, k) => String.fromCharCode(65 + k));
         const byLetter = Object.fromEntries(order.map((i, k) => [letters[k], i]));
         const rankings = [];
-        // alongside the ranking: one call labels what each seat recommends and which pairs recommend the same course
-        const agreeP = (async () => {
-          try { const r = await seatCall(chair, agreeMessages(room.question, ok), { signal, json: true, maxTokens: 400 }); return { line: agreement(parseJson(r), ok.map(a => a.name)), label: r.label }; }
-          catch (e) { if (signal.aborted || e.code === 'halted' || e.code === 'aborted') throw e; return { line: '', label: null }; }
-        })();
-        agreeP.catch(() => {});
         job.progress(0.5, 'The seats are ranking each other'); card('The seats are ranking each other, without names', 0.5); emit('ranking');
         let ranked = 0;
         await Promise.all(seats.map(async (s, i) => {
@@ -152,7 +152,7 @@ export async function activate(ctx) {
           job.progress(0.5 + 0.3 * ranked / ok.length, msg); card(msg, 0.5 + 0.3 * ranked / ok.length); emit('rank', { seat: i, ranking: last });
         }));
         const agg = aggregate(rankings, byLetter, answers);
-        const agree = await agreeP; agg.agreeLine = agree.line;
+        agg.agreeLine = agreement(ok.map(a => ({ name: a.name, recommendation: a.recommendation })));
         // stage 3: the chairman writes the Verdict
         job.progress(0.85, 'The chairman is writing the Verdict'); card('The chairman is writing the Verdict', 0.85); emit('verdict-writing');
         let r = await seatCall(chair, chairMessages(room.question, answers, seats, agg), { signal, json: true, maxTokens: 1200 });
@@ -168,12 +168,13 @@ export async function activate(ctx) {
         const verdict = {
           decision: whole(j.decision || j.answer, 400), reasons: (Array.isArray(j.reasons) ? j.reasons : []).map(x => whole(x, 220)).filter(Boolean).slice(0, 2),
           answer: whole(j.answer || '', 1600), label: r.label, winner: agg.winner != null ? answers[agg.winner].name : null,
-          // the headline says what it counts: the seats' recommendations when they could be labelled, else the ranking under its own name
-          agreeLine: agree.line, agreeLabel: agree.label, rankLine: agg.rankLine, voteLine: agree.line || agg.rankLine || NO_RANK,
+          // the headline says what it counts: the seats' own recommendation lines when any seat gave one, else the ranking under its own name
+          agreeLine: agg.agreeLine, rankLine: agg.rankLine, voteLine: agg.agreeLine || agg.rankLine || NO_RANK,
           vote: agg.vote, averages: agg.averages,
         };
         // plain notes on the result: one model for every seat, offline, and figures no page was read for
-        verdict.notes = [modelNote(answers), offline() ? 'The desk was offline, so the Council ran on local models only.' : '', figuresNote(room.question, answers, verdict)].filter(Boolean);
+        const noAgree = agg.agreeLine ? '' : 'No seat gave a clear recommendation, so the Verdict cannot say how far the seats agree' + (agg.rankLine ? '; the headline shows how they ranked each other instead.' : '.');
+        verdict.notes = [noAgree, modelNote(answers), offline() ? 'The desk was offline, so the Council ran on local models only.' : '', figuresNote(room.question, answers, verdict)].filter(Boolean);
         saveRun(runId, { verdict, status: 'done', finished: nowIso() });
         ctx.db.run('UPDATE m_council_rooms SET updated = ? WHERE id = ?', nowIso(), room.id);
         const run = getRun(runId);

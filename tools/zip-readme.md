@@ -66,4 +66,4 @@ Switch Online off under the message box or in Settings. While Offline the desk p
 - **Back up:** Settings, Backup. The zip lands in `backups`.
 - **Remove:** stop the desk and delete the folder. Nothing is installed anywhere else, apart from Node.js.
 
-AP Desk is open source under the Apache License 2.0. Copyright 2026 Agent Population. Licences and credits of the open-source parts: `app\docs\ATTRIBUTION.md`.
+AP Desk is open source under the Apache License 2.0. Copyright 2026 AgentPopulation. Licences and credits of the open-source parts: `app\docs\ATTRIBUTION.md`.

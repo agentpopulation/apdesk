@@ -15,14 +15,14 @@ test('code checks on extracted rows: never keeps what the page did not say', () 
   assert.equal(checkRow({ company: 'Invented Industries', kind: 'company', fits: true }, page, {}).reject, 'not named on the page');
   assert.match(checkRow({ company: 'Acme Controls', kind: 'brand', fits: true }, page, {}).reject, /brand/);
   assert.equal(checkRow({ company: 'Acme Controls', fits: true }, page, {}).reject, 'not described as a company');
-  for (const [a, b] of [['Siemens India', 'Siemens Ltd.'], ['ABB India Ltd.', 'ABB'], ['Rockwell Automation India Pvt. Ltd.', 'Rockwell Automation'], ['B&R Industrial Automation (A member of ABB Group)', 'B&R Industrial Automation GmbH']]) assert.equal(companyKey(a), companyKey(b), a);
-  assert.notEqual(companyKey('ABB'), companyKey('B&R Industrial Automation'));
+  for (const [a, b] of [['Kestrel India', 'Kestrel Ltd.'], ['Orion Drives India Ltd.', 'Orion Drives'], ['Marlow Automation India Pvt. Ltd.', 'Marlow Automation'], ['T&K Industrial Automation (A member of Orion Group)', 'T&K Industrial Automation GmbH']]) assert.equal(companyKey(a), companyKey(b), a);
+  assert.notEqual(companyKey('Orion'), companyKey('T&K Industrial Automation'));
   assert.deepEqual(unsupportedClaims("Hello, I am Arun. I saw your new plant in Pune. Could we have 15 minutes next week?", ''), []);
   assert.equal(unsupportedClaims("We've helped other companies streamline operations.", '').length, 1);
   assert.deepEqual(unsupportedClaims('We have helped 40 plants cut changeover time.', 'We have helped 40 plants cut changeover time.'), []);
   assert.equal(checkRow({ company: 'Acme Controls', fits: false }, page, {}).reject, 'does not fit');
-  assert.ok(textNames('Larsen &amp; Toubro Limited is', 'Larsen & Toubro Ltd.'));
-  assert.ok(isPublisher('Economic Times', 'https://economictimes.indiatimes.com/x'));
+  assert.ok(textNames('Harlow &amp; Penn Limited is', 'Harlow & Penn Ltd.'));
+  assert.ok(isPublisher('Harbour Times', 'https://harbourtimes.example/x'));
   assert.equal(buyerAsk('Find buyers of tile adhesive in Kochi'), 'tile adhesive');
   assert.ok(looksLikeSeller('Tile adhesive manufacturers in Kochi', 'tile adhesive'));
 });
@@ -66,8 +66,8 @@ test('drafts wait, no approval until the press, deny keeps, Mail off never sends
 
 test('draft replies: subject and body kept apart for fenced, raw, prose-wrapped and truncated replies', async () => {
   const { parseDraftReply, bodyProblem } = await import('./parse.js');
-  const fenced = parseDraftReply('```json\n{"subject": "A note for Lupin", "body": "Hello,\\nI saw your plant in Pune. Could we talk?"}\n```');
-  assert.equal(fenced.subject, 'A note for Lupin'); assert.equal(fenced.body, 'Hello,\nI saw your plant in Pune. Could we talk?');
+  const fenced = parseDraftReply('```json\n{"subject": "A note for Kavya Labs", "body": "Hello,\\nI saw your plant in Pune. Could we talk?"}\n```');
+  assert.equal(fenced.subject, 'A note for Kavya Labs'); assert.equal(fenced.body, 'Hello,\nI saw your plant in Pune. Could we talk?');
   const raw = parseDraftReply('{"subject":"S one","body":"Hello there. A question?"}');
   assert.equal(raw.subject, 'S one'); assert.equal(raw.body, 'Hello there. A question?');
   const prose = parseDraftReply("Here is your draft:\n{'subject': 'S two', 'body': 'Hello. Would a call help?',}\nLet me know!");
@@ -78,8 +78,8 @@ test('draft replies: subject and body kept apart for fenced, raw, prose-wrapped 
   for (const b of ['{"subject": "x"', 'Subject: hi\nHello', 'Hello "body": "x"', 'Hello,\\nline']) assert.ok(bodyProblem(b), b);
   assert.equal(bodyProblem('Hello,\n\nI saw your plant: it is large. Could we talk?'), '');
   // truncation is known only from the model door's cutOff, never guessed from letters or end punctuation
-  assert.match(parseDraftReply('Hello, I saw that Lupin has grown into a leading company focusing on generic drugs', null, { cutOff: true }).error, /cut off/);
-  assert.equal(parseDraftReply('Hello, I saw that Lupin has grown. Could we talk?', null, { cutOff: false }).body, 'Hello, I saw that Lupin has grown. Could we talk?');
+  assert.match(parseDraftReply('Hello, I saw that Kavya Labs has grown into a leading company focusing on generic drugs', null, { cutOff: true }).error, /cut off/);
+  assert.equal(parseDraftReply('Hello, I saw that Kavya Labs has grown. Could we talk?', null, { cutOff: false }).body, 'Hello, I saw that Kavya Labs has grown. Could we talk?');
   assert.equal(bodyProblem('Hello,\n\nCould we talk next week?\n\nBest regards,\nArun Rao'), '');
   assert.ok(parseDraftReply('{"subject": "S", "body": "Hello, I saw', { subject: 'S', body: 'Hello, I saw' }).error, 'a repaired cut-off reply is not trusted');
 });
@@ -116,7 +116,7 @@ test('a draft reply cut off at the length limit is retried, a whole one without 
   let calls = 0;
   const t = await testDesk({ modules: ['sales'], script: () => { calls++; return calls === 1 ? { text: JSON.stringify({ body: 'Hello Ravi, I saw your plant and wanted to ask whether' }), finish: 'length' } : { text: JSON.stringify({ body: 'Hi Ravi, free for a quick call this week? 🙏' }) }; } });
   try {
-    const a = (await t.call('/api/m/sales/leads', { body: { company: 'Lupin', contactName: 'Ravi', phone: '+91 98450 00000' } })).json.lead;
+    const a = (await t.call('/api/m/sales/leads', { body: { company: 'Kavya Labs', contactName: 'Ravi', phone: '+91 98450 00000' } })).json.lead;
     const r = await t.core.modules.runTool('outreach_draft', { leadIds: [a.id], channel: 'whatsapp' }, {});
     assert.equal(calls, 2, 'the cut-off reply was retried once');
     assert.equal(r.drafts.length, 1, r.text);
@@ -127,16 +127,16 @@ test('a draft reply cut off at the length limit is retried, a whole one without 
 
 test('a reply that is raw JSON twice is refused, not saved; fenced replies save cleanly; LinkedIn text is copy-only', async () => {
   let mode = 'cut'; let calls = 0;
-  const t = await testDesk({ modules: ['sales'], script: () => { calls++; return { text: mode === 'cut' ? '{"subject": "Hello Lupin", "body": "Hello, I saw' : mode === 'fenced' ? 'Sure!\n```json\n{"subject": "A note for Lupin", "body": "Hello,\\nI saw your plant. Could we talk?"}\n```' : '{"body": "Hello, I saw your plant. Open to a quick chat?"}' }; } });
+  const t = await testDesk({ modules: ['sales'], script: () => { calls++; return { text: mode === 'cut' ? '{"subject": "Hello Kavya Labs", "body": "Hello, I saw' : mode === 'fenced' ? 'Sure!\n```json\n{"subject": "A note for Kavya Labs", "body": "Hello,\\nI saw your plant. Could we talk?"}\n```' : '{"body": "Hello, I saw your plant. Open to a quick chat?"}' }; } });
   try {
-    const a = (await t.call('/api/m/sales/leads', { body: { company: 'Lupin', email: 'x@lupin.example' } })).json.lead;
+    const a = (await t.call('/api/m/sales/leads', { body: { company: 'Kavya Labs', email: 'x@kavyalabs.example' } })).json.lead;
     const bad = await t.core.modules.runTool('outreach_draft', { leadIds: [a.id] }, {});
     assert.equal(bad.drafts.length, 0); assert.equal(calls, 2, 'one retry'); assert.match(bad.text, /could not be read as a subject and a message/);
     assert.equal((await t.call('/api/m/sales/state')).json.drafts.length, 0, 'nothing saved');
     mode = 'fenced';
     const ok = await t.core.modules.runTool('outreach_draft', { leadIds: [a.id] }, {});
     const d = (await t.call('/api/m/sales/state')).json.drafts[0];
-    assert.equal(ok.drafts.length, 1); assert.equal(d.subject, 'A note for Lupin'); assert.equal(d.body, 'Hello,\nI saw your plant. Could we talk?'); assert.ok(!/subject|[{}"]/i.test(d.body));
+    assert.equal(ok.drafts.length, 1); assert.equal(d.subject, 'A note for Kavya Labs'); assert.equal(d.body, 'Hello,\nI saw your plant. Could we talk?'); assert.ok(!/subject|[{}"]/i.test(d.body));
     mode = 'li';
     const li = await t.core.modules.runTool('outreach_draft', { leadIds: [a.id], channel: 'linkedin' }, {});
     const l = (await t.call('/api/m/sales/state')).json.drafts.find(x => x.channel === 'linkedin');
@@ -157,22 +157,22 @@ test('lead quality: Wikipedia alone is not enough, no wrong-country site, the ne
   const r = await findLeads({ query: 'Indian pharmaceutical companies', count: 2, search, model, budget: { extraRounds: 0, firstRounds: 1 } });
   assert.deepEqual(r.leads.map(l => l.company), ['Beta Labs']);
   assert.match(r.reason, /1 was left out because only a Wikipedia page named it/);
-  // wrong country: sunpharma.de is never taken for an Indian company; sunpharma.com is
+  // wrong country: northwind-pharma.de is never taken for an Indian company; northwind-pharma.com is
   const country = askCountry('Indian pharmaceutical companies');
-  assert.ok(wrongCountrySite('https://www.sunpharma.de/', country)); assert.ok(!wrongCountrySite('https://sunpharma.com/', country)); assert.ok(!wrongCountrySite('https://www.se.com/in/en/', country));
-  const sites = { 'https://www.sunpharma.de/': 'Sun Pharma Deutschland. Pharmaceutical products.' + pad, 'https://sunpharma.com/': 'Sun Pharma is a pharmaceutical company headquartered in Mumbai.' + pad };
-  const s2 = { async search() { return [{ url: 'https://www.sunpharma.de/' }, { url: 'https://sunpharma.com/' }]; }, async read(u) { if (!sites[u]) throw new Error('404'); return { url: u, title: 'Sun Pharma', text: sites[u] }; } };
-  const leads = [{ company: 'Sun Pharma', need: 'pharmaceutical company', sources: [{ url: 'https://list.example/pharma', title: 'List' }], findings: '' }];
+  assert.ok(wrongCountrySite('https://www.northwind-pharma.de/', country)); assert.ok(!wrongCountrySite('https://northwind-pharma.com/', country)); assert.ok(!wrongCountrySite('https://www.kestrel-controls.com/in/en/', country));
+  const sites = { 'https://www.northwind-pharma.de/': 'Northwind Pharma Deutschland. Pharmaceutical products.' + pad, 'https://northwind-pharma.com/': 'Northwind Pharma is a pharmaceutical company headquartered in Mumbai.' + pad };
+  const s2 = { async search() { return [{ url: 'https://www.northwind-pharma.de/' }, { url: 'https://northwind-pharma.com/' }]; }, async read(u) { if (!sites[u]) throw new Error('404'); return { url: u, title: 'Northwind Pharma', text: sites[u] }; } };
+  const leads = [{ company: 'Northwind Pharma', need: 'pharmaceutical company', sources: [{ url: 'https://list.example/pharma', title: 'List' }], findings: '' }];
   const cs = await checkSites({ leads, search: s2, query: 'Indian pharmaceutical companies' });
-  assert.equal(leads[0].website, 'https://sunpharma.com'); assert.equal(cs.wrongCountry, 1);
+  assert.equal(leads[0].website, 'https://northwind-pharma.com'); assert.equal(cs.wrongCountry, 1);
   const { siteCountry, emailCountry } = await import('./rules.js');
-  assert.ok(wrongCountrySite('https://zydususa.com/', country), 'a US site is not taken for an Indian company'); assert.equal(siteCountry('https://www.gnova.co.in/'), 'in'); assert.equal(siteCountry('https://www.lupin.com/'), '');
-  assert.equal(emailCountry('info.de@sunpharma.com'), 'de'); assert.equal(emailCountry('info@lupin.com'), '');
-  const sites3 = { 'https://sunpharma.com/': 'Sun Pharma is a pharmaceutical company headquartered in Mumbai. Germany: info.de@sunpharma.com. India: corpcomm@sunpharma.com.' + pad };
-  const s3 = { async search() { return [{ url: 'https://sunpharma.com/' }]; }, async read(u) { const o = new URL(u).origin + '/'; if (!sites3[o]) throw new Error('404'); return { url: u, title: 'Sun Pharma', text: sites3[o] }; } };
-  const l3 = [{ company: 'Sun Pharma', need: 'pharmaceutical company', sources: [{ url: 'https://list.example/pharma', title: 'List' }], findings: '' }];
+  assert.ok(wrongCountrySite('https://kavyalabsusa.com/', country), 'a US site is not taken for an Indian company'); assert.equal(siteCountry('https://www.tarangpharma.co.in/'), 'in'); assert.equal(siteCountry('https://www.kavyalabs.com/'), '');
+  assert.equal(emailCountry('info.de@northwind-pharma.com'), 'de'); assert.equal(emailCountry('info@kavyalabs.com'), '');
+  const sites3 = { 'https://northwind-pharma.com/': 'Northwind Pharma is a pharmaceutical company headquartered in Mumbai. Germany: info.de@northwind-pharma.com. India: corpcomm@northwind-pharma.com.' + pad };
+  const s3 = { async search() { return [{ url: 'https://northwind-pharma.com/' }]; }, async read(u) { const o = new URL(u).origin + '/'; if (!sites3[o]) throw new Error('404'); return { url: u, title: 'Northwind Pharma', text: sites3[o] }; } };
+  const l3 = [{ company: 'Northwind Pharma', need: 'pharmaceutical company', sources: [{ url: 'https://list.example/pharma', title: 'List' }], findings: '' }];
   await checkSites({ leads: l3, search: s3, query: 'Indian pharmaceutical companies' });
-  assert.equal(l3[0].email, 'corpcomm@sunpharma.com', 'the German desk address is not taken');
+  assert.equal(l3[0].email, 'corpcomm@northwind-pharma.com', 'the German desk address is not taken');
   // the need must be on the page that names the company
   const page = { url: 'https://list.example/x', title: 'Builders', text: 'Stonebridge Projects is a construction and engineering company building marine structures.' };
   assert.equal(checkRow({ company: 'Stonebridge Projects', kind: 'company', fits: true, need: 'Cement manufacturer and exporter' }, page, {}).need, '', 'a sector the page did not say is left empty');
@@ -182,7 +182,7 @@ test('lead quality: Wikipedia alone is not enough, no wrong-country site, the ne
 
 test('short of the count: more rounds, then a plain reason (stub search and model, plumbing only)', async () => {
   const { findLeads } = await import('./find.js');
-  const pages = { 'https://a.example/list': 'Acme Controls Pvt Ltd makes PLC panels in Pune. Beta Drives Ltd makes motor drives. Beta Drives India is the same company.', 'https://b.example/more': 'Gamma Robotics builds robot cells in Chennai. Delta Sensors makes sensors.' };
+  const pages = { 'https://a.example/list': 'Acme Controls Pvt Ltd, based in Pune, makes PLC panels. Beta Drives Ltd is an Indian maker of motor drives. Beta Drives India is the same company.', 'https://b.example/more': 'Gamma Robotics is a Chennai-based maker of robot cells. Delta Sensors, based in Pune, makes sensors.' };
   const searched = [];
   const search = { async search(q) { searched.push(q); return searched.length === 1 ? [{ url: 'https://a.example/list', title: 'List' }] : searched.length === 4 ? [{ url: 'https://b.example/more', title: 'More' }] : []; },
     async read(u) { if (!pages[u]) throw new Error('404'); return { url: u, title: 'Page', text: pages[u] + ' '.repeat(10) + 'x'.repeat(200) }; } };
@@ -202,45 +202,45 @@ test('own-site step: a same-name site about something else is not taken; glued a
   const { checkSites } = await import('./find.js');
   const { emailsOn, strictEmail, sameCompany, topicWords } = await import('./rules.js');
   const site = {
-    'https://www.keka.io/': { title: 'Keka: the macOS file archiver', text: 'Keka is the macOS file archiver. Compress and extract 7z, zip, rar files. Download Keka for Mac, free and open source. '.repeat(3) },
+    'https://www.kitebird.io/': { title: 'Kitebird: the macOS file archiver', text: 'Kitebird is the macOS file archiver. Compress and extract 7z, zip, rar files. Download Kitebird for Mac, free and open source. '.repeat(3) },
     'https://www.acmepay.in/': { title: 'Acme Pay: payroll for small firms', text: 'Acme Pay runs payroll and HR for small businesses in India. Write to cn-sales@acmepay.inwebsite or sales@acmepay.in today. '.repeat(2) },
   };
-  const search = { async search(q) { return q.startsWith('Keka') ? [{ url: 'https://www.keka.io/' }] : [{ url: 'https://www.acmepay.in/' }]; }, async read(u) { const p = site[u]; if (!p) throw new Error('404'); return { url: u, ...p }; } };
+  const search = { async search(q) { return q.startsWith('Kitebird') ? [{ url: 'https://www.kitebird.io/' }] : [{ url: 'https://www.acmepay.in/' }]; }, async read(u) { const p = site[u]; if (!p) throw new Error('404'); return { url: u, ...p }; } };
   const list = { title: 'Top HR software in India', url: 'https://list.example/hr' };
-  const leads = [{ company: 'Keka', need: 'HR and payroll software', sources: [list], findings: '' }, { company: 'Acme Pay', need: 'payroll software', sources: [list], findings: '' }];
+  const leads = [{ company: 'Kitebird', need: 'HR and payroll software', sources: [list], findings: '' }, { company: 'Acme Pay', need: 'payroll software', sources: [list], findings: '' }];
   const r = await checkSites({ leads, search, query: 'Indian companies selling HR or payroll software to small businesses', fetchHtml: async (u) => u.includes('acmepay') ? '<a href="mailto:hello@acmepay.in">Mail us</a>' : '' });
-  assert.equal(leads[0].sources[0].url, list.url, 'the archiver site is not taken for Keka');
+  assert.equal(leads[0].sources[0].url, list.url, 'the archiver site is not taken for Kitebird');
   assert.equal(r.wrongBusiness, 1);
   assert.equal(leads[1].sources[0].url, 'https://www.acmepay.in/');
   assert.equal(leads[1].email, 'hello@acmepay.in', 'a mailto: link wins');
-  assert.deepEqual(emailsOn('Contact cn-sales@zohocorp.comwebsite for more'), [], 'an address glued to a word is dropped');
-  assert.deepEqual(emailsOn('noreply@teamlio.ai or sales@zimyo.com'), ['sales@zimyo.com'], 'no-reply addresses are not contacts');
+  assert.deepEqual(emailsOn('Contact cn-sales@nimbuscorp.comwebsite for more'), [], 'an address glued to a word is dropped');
+  assert.deepEqual(emailsOn('noreply@tealbirdhr.ai or sales@quillpayhr.com'), ['sales@quillpayhr.com'], 'no-reply addresses are not contacts');
   const { unsupportedClaims } = await import('./claims.js');
   const { greetingNameProblems } = await import('./claims.js');
   assert.equal(greetingNameProblems('Hello Meera, I came across Northwind HR.', '').length, 1, 'a greeting name the lead did not give');
   assert.equal(greetingNameProblems('Hello Ravi, I saw your plant.', 'Ravi Kumar').length, 0);
   assert.equal(greetingNameProblems('Hello, I came across X.', '').length, 0);
   assert.equal(unsupportedClaims('Hello, I\u2019m the founder of a SaaS company that builds tools for HR teams.', '').length, 1, 'curly apostrophe and founder claims are caught');
-  assert.equal(strictEmail('cn-sales@zohocorp.comwebsite'), '');
-  assert.deepEqual(emailsOn('Mail <b>sales@zohocorp.com</b>website', '', '<p>Mail <b>sales@zohocorp.com</b>website</p>'), ['sales@zohocorp.com'], 'tags turned into spaces');
+  assert.equal(strictEmail('cn-sales@nimbuscorp.comwebsite'), '');
+  assert.deepEqual(emailsOn('Mail <b>sales@nimbuscorp.com</b>website', '', '<p>Mail <b>sales@nimbuscorp.com</b>website</p>'), ['sales@nimbuscorp.com'], 'tags turned into spaces');
   const { sameBusiness } = await import('./rules.js');
-  assert.ok(!sameBusiness('Beehive Broadband: fibre internet plans, 24 hrs support, call us.', ['hr', 'payroll']), 'a broadband namesake with "hrs" is not an HR business');
-  assert.ok(sameBusiness('Beehive HR: HR software for multi-location teams.', ['hr', 'payroll']));
+  assert.ok(!sameBusiness('Hivelink Broadband: fibre internet plans, 24 hrs support, call us.', ['hr', 'payroll']), 'a broadband namesake with "hrs" is not an HR business');
+  assert.ok(sameBusiness('Hivelink HR: HR software for multi-location teams.', ['hr', 'payroll']));
   const ask = topicWords('Indian companies selling HR or payroll software to small businesses');
-  assert.ok(sameCompany('Keka', 'Keka HR', ask)); assert.ok(sameCompany('greytHR', 'greytHR Payroll Software', ask));
-  assert.ok(!sameCompany('ABB', 'B&R Industrial Automation'));
+  assert.ok(sameCompany('Kolam', 'Kolam HR', ask)); assert.ok(sameCompany('quillHR', 'quillHR Payroll Software', ask));
+  assert.ok(!sameCompany('Orion', 'T&K Industrial Automation'));
   const { mergeSellers } = await import('./find.js');
-  const zoho = [
-    { company: 'Zoho People', need: 'HR system with attendance', findings: '', ownSite: true, website: 'https://www.zoho.com', sources: [{ url: 'https://www.zoho.com/people/' }] },
-    { company: 'Zoho Payroll', need: 'payroll software for small businesses', findings: '', ownSite: true, website: 'https://www.zoho.com', sources: [{ url: 'https://www.zoho.com/payroll/' }] },
-    { company: 'Keka HR', need: 'payroll and attendance', findings: '', ownSite: true, website: 'https://www.keka.com', sources: [{ url: 'https://www.keka.com/' }] }];
-  assert.equal(mergeSellers(zoho, 'Indian companies selling HR or payroll software to small businesses'), 1);
-  assert.equal(zoho.length, 2, 'one Zoho row');
-  assert.ok(zoho.some(l => /^Zoho/.test(l.company) && /Also listed as Zoho/.test(l.need) && l.sources.length === 2), JSON.stringify(zoho));
+  const nimbus = [
+    { company: 'Nimbus People', need: 'HR system with attendance', findings: '', ownSite: true, website: 'https://www.nimbus.example', sources: [{ url: 'https://www.nimbus.example/people/' }] },
+    { company: 'Nimbus Payroll', need: 'payroll software for small businesses', findings: '', ownSite: true, website: 'https://www.nimbus.example', sources: [{ url: 'https://www.nimbus.example/payroll/' }] },
+    { company: 'Kolam HR', need: 'payroll and attendance', findings: '', ownSite: true, website: 'https://www.kolam.example', sources: [{ url: 'https://www.kolam.example/' }] }];
+  assert.equal(mergeSellers(nimbus, 'Indian companies selling HR or payroll software to small businesses'), 1);
+  assert.equal(nimbus.length, 2, 'one Nimbus row');
+  assert.ok(nimbus.some(l => /^Nimbus/.test(l.company) && /Also listed as Nimbus/.test(l.need) && l.sources.length === 2), JSON.stringify(nimbus));
   const listed = [
-    { company: 'Acme Payroll', need: 'payroll', findings: '', ownSite: false, website: 'https://revenuebase.ai', sources: [{ url: 'https://revenuebase.ai/companies/hr' }] },
-    { company: 'Beta HR', need: 'HR', findings: '', ownSite: false, website: 'https://revenuebase.ai', sources: [{ url: 'https://revenuebase.ai/companies/hr' }] },
-    { company: 'Gamma HRMS', need: 'HRMS', findings: '', sources: [{ url: 'https://www.greythr.com/list/best-hr-software/' }] }];
+    { company: 'Acme Payroll', need: 'payroll', findings: '', ownSite: false, website: 'https://leadsdir.example', sources: [{ url: 'https://leadsdir.example/companies/hr' }] },
+    { company: 'Beta HR', need: 'HR', findings: '', ownSite: false, website: 'https://leadsdir.example', sources: [{ url: 'https://leadsdir.example/companies/hr' }] },
+    { company: 'Gamma HRMS', need: 'HRMS', findings: '', sources: [{ url: 'https://www.listhub.example/list/best-hr-software/' }] }];
   assert.equal(mergeSellers(listed, 'HR or payroll software'), 0, 'companies on a shared directory or list page stay separate');
   assert.equal(listed.length, 3);
 });
@@ -249,18 +249,18 @@ test('one seller by name alone: a brand word plus only product or field words me
   const { mergeSellers } = await import('./find.js');
   const { sameSeller } = await import('./rules.js');
   const ask = 'Indian companies that sell HR or payroll software to small businesses';
-  const zoho = [
-    { company: 'Zoho People', need: 'HR system with attendance', findings: '', ownSite: false, website: '', sources: [{ url: 'https://www.zimyo.com/blog/best-hr-software-india/' }] },
-    { company: 'Keka HR', need: 'payroll and attendance', findings: '', ownSite: false, website: '', sources: [{ url: 'https://factohr.com/top-hr-software/' }] },
-    { company: 'Zoho Payroll', need: 'payroll software for small businesses', findings: '', ownSite: false, website: '', sources: [{ url: 'https://factohr.com/top-hr-software/' }] }];
-  assert.equal(mergeSellers(zoho, ask), 1);
-  assert.equal(zoho.length, 2, JSON.stringify(zoho));
-  const z = zoho.find(l => /^Zoho/.test(l.company));
-  assert.match(z.need, /\. Also listed as Zoho (People|Payroll)\.$/); assert.equal(z.sources.length, 2);
+  const nimbus = [
+    { company: 'Nimbus People', need: 'HR system with attendance', findings: '', ownSite: false, website: '', sources: [{ url: 'https://blog.example/best-hr-software-india/' }] },
+    { company: 'Kolam HR', need: 'payroll and attendance', findings: '', ownSite: false, website: '', sources: [{ url: 'https://top.example/top-hr-software/' }] },
+    { company: 'Nimbus Payroll', need: 'payroll software for small businesses', findings: '', ownSite: false, website: '', sources: [{ url: 'https://top.example/top-hr-software/' }] }];
+  assert.equal(mergeSellers(nimbus, ask), 1);
+  assert.equal(nimbus.length, 2, JSON.stringify(nimbus));
+  const z = nimbus.find(l => /^Nimbus/.test(l.company));
+  assert.match(z.need, /\. Also listed as Nimbus (People|Payroll)\.$/); assert.equal(z.sources.length, 2);
   const lead = (company) => ({ company, need: '', findings: '', ownSite: false, website: '', sources: [{ url: 'https://list.example/x' }] });
-  assert.equal(sameSeller(lead('greytHR'), lead('greytHR Payroll'), ['hr', 'payroll']), true);
-  for (const [a, b] of [['Tata Consultancy', 'Tata Motors'], ['Siemens India', 'Siemens Healthineers'], ['Zoho People', 'Zoho Expense'], ['HR One', 'HR Mantra'], ['Payroll Pro', 'Payroll Cloud']]) assert.equal(sameSeller(lead(a), lead(b), ['hr', 'payroll']), false, `${a} / ${b}`);
-  const pair = [lead('Tata Consultancy'), lead('Tata Motors')];
+  assert.equal(sameSeller(lead('quillHR'), lead('quillHR Payroll'), ['hr', 'payroll']), true);
+  for (const [a, b] of [['Varma Consultancy', 'Varma Motors'], ['Kestrel India', 'Kestrel Healthcare'], ['Nimbus People', 'Nimbus Expense'], ['HR One', 'HR Mantra'], ['Payroll Pro', 'Payroll Cloud']]) assert.equal(sameSeller(lead(a), lead(b), ['hr', 'payroll']), false, `${a} / ${b}`);
+  const pair = [lead('Varma Consultancy'), lead('Varma Motors')];
   assert.equal(mergeSellers(pair, ask), 0); assert.equal(pair.length, 2);
 });
 
@@ -268,22 +268,22 @@ test('a merge removes two rows; a refill round restores the count (stubs, plumbi
   const { findLeads } = await import('./find.js');
   const pad = ' Trusted by teams across India.'.repeat(10);
   const pages = {
-    'https://list.example/a': 'Zoho People is HR software. Zoho Payroll runs payroll. Zoho Expense handles HR expenses. Acme HR sells HR software.' + pad,
+    'https://list.example/a': 'Nimbus People is HR software. Nimbus Payroll runs payroll. Nimbus Expense handles HR expenses. Acme HR sells HR software.' + pad,
     'https://list.example/b': 'Beta Payroll sells payroll software to small firms. Gamma HR sells HR software. Delta HRMS sells HR software.' + pad,
-    'https://www.zoho.com/': 'Zoho HR and payroll software: Zoho People, Zoho Payroll and Zoho Expense for small businesses.' + pad,
+    'https://www.nimbus.example/': 'Nimbus HR and payroll software: Nimbus People, Nimbus Payroll and Nimbus Expense for small businesses.' + pad,
     'https://www.acmehr.example/': 'Acme HR builds HR software for small teams.' + pad,
   };
   let listCalls = 0;
   const search = {
     async search(q) {
-      if (/official website/.test(q)) return /^Zoho/.test(q) ? [{ url: 'https://www.zoho.com/' }] : /^Acme/.test(q) ? [{ url: 'https://www.acmehr.example/' }] : [];
+      if (/official website/.test(q)) return /^Nimbus/.test(q) ? [{ url: 'https://www.nimbus.example/' }] : /^Acme/.test(q) ? [{ url: 'https://www.acmehr.example/' }] : [];
       listCalls++;
       if (/alternatives to|association|exhibitors|companies (Pune|Chennai|Bengaluru)/.test(q)) return [{ url: 'https://list.example/b' }];
       return listCalls === 1 ? [{ url: 'https://list.example/a' }] : [];
     },
-    async read(u) { const o = new URL(u).origin + '/'; const t = pages[u] || pages[o]; if (!t) throw new Error('404'); return { url: u, title: 'Page', text: t }; },
+    async read(u) { const o = new URL(u).origin + '/'; const t = pages[u] || pages[o]; if (!t) throw new Error('404'); return { url: u, title: 'Indian HR software companies', text: t }; },
   };
-  const names = ['Zoho People', 'Zoho Payroll', 'Zoho Expense', 'Acme HR', 'Beta Payroll', 'Gamma HR', 'Delta HRMS'];
+  const names = ['Nimbus People', 'Nimbus Payroll', 'Nimbus Expense', 'Acme HR', 'Beta Payroll', 'Gamma HR', 'Delta HRMS'];
   const model = { async chat({ purpose, messages }) {
     if (purpose === 'plan') return { json: { queries: ['hr software india'] } };
     const t = messages[1].content;
@@ -291,9 +291,9 @@ test('a merge removes two rows; a refill round restores the count (stubs, plumbi
   } };
   const r = await findLeads({ query: 'Find 4 Indian companies selling HR or payroll software', count: 4, search, model, budget: { firstRounds: 1 } });   // first pass: one round only, so the gap must come from the refill
   assert.equal(r.leads.length, 4, `count holds: ${r.leads.map(l => l.company).join(', ')}; ${r.reason}`);
-  assert.equal(r.rejected['merged as the same company'], 2, 'two Zoho rows merged into one');
+  assert.equal(r.rejected['merged as the same company'], 2, 'two Nimbus rows merged into one');
   assert.ok(r.extraRounds >= 1, 'a refill round ran');
-  assert.ok(r.leads.some(l => /^Zoho/.test(l.company) && /Also listed as Zoho/.test(l.need)));
+  assert.ok(r.leads.some(l => /^Nimbus/.test(l.company) && /Also listed as Nimbus/.test(l.need)));
   assert.ok(r.leads.some(l => l.company === 'Beta Payroll') && r.leads.some(l => l.company === 'Gamma HR'), 'refills came from the new round');
   assert.equal(r.reason, '');
   // a lead already in the pipeline is skipped, does not count and leaves no gap
@@ -313,33 +313,33 @@ test('reason wording for one and many already in the pipeline', async () => {
   assert.match(many.reason, /2 were already in your pipeline and skipped/);
 });
 
-test('Beehive Broadband (the real beehive.net page) is refused as the site of an HR software lead', async () => {
+test('a broadband namesake (a home page fixture) is refused as the site of an HR software lead', async () => {
   const fs = await import('node:fs'); const { fileURLToPath } = await import('node:url');
-  const page = JSON.parse(fs.readFileSync(fileURLToPath(new URL('./fixtures/beehive-net.json', import.meta.url)), 'utf8'));
+  const page = JSON.parse(fs.readFileSync(fileURLToPath(new URL('./fixtures/broadband-namesake.json', import.meta.url)), 'utf8'));
   const { checkSites } = await import('./find.js');
   const { aboutSameBusiness, fieldHits, topicWords } = await import('./rules.js');
   const ASK = 'Find 20 leads with sources: Indian companies that sell HR or payroll software to small businesses.';
   assert.deepEqual(topicWords(ASK), ['hr', 'payroll']);
   assert.equal(aboutSameBusiness(page, topicWords(ASK)).ok, false, 'an internet provider is not an HR software business');
-  const list = { title: 'Best HR software for small business', url: 'https://www.greythr.com/list/best-hr-software-small-business/' };
+  const list = { title: 'Best HR software for small business', url: 'https://www.listhub.example/list/best-hr-software-small-business/' };
   for (const need of ['HR software for multi-location SMBs.', 'Suitable for multi-location SMBs with time tracking focus.']) {
-    const leads = [{ company: 'Beehive', need, sources: [list], findings: '' }];
-    const r = await checkSites({ leads, search: { async search() { return [{ url: 'https://www.beehive.net/' }]; }, async read(u) { return { ...page, url: u }; } }, query: ASK, fetchHtml: async () => '<a href="mailto:support@beehive.net">Support</a>' });
+    const leads = [{ company: 'Hivelink', need, sources: [list], findings: '' }];
+    const r = await checkSites({ leads, search: { async search() { return [{ url: 'https://www.hivelink.net/' }]; }, async read(u) { return { ...page, url: u }; } }, query: ASK, fetchHtml: async () => '<a href="mailto:support@hivelink.net">Support</a>' });
     assert.equal(r.wrongBusiness, 1); assert.equal(leads[0].sources[0].url, list.url, 'the list source stays');
-    assert.ok(!leads[0].website && !leads[0].email && !leads[0].ownSite, 'no site and no address from beehive.net');
+    assert.ok(!leads[0].website && !leads[0].email && !leads[0].ownSite, 'no site and no address from hivelink.net');
   }
   // the next candidate is tried: the real HR software company's site is taken instead of the namesake
-  const l2 = [{ company: 'Beehive', need: 'HR software for multi-location SMBs.', sources: [list], findings: '' }];
-  const hr = { title: 'Top Payroll & Human Resource Software India | Beehive HRMS', text: 'Beehive HRMS is HR and payroll software for Indian companies. '.repeat(5) };
-  const r2 = await checkSites({ leads: l2, query: ASK, search: { async search() { return [{ url: 'https://www.beehive.net/' }, { url: 'https://www.beehivesoftware.in/' }]; }, async read(u) { return u.includes('beehive.net') ? { ...page, url: u } : { ...hr, url: u }; } } });
-  assert.equal(l2[0].website, 'https://www.beehivesoftware.in'); assert.equal(r2.own, 1);
+  const l2 = [{ company: 'Hivelink', need: 'HR software for multi-location SMBs.', sources: [list], findings: '' }];
+  const hr = { title: 'Top Payroll & Human Resource Software India | Hivelink HRMS', text: 'Hivelink HRMS is HR and payroll software for Indian companies. '.repeat(5) };
+  const r2 = await checkSites({ leads: l2, query: ASK, search: { async search() { return [{ url: 'https://www.hivelink.net/' }, { url: 'https://www.hivelinksoftware.in/' }]; }, async read(u) { return u.includes('hivelink.net') ? { ...page, url: u } : { ...hr, url: u }; } } });
+  assert.equal(l2[0].website, 'https://www.hivelinksoftware.in'); assert.equal(r2.own, 1);
   const { siteRoot } = await import('./rules.js');
-  assert.equal(siteRoot('https://payroll.uknowva-stage.in/login'), '', 'a staging host is never a company site');
-  assert.equal(siteRoot('https://payroll.beehivesoftware.in/'), 'https://www.beehivesoftware.in'); assert.equal(siteRoot('https://in.adp.com/x'), 'https://in.adp.com'); assert.equal(siteRoot('https://www.keka.com/hr'), 'https://www.keka.com');
+  assert.equal(siteRoot('https://payroll.hrdesk-stage.in/login'), '', 'a staging host is never a company site');
+  assert.equal(siteRoot('https://payroll.hivelinksoftware.in/'), 'https://www.hivelinksoftware.in'); assert.equal(siteRoot('https://in.paycorner.example/x'), 'https://in.paycorner.example'); assert.equal(siteRoot('https://www.kolam.example/hr'), 'https://www.kolam.example');
   // one stray mention is not enough; the title, the opening lines or several mentions are
   const stray = { title: 'Fast fibre internet', text: 'We sell broadband and home phone plans across the county. '.repeat(8) + 'Careers: we are hiring a payroll clerk.' };
   assert.equal(aboutSameBusiness(stray, ['hr', 'payroll']).ok, false);
-  assert.ok(aboutSameBusiness({ title: 'Beehive HRMS | HR and payroll software', text: 'x' }, ['hr', 'payroll']).ok);
+  assert.ok(aboutSameBusiness({ title: 'Hivelink HRMS | HR and payroll software', text: 'x' }, ['hr', 'payroll']).ok);
   assert.ok(aboutSameBusiness({ title: 'Home', text: 'Welcome. '.repeat(60) + 'Our payroll module runs payroll for 500 firms. HR teams like it.' }, ['hr', 'payroll']).ok);
   assert.equal(fieldHits('open 24 hrs, 100 times faster, multiple devices', 'hr'), 0); assert.equal(fieldHits('HRMS and HR software', 'hr'), 2);
 });
@@ -369,11 +369,11 @@ function findScript(names) {
   };
 }
 
-test('the stored 20-lead case: "Sumo Payroll" and "SumoPayroll" are one company, merged and refilled; never "already in your pipeline" on an empty pipeline', async () => {
-  const names = ['Acme HR', 'Sumo Payroll', 'SumoPayroll', 'Beta HR', 'Gamma HR', 'Delta HRMS'];
+test('the stored 20-lead case: "Quokka Payroll" and "QuokkaPayroll" are one company, merged and refilled; never "already in your pipeline" on an empty pipeline', async () => {
+  const names = ['Acme HR', 'Quokka Payroll', 'QuokkaPayroll', 'Beta HR', 'Gamma HR', 'Delta HRMS'];
   const t = await testDesk({ modules: ['sales'], script: findScript(names) });
   try {
-    stubSearch(t, { 'https://list.example/a': 'Acme HR, Sumo Payroll, SumoPayroll and Beta HR sell HR software.' + pad5, 'https://list.example/b': 'Gamma HR and Delta HRMS sell payroll software.' + pad5 },
+    stubSearch(t, { 'https://list.example/a': 'HR software companies based in India: Acme HR, Quokka Payroll, QuokkaPayroll and Beta HR sell HR software.' + pad5, 'https://list.example/b': 'Payroll software companies based in India: Gamma HR and Delta HRMS sell payroll software.' + pad5 },
       (q) => /official website/.test(q) ? [] : /alternatives to|association|exhibitors|companies (Pune|Chennai|Bengaluru)/.test(q) ? [{ url: 'https://list.example/b' }] : /^hr payroll/.test(q) || /sell HR/.test(q) ? [{ url: 'https://list.example/a' }] : []);
     assert.equal((await t.call('/api/m/sales/leads')).json.leads.length, 0, 'the pipeline is empty before the ask');
     const s = await t.core.modules.runTool('leads_find', { query: 'Indian companies that sell HR or payroll software to small businesses', count: 4 }, { chatId: 'c1' });
@@ -384,7 +384,7 @@ test('the stored 20-lead case: "Sumo Payroll" and "SumoPayroll" are one company,
     assert.equal(out.reason, '', 'no reason line when the count is met');
     assert.ok(out.rejected['merged as the same company'] >= 1);
     const leads = (await t.call('/api/m/sales/leads')).json.leads;
-    assert.equal(leads.filter(l => /^sumo ?payroll$/i.test(l.company)).length, 1);
+    assert.equal(leads.filter(l => /^quokka ?payroll$/i.test(l.company)).length, 1);
     assert.ok(!out.card.actions.some(a => a.label === 'Add all to pipeline'), 'every row is already in the pipeline: no "Add all to pipeline"');
     // a second ask in the same field: the four known ones are skipped and counted truthfully
     const s2 = await t.core.modules.runTool('leads_find', { query: 'Indian companies that sell HR or payroll software to small businesses', count: 4 }, { chatId: 'c1' });
@@ -410,9 +410,9 @@ test('fit: an ask about small businesses leaves out a lead its page describes as
   assert.ok(!segmentClash(ASK, 'Payroll software with compliance features'));
   assert.ok(!segmentClash(ASK, 'HR software for small and medium enterprises'));
   assert.ok(!segmentClash('Indian HR software companies', 'for enterprises'), 'the ask names no size');
-  const page = { url: 'https://list.example/x', title: 'HR software', text: 'HROne provides payroll software for large enterprises with compliance features. Kredily provides payroll software for Indian startups.' };
-  assert.equal(checkRow({ company: 'HROne', kind: 'company', fits: true, need: 'Provides payroll software for large enterprises' }, page, { query: ASK }).reject, 'does not fit');
-  assert.equal(checkRow({ company: 'Kredily', kind: 'company', fits: true, need: 'Provides payroll software for Indian startups' }, page, { query: ASK }).reject, undefined);
+  const page = { url: 'https://list.example/x', title: 'HR software', text: 'Pinnacle HR provides payroll software for large enterprises with compliance features. Tidalpay provides payroll software for Indian startups.' };
+  assert.equal(checkRow({ company: 'Pinnacle HR', kind: 'company', fits: true, need: 'Provides payroll software for large enterprises' }, page, { query: ASK }).reject, 'does not fit');
+  assert.equal(checkRow({ company: 'Tidalpay', kind: 'company', fits: true, need: 'Provides payroll software for Indian startups' }, page, { query: ASK }).reject, undefined);
 });
 
 test('claims: first-person experience, clients, results and relationships are caught unless the offer says them; filler gets the plain default', async () => {
@@ -422,8 +422,8 @@ test('claims: first-person experience, clients, results and relationships are ca
   assert.deepEqual(unsupportedClaims("I've seen your page on payroll. Could we talk?", ''), []);
   assert.deepEqual(unsupportedClaims('We specialise in payroll outsourcing.', 'We specialise in payroll outsourcing for small firms.'), []);
   assert.equal(fillerSentences('Since you are working with this product, I wanted to connect. I would love to see how you approach your outreach.').length, 2);
-  const d = plainDefault({ owner: 'Arun Rao', business: 'Rao Tech', company: 'Kredily', need: 'Provides low-cost payroll software for Indian startups. Also listed as Kredily HR.' });
-  assert.match(d, /I am Arun Rao from Rao Tech\. I came across Kredily\. What I read about you: Provides low-cost payroll software for Indian startups\./);
+  const d = plainDefault({ owner: 'Arun Rao', business: 'Rao Tech', company: 'Tidalpay', need: 'Provides low-cost payroll software for Indian startups. Also listed as Tidalpay HR.' });
+  assert.match(d, /I am Arun Rao from Rao Tech\. I came across Tidalpay\. What I read about you: Provides low-cost payroll software for Indian startups\./);
   // a case the earlier rule got wrong: "I came across Acme: gST filing for 40 staff." The need's case is never changed.
   assert.match(plainDefault({ company: 'Acme', need: 'GST filing for 40 staff.' }), /I came across Acme\. What I read about you: GST filing for 40 staff\./);
   assert.match(plainDefault({ company: 'Acme', need: 'iPhone repair shops in Pune' }), /What I read about you: iPhone repair shops in Pune\./);
@@ -432,17 +432,17 @@ test('claims: first-person experience, clients, results and relationships are ca
   const t = await testDesk({ modules: ['sales'], script: () => ({ text: JSON.stringify({ subject: 'Hello', body: 'Hello,\n\nI work closely with companies in this space. Since you are working with this product, I wanted to connect.\n\nCould we talk?' }) }) });
   try {
     t.core.settings.set('ownerName', 'Arun Rao'); t.core.settings.set('companyName', 'Rao Tech');
-    const a = (await t.call('/api/m/sales/leads', { body: { company: 'Kredily', need: 'Provides low-cost payroll software for Indian startups.' } })).json.lead;
+    const a = (await t.call('/api/m/sales/leads', { body: { company: 'Tidalpay', need: 'Provides low-cost payroll software for Indian startups.' } })).json.lead;
     await t.core.modules.runTool('outreach_draft', { leadIds: [a.id] }, {});
     const dr = (await t.call('/api/m/sales/state')).json.drafts[0];
-    assert.doesNotMatch(dr.body, /work closely|this product/); assert.match(dr.body, /I am Arun Rao from Rao Tech\. I came across Kredily/); assert.match(dr.note, /Check this/);
+    assert.doesNotMatch(dr.body, /work closely|this product/); assert.match(dr.body, /I am Arun Rao from Rao Tech\. I came across Tidalpay/); assert.match(dr.note, /Check this/);
   } finally { await t.close(); }
 });
 
 test('drafts: language and script are checked, one retry then a plain refusal; "top 1" is the first row of the table in this chat', async () => {
   const { scriptProblem } = await import('./claims.js');
-  assert.equal(scriptProblem('नमस्ते, मैं Keka के बारे में लिख रहा हूँ। क्या हम कल बात कर सकते हैं?', 'Hindi', ['Keka']), '');
-  assert.match(scriptProblem('Hello, I am writing about Keka. Could we talk?', 'Hindi', ['Keka']), /not in Hindi/);
+  assert.equal(scriptProblem('नमस्ते, मैं Kolam के बारे में लिख रहा हूँ। क्या हम कल बात कर सकते हैं?', 'Hindi', ['Kolam']), '');
+  assert.match(scriptProblem('Hello, I am writing about Kolam. Could we talk?', 'Hindi', ['Kolam']), /not in Hindi/);
   assert.equal(scriptProblem('வணக்கம், நாம் பேசலாமா?', 'Tamil'), ''); assert.equal(scriptProblem('നമസ്കാരം, നമുക്ക് സംസാരിക്കാമോ?', 'Malayalam'), ''); assert.equal(scriptProblem('নমস্কার, আমরা কি কথা বলতে পারি?', 'Bengali'), '');
   assert.equal(scriptProblem('नमस्कार, आपण बोलू शकतो का?', 'Marathi'), ''); assert.equal(scriptProblem('Hello there', ''), '', 'no language: no check');
   let mode = 'hindi'; const prompts = [];
@@ -578,7 +578,7 @@ test('names: one key for the pipeline and the search; letters of every script ar
   assert.ok(!sameCompany('शर्मा ट्रेडर्स', 'गुप्ता एंटरप्राइजेज'), 'two Devanagari names are not one company');
   assert.ok(!sameCompany('कमल ट्रेडर्स', 'कोमल ट्रेडर्स'), 'vowel signs count');
   assert.ok(sameCompany('शर्मा ट्रेडर्स', 'शर्मा  ट्रेडर्स'));
-  assert.ok(!sameCompany('A&B Traders', 'AB Traders')); assert.ok(sameCompany('A&B Traders', 'A and B Traders')); assert.ok(sameCompany('Sumo Payroll', 'SumoPayroll'));
+  assert.ok(!sameCompany('A&B Traders', 'AB Traders')); assert.ok(sameCompany('A&B Traders', 'A and B Traders')); assert.ok(sameCompany('Quokka Payroll', 'QuokkaPayroll'));
   assert.ok(!sameCompany('!!!', '???')); assert.equal(nameKey('— —'), '');
   const t = await testDesk({ modules: ['sales'], script: () => ({ text: JSON.stringify({ subject: 'नमस्ते', body: 'नमस्ते, क्या हम बात कर सकते हैं?' }) }) });
   try {
@@ -598,41 +598,132 @@ test('names: one key for the pipeline and the search; letters of every script ar
   } finally { await t.close(); }
 });
 
-test('country fit: an ask about Indian companies leaves out BambooHR and Deel when their own site or source page plainly places them elsewhere; silence keeps', async () => {
+test('country fit: an ask about Indian companies leaves out a company when their own site or source page plainly places them elsewhere; silence keeps', async () => {
   const { checkSites, checkRow, findLeads } = await import('./find.js');
   const { placedElsewhere, askCountry } = await import('./rules.js');
   const ASK = 'Find 5 leads with sources: Indian companies that sell HR or payroll software to small businesses.';
   const IN = askCountry(ASK);
-  assert.ok(placedElsewhere('BambooHR is an HR software company headquartered in Lehi, Utah.', 'BambooHR', IN));
-  assert.ok(placedElsewhere('Deel is headquartered in San Francisco, California.', 'Deel', IN));
+  assert.ok(placedElsewhere('Cedarline HR is an HR software company headquartered in Lehi, Utah.', 'Cedarline HR', IN));
+  assert.ok(placedElsewhere('Farway Pay is headquartered in San Francisco, California.', 'Farway Pay', IN));
   assert.ok(placedElsewhere('We are based in Austin, Texas. Payroll for small teams.', 'Acme', IN));
-  assert.ok(!placedElsewhere('Keka is an HR software company headquartered in Hyderabad.', 'Keka', IN));
-  assert.ok(!placedElsewhere('Deel is headquartered in San Francisco and has an office in Bengaluru, India.', 'Deel', IN), 'a sign of India keeps it');
-  assert.ok(!placedElsewhere('BambooHR makes HR software for small businesses.', 'BambooHR', IN), 'silence keeps');
+  assert.ok(!placedElsewhere('Kolam is an HR software company headquartered in Hyderabad.', 'Kolam', IN));
+  assert.ok(!placedElsewhere('Farway Pay is headquartered in San Francisco and has an office in Bengaluru, India.', 'Farway Pay', IN), 'a sign of India keeps it');
+  assert.ok(!placedElsewhere('Cedarline HR makes HR software for small businesses.', 'Cedarline HR', IN), 'silence keeps');
   assert.ok(!placedElsewhere('Acme helps customers based in the USA.', 'Acme', IN), 'about its customers, not about the company');
   assert.ok(!placedElsewhere('Acme serves firms headquartered in Japan.', 'Acme', IN));
-  assert.ok(!placedElsewhere('BambooHR is headquartered in Lehi, Utah.', 'BambooHR', askCountry('HR software companies')), 'the ask names no country');
+  assert.ok(!placedElsewhere('Cedarline HR is headquartered in Lehi, Utah.', 'Cedarline HR', askCountry('HR software companies')), 'the ask names no country');
   // the source page: only its sentences about this company count
-  const page = { url: 'https://list.example/hr', title: 'Top HR software for small businesses in India', text: 'Top HR software for Indian small businesses. BambooHR is an HR software company headquartered in Lehi, Utah. Keka is an HR software company for small businesses. Zing HR, based in Mumbai, runs payroll.' };
-  assert.equal(checkRow({ company: 'BambooHR', kind: 'company', fits: true }, page, { query: ASK }).reject, 'does not fit');
-  assert.equal(checkRow({ company: 'Keka', kind: 'company', fits: true }, page, { query: ASK }).reject, undefined, 'the page says nothing about where Keka is: kept');
-  assert.equal(checkRow({ company: 'Zing HR', kind: 'company', fits: true }, page, { query: ASK }).reject, undefined);
-  // the own-site step: Deel's site says San Francisco and nothing of India; Acme Pay's says nothing of a place
+  const page = { url: 'https://list.example/hr', title: 'Top HR software for small businesses in India', text: 'Top HR software for Indian small businesses. Cedarline HR is an HR software company headquartered in Lehi, Utah. Kolam is an HR software company for small businesses. Zinnia HR, based in Mumbai, runs payroll.' };
+  assert.equal(checkRow({ company: 'Cedarline HR', kind: 'company', fits: true }, page, { query: ASK }).reject, 'does not fit');
+  assert.equal(checkRow({ company: 'Kolam', kind: 'company', fits: true }, page, { query: ASK }).reject, undefined, 'the page says nothing about where Kolam is: kept');
+  assert.equal(checkRow({ company: 'Zinnia HR', kind: 'company', fits: true }, page, { query: ASK }).reject, undefined);
+  // the own-site step: Farway Pay's site says San Francisco and nothing of India; Acme Pay's names no place, only an Indian phone number
   const site = {
-    'https://www.deel.com/': { title: 'Deel: global payroll and HR', text: 'Deel runs global payroll and HR software for teams. Deel is headquartered in San Francisco, California. Hire anyone, anywhere, with payroll and HR in one place. '.repeat(2) },
-    'https://www.acmepay.com/': { title: 'Acme Pay: payroll for small firms', text: 'Acme Pay runs payroll and HR software for small businesses. Simple payroll for small teams, with HR built in. '.repeat(2) },
+    'https://www.farwaypay.example/': { title: 'Farway Pay: global payroll and HR', text: 'Farway Pay runs global payroll and HR software for teams. Farway Pay is headquartered in San Francisco, California. Hire anyone, anywhere, with payroll and HR in one place. '.repeat(2) },
+    'https://www.acmepay.example/': { title: 'Acme Pay: payroll for small firms', text: 'Acme Pay runs payroll and HR software for small businesses. Simple payroll for small teams, with HR built in. '.repeat(2) + 'Sales: +91 22 4000 1234.' },
   };
-  const search = { async search(q) { return q.startsWith('Deel') ? [{ url: 'https://www.deel.com/' }] : [{ url: 'https://www.acmepay.com/' }]; }, async read(u) { const p = site[u]; if (!p) throw new Error('404'); return { url: u, ...p }; } };
+  const search = { async search(q) { return q.startsWith('Farway') ? [{ url: 'https://www.farwaypay.example/' }] : [{ url: 'https://www.acmepay.example/' }]; }, async read(u) { const p = site[u]; if (!p) throw new Error('404'); return { url: u, ...p }; } };
   const list = { title: 'HR software', url: 'https://list.example/hr' };
-  const leads = [{ company: 'Deel', need: 'payroll and HR software', sources: [list], findings: '' }, { company: 'Acme Pay', need: 'payroll software', sources: [list], findings: '' }];
+  const leads = [{ company: 'Farway Pay', need: 'payroll and HR software', sources: [list], findings: '' }, { company: 'Acme Pay', need: 'payroll software', sources: [list], findings: '' }];
   await checkSites({ leads, search, query: ASK });
   assert.equal(leads[0].elsewhere, true); assert.ok(!leads[1].elsewhere, 'silence keeps');
-  // through the whole search (stubs): Deel is left out as "does not fit", Acme Pay is kept
+  // through the whole search (stubs): Farway Pay is left out as "does not fit", Acme Pay is kept
   const pad = ' Payroll and HR software for small businesses, compared.'.repeat(6);
-  const pages = { 'https://list.example/hr': 'Deel offers payroll and HR software. Acme Pay offers payroll and HR software for small businesses.' + pad };
-  const s2 = { async search(q) { return /official website/.test(q) ? (q.startsWith('Deel') ? [{ url: 'https://www.deel.com/' }] : [{ url: 'https://www.acmepay.com/' }]) : [{ url: 'https://list.example/hr' }]; },
+  const pages = { 'https://list.example/hr': 'Farway Pay offers payroll and HR software. Acme Pay offers payroll and HR software for small businesses.' + pad };
+  const s2 = { async search(q) { return /official website/.test(q) ? (q.startsWith('Farway') ? [{ url: 'https://www.farwaypay.example/' }] : [{ url: 'https://www.acmepay.example/' }]) : [{ url: 'https://list.example/hr' }]; },
     async read(u) { const k = u.replace(/\/$/, '') + '/'; if (site[k]) return { url: k, ...site[k] }; if (pages[u]) return { url: u, title: 'HR software', text: pages[u] }; throw new Error('404'); } };
-  const model = { async chat({ purpose, messages }) { if (purpose === 'plan') return { json: { queries: ['q'] } }; const t = messages[1].content; return { json: { leads: ['Deel', 'Acme Pay'].filter(n => t.includes(n)).map(n => ({ page: 0, company: n, kind: 'company', fits: true, need: 'payroll and HR software' })) } }; } };
+  const model = { async chat({ purpose, messages }) { if (purpose === 'plan') return { json: { queries: ['q'] } }; const t = messages[1].content; return { json: { leads: ['Farway Pay', 'Acme Pay'].filter(n => t.includes(n)).map(n => ({ page: 0, company: n, kind: 'company', fits: true, need: 'payroll and HR software' })) } }; } };
   const r = await findLeads({ query: ASK, count: 2, search: s2, model, budget: { extraRounds: 0, firstRounds: 1 } });
   assert.deepEqual(r.leads.map(l => l.company), ['Acme Pay']); assert.equal(r.rejected['does not fit'], 1);
+});
+
+test('one lead search per chat at a time: a reworded repeat while the first runs returns the running job; after it ends a new one starts', async () => {
+  const t = await testDesk({ modules: ['sales'], script: () => ({ text: '{}' }) });
+  try {
+    let release; const gate = new Promise(r => { release = r; });
+    t.core.modules.active.set('search', { handle: null, api: { async search() { await gate; return []; }, async read() { throw new Error('404'); } } });
+    const first = await t.core.modules.runTool('leads_find', { query: 'Indian companies that sell payroll software', count: 5 }, { chatId: 'c1' });
+    assert.equal(first.ok, true); assert.ok(first.jobId);
+    const jobsBefore = t.core.jobs.list().length;
+    const again = await t.core.modules.runTool('leads_find', { query: 'payroll software makers based in India', count: 5 }, { chatId: 'c1' });
+    assert.equal(t.core.jobs.list().length, jobsBefore, 'no second job for the same chat');
+    assert.equal(again.jobId, first.jobId); assert.equal(again.already, true);
+    assert.match(again.text, /A lead search is already running for this chat/); assert.match(again.text, /Find 5 leads: Indian companies that sell payroll software/);
+    const other = await t.core.modules.runTool('leads_find', { query: 'payroll software makers based in India', count: 5 }, { chatId: 'c2' });
+    assert.notEqual(other.jobId, first.jobId, 'another chat starts its own search');
+    release();
+    await t.core.jobs.wait(first.jobId, 60000); await t.core.jobs.wait(other.jobId, 60000);
+    const later = await t.core.modules.runTool('leads_find', { query: 'payroll software makers based in India', count: 5 }, { chatId: 'c1' });
+    assert.ok(later.jobId && later.jobId !== first.jobId && !later.already, 'a new search after the first has finished is allowed');
+    await t.core.jobs.wait(later.jobId, 60000);
+  } finally { await t.close(); }
+});
+
+test('country evidence: for an ask that names a country a lead is kept only when a page that was read places it there; the shortfall is plain', async () => {
+  const { placedIn, listPlaces, askCountry } = await import('./rules.js');
+  const { findLeads } = await import('./find.js');
+  const IN = askCountry('Indian companies that sell payroll software');
+  assert.equal(IN.label, 'India');
+  // what places a company in the ask's country
+  for (const [text, name] of [
+    ['Quillpay is an Indian payroll company.', 'Quillpay'], ['Quillpay is a leading Indian payroll provider.', 'Quillpay'],
+    ['Quillpay is a Pune-based payroll firm.', 'Quillpay'], ['Quillpay, a Bengaluru based HR startup, runs payroll.', 'Quillpay'],
+    ['Quillpay, based in Mumbai, runs payroll.', 'Quillpay'], ['Quillpay is an HR software company headquartered in Hyderabad.', 'Quillpay'],
+  ]) assert.ok(placedIn(text, name, IN), text);
+  // a phone number on someone else's page is the publisher's, even in a sentence that names the company
+  assert.equal(placedIn('For a free consultation call us today at: +91 98100 00000Visit: Quillpay help.', 'Quillpay', IN), '');
+  assert.ok(placedIn('Call Quillpay on +91 20 4000 1234 for a demo.', 'Quillpay', IN, { own: true }), 'on its own site the phone counts');
+  assert.ok(placedIn('We run payroll for small firms. Write to us or call +91-80-4000-1234.', 'Harbor HR', IN, { own: true }), 'its own site: a phone with the country code');
+  assert.ok(placedIn('We are headquartered in Chennai.', 'Harbor HR', IN, { own: true }), 'its own site: "we" is the company');
+  assert.ok(placedIn('Harbor HR runs payroll. Registered office: 4 Mill Road, Pune 411001.', 'Harbor HR', IN, { own: true }), 'its own site: an address');
+  // nearby cases that do not place it
+  for (const text of ['Lumen Payroll is popular among Indian startups.', 'Lumen Payroll is a favourite of Indian startups.', 'Lumen Payroll serves customers in India.',
+    'Lumen Payroll is headquartered in Austin and has an office in Bengaluru, India.', 'Lumen Payroll works with Mumbai-based clients.', 'Lumen Payroll is a cloud-based payroll tool.',
+    'Lumen Payroll makes payroll software for small businesses.', 'Lumen Payroll is an American payroll company.', 'Lumen Payroll: call +1 415 555 0100.'])
+    assert.equal(placedIn(text, 'Lumen Payroll', IN), '', text);
+  assert.equal(placedIn('We are headquartered in Chennai.', 'Lumen Payroll', IN), '', 'on a page that is not its own, "we" is someone else');
+  assert.equal(placedIn('Quillpay is an Indian payroll company.', 'Quillpay', null), '', 'the ask names no country');
+  // a list page that is itself about companies of that country, not a list of what is sold or used there
+  assert.ok(listPlaces({ title: 'Top 10 Indian HR software companies', text: 'x' }, IN));
+  assert.ok(listPlaces({ title: 'Payroll software', text: 'Payroll software companies based in India, compared. ' }, IN));
+  for (const title of ['Best HR software in India', 'Top HR software for Indian small businesses', 'HR tools popular with Indian startups', 'Top 10 HR software companies', 'Indian startups pick these HR tools'])
+    assert.equal(listPlaces({ title, text: 'x' }, IN), '', title);
+  assert.equal(listPlaces({ title: 'HRMS with payroll', text: 'Indian startups and Indian companies alike need simple payroll. Here are ten tools.' }, IN), '', 'the opening text names the audience, not the makers');
+  // through the whole search (stubs): only the leads a page places in India are kept, and the reason says why the rest are missing
+  const pad = ' Payroll software for small businesses, compared side by side.'.repeat(6);
+  const pages = {
+    'https://list.example/in': { title: 'Best payroll software in India', text: 'Northwind People offers payroll software. Quillpay is a Pune-based payroll company. Harbor HR offers payroll software. Lumen Payroll offers payroll software.' + pad },
+    'https://www.harborhr.in/': { title: 'Harbor HR: payroll software', text: 'Harbor HR runs payroll software for small businesses. Payroll and HR in one place. '.repeat(3) },
+    'https://www.lumenpayroll.example/': { title: 'Lumen Payroll: payroll software', text: 'Lumen Payroll runs payroll software for small teams everywhere. Call +1 415 555 0100. '.repeat(3) },
+  };
+  const search = { async search(q) { if (!/official website/.test(q)) return [{ url: 'https://list.example/in' }]; return q.startsWith('Harbor') ? [{ url: 'https://www.harborhr.in/' }] : q.startsWith('Lumen') ? [{ url: 'https://www.lumenpayroll.example/' }] : []; },
+    async read(u) { const k = /list\.example/.test(u) ? u : new URL(u).origin + '/'; const p = pages[k]; if (!p) throw new Error('404'); return { url: u, ...p }; } };
+  const names = ['Northwind People', 'Quillpay', 'Harbor HR', 'Lumen Payroll'];
+  const model = { async chat({ purpose, messages }) { if (purpose === 'plan') return { json: { queries: ['q'] } }; const t = messages[1].content; return { json: { leads: names.filter(n => t.includes(n)).map(n => ({ page: 0, company: n, kind: 'company', fits: true, need: 'payroll software' })) } }; } };
+  const r = await findLeads({ query: 'Find 4 Indian companies that sell payroll software', count: 4, search, model, budget: { extraRounds: 0, firstRounds: 1 } });
+  assert.deepEqual(r.leads.map(l => l.company).sort(), ['Harbor HR', 'Quillpay'], 'placed by the list sentence and by its own .in site');
+  assert.equal(r.rejected['not placed in the country'], 2);
+  assert.match(r.reason, /2 were left out because no page read placed them in India/);
+  assert.equal(r.country.label, 'India');
+  assert.match(r.leads.find(l => l.company === 'Quillpay').findings, /Placed in India by "is a Pune-based" \(https:\/\/list\.example\/in\)\./, 'the evidence is said in the findings');
+  assert.match(r.leads.find(l => l.company === 'Harbor HR').findings, /Placed in India by "its own site www\.harborhr\.in"/);
+  // with no country in the ask, nothing is held back for want of a place
+  const r2 = await findLeads({ query: 'Find 4 companies that sell payroll software', count: 4, search, model, budget: { extraRounds: 0, firstRounds: 1 } });
+  assert.equal(r2.leads.length, 4);
+});
+
+test('country shortfall in the reply: "2 of 4 found that could be placed in India", and why the rest are missing', async () => {
+  const names = ['Northwind People', 'Quillpay', 'Lumen Payroll', 'Tarang HR'];
+  const t = await testDesk({ modules: ['sales'], script: findScript(names) });
+  try {
+    stubSearch(t, { 'https://list.example/a': 'Northwind People offers HR software. Quillpay is a Pune-based payroll company. Lumen Payroll offers HR software. Tarang HR, based in Chennai, runs payroll.' + pad5 },
+      (q) => /official website/.test(q) ? [] : [{ url: 'https://list.example/a' }]);
+    const s = await t.core.modules.runTool('leads_find', { query: 'Indian companies that sell HR or payroll software to small businesses', count: 4 }, { chatId: 'c1' });
+    const out = (await t.core.jobs.wait(s.jobId, 60000)).output;
+    assert.equal(out.found, 2, out.text);
+    assert.match(out.text, /^2 of 4 found that could be placed in India: /, out.text);
+    assert.match(out.text, /2 were left out because no page read placed them in India/);
+    assert.match(out.card.title, /^2 of 4 found that could be placed in India/);
+    assert.deepEqual(out.card.rows.map(r => r[0]).sort(), ['Quillpay', 'Tarang HR']);
+  } finally { await t.close(); }
 });

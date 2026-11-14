@@ -60,3 +60,38 @@ test('files: write asks the door, list/read, owner-only routes, Bin', async () =
     assert.equal(mv.json.path, 'Plans');
   } finally { await t.close(); }
 });
+
+test('PDF text: a pdfkit document reads in order, per page, with plain errors', async () => {
+  const { createRequire } = await import('node:module');
+  const zlib = await import('node:zlib');
+  const { pdfToText } = await import('./pdf-text.js');
+  const { docPdf } = await import('../office/make.js');
+  const PDFDocument = createRequire(import.meta.url)('pdfkit');
+  const made = (opts, draw) => new Promise((resolve) => {
+    const doc = new PDFDocument(opts); const parts = [];
+    doc.on('data', (c) => parts.push(c)); doc.on('end', () => resolve(Buffer.concat(parts)));
+    draw(doc); doc.end();
+  });
+
+  // Regular and bold subset fonts reuse the same glyph codes; each must decode through its own map.
+  const md = '# Quarterly note\n\nHello PDF with a table.\n\nThis line has **bold words** and plain words.\n\n| Item | Price |\n| --- | --- |\n| Tea | ₹ 40 |\n| Coffee | ₹ 90 |\n\nA second paragraph closes the note.';
+  const text = await pdfToText(await docPdf({ title: 'Quarterly note', markdown: md }));
+  for (const line of ['Quarterly note', 'Hello PDF with a table.', 'This line has bold words and plain words.', 'Item Price', 'A second paragraph closes the note.']) assert.ok(text.includes(line), `${line} in:\n${text}`);
+  assert.match(text, /Coffee (₹|Rs\.) 90/);
+
+  const two = await pdfToText(await made({}, (d) => { d.text('First page words'); d.addPage(); d.text('Second page words'); }));
+  assert.equal(two, '[page 1]\nFirst page words\n\n[page 2]\nSecond page words');
+
+  // A content stream written with [/ASCII85Decode /FlateDecode], as ReportLab does.
+  const a85 = (b) => { let s = ''; for (let i = 0; i < b.length; i += 4) { const g = Buffer.alloc(4); b.copy(g, 0, i, i + 4); let n = g.readUInt32BE(0); const k = Math.min(4, b.length - i); if (n === 0 && k === 4) { s += 'z'; continue; } const c = []; for (let j = 0; j < 5; j += 1) { c.unshift(String.fromCharCode(33 + (n % 85))); n = Math.floor(n / 85); } s += c.join('').slice(0, k + 1); } return `${s}~>`; };
+  const body = a85(zlib.deflateSync(Buffer.from('BT /F1 12 Tf 72 720 Td (Filtered stream text) Tj ET')));
+  const objs = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>', '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>', `<< /Length ${body.length} /Filter [/ASCII85Decode /FlateDecode] >>\nstream\n${body}\nendstream`, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];
+  let pdf = '%PDF-1.4\n'; const at = [];
+  objs.forEach((o, i) => { at.push(pdf.length); pdf += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+  pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${at.map((n) => `${String(n).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${pdf.length}\n%%EOF\n`;
+  assert.equal(await pdfToText(Buffer.from(pdf, 'latin1')), 'Filtered stream text');
+
+  await assert.rejects(pdfToText(Buffer.from('not a pdf at all')), { code: 'malformed' });
+  await assert.rejects(pdfToText(await made({}, (d) => d.rect(50, 50, 100, 100).fill('#000'))), { code: 'pdfNoText' });
+  await assert.rejects(pdfToText(await made({ userPassword: 'secret' }, (d) => d.text('hidden'))), { code: 'encrypted' });
+});

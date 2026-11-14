@@ -18,7 +18,10 @@ function testLine(t, ui) {
 const enc = (p, m) => p + '\u0001' + (m || '');
 function pickerSelect(ui, groups, current, { noneLabel, apd }) {
   const sel = ui.h('select', { 'aria-label': apd === 'model-main' ? 'Main model' : 'Fallback model', 'data-apd': apd });
-  sel.append(ui.h('option', { value: '' }, noneLabel));
+  // The desk default names its whole chain, which does not fit a table column: the option shows the short name, the
+  // full chain is its title (and the line under the table).
+  const short = String(noneLabel).replace(/\s*\(.*\)$/, '');
+  sel.append(ui.h('option', { value: '', title: short !== noneLabel ? noneLabel : null }, short));
   let found = !current;
   for (const g of groups) {
     const og = ui.h('optgroup', { label: g.label });
@@ -32,6 +35,8 @@ function pickerSelect(ui, groups, current, { noneLabel, apd }) {
     sel.append(og);
   }
   sel.missing = !found;
+  const tip = () => { sel.title = sel.selectedOptions[0]?.title || ''; };
+  sel.addEventListener('change', tip); tip();
   return sel;
 }
 const decode = (v) => { if (!v) return null; const [provider, model] = v.split('\u0001'); return { provider, model: model || null }; };

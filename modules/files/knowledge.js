@@ -1,8 +1,9 @@
 // Knowledge: workspace/knowledge, indexed into SQLite FTS5 (node:sqlite) with file and position.
-// chunkText and pageRegions understand the page marker "[page N]" of pdf-text.js output. Text extraction: convert.js / pdf-text.js.
+// chunkText and pageRegions understand the page marker "[page N]" of pdf-text.js output. Text extraction: convert.js, and pdf-text.js for PDFs.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { basicToMarkdown } from './convert.js';
+import { pdfToText } from './pdf-text.js';
 
 export const KNOWLEDGE_EXT = new Set(['.txt', '.text', '.md', '.markdown', '.log', '.json', '.tsv', '.csv', '.pdf', '.docx', '.xlsx', '.pptx']);
 const CHUNK_SIZE = 900;
@@ -68,16 +69,7 @@ export async function extractText(abs) {
   const st = await fs.stat(abs);
   if (st.size > MAX_FILE_BYTES) throw Object.assign(new Error('This file is too large to read into Knowledge.'), { code: 'too_large' });
   const bytes = await fs.readFile(abs);
-  if (ext === '.pdf') {
-    // unpdf (pdf.js, pure JavaScript) reads embedded and CID fonts; pdf-text.js is the fallback.
-    try {
-      const { getDocumentProxy, extractText: pdfText } = await import('unpdf');
-      const pdf = await getDocumentProxy(new Uint8Array(bytes));
-      const { text } = await pdfText(pdf, { mergePages: false });
-      const pages = text.map((t, i) => `[page ${i + 1}]\n${String(t).trim()}`).join('\n\n');
-      if (text.some((t) => /[\p{L}\p{N}]{3}/u.test(t))) return text.length > 1 ? pages : String(text[0]).trim();
-    } catch { /* fall through to the plain reader */ }
-  }
+  if (ext === '.pdf') return pdfToText(bytes);
   return basicToMarkdown(bytes, ext).markdown;
 }
 

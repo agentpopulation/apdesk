@@ -3,19 +3,18 @@
 /**
  * Basic Markdown reader for the common Office files when anydoc's native core is not loaded
  * (no prebuilt for this CPU, e.g. Windows on ARM, or a box whose npm skipped the optional binary).
- * Text and tables only: no images, no formulas' results beyond the cached value, no OCR. A PDF is
- * read for its text streams only (pdf-text.js); a scan has none and is reported, never guessed.
+ * Text and tables only: no images, no formulas' results beyond the cached value, no OCR. PDFs are
+ * read by pdf-text.js.
  * Pure JavaScript over the zip reader Desk already has; nothing leaves the PC.
  */
 import path from 'node:path';
 import { createRequire } from 'node:module';
 const AdmZip = createRequire(import.meta.url)('adm-zip');
-import { pdfToText } from './pdf-text.js';
 
 /** Plain text: read as it is, on every OS, never through anydoc (UI batch 2: attack.txt). */
 export const PLAIN_TEXT_EXTENSIONS = Object.freeze(['.txt', '.text', '.md', '.markdown', '.log', '.json', '.tsv']);
 /** Extensions the basic reader handles (anydoc handles many more when its native core loads). */
-export const BASIC_EXTENSIONS = Object.freeze(['.docx', '.docm', '.xlsx', '.xlsm', '.pptx', '.pptm', '.csv', '.pdf', ...PLAIN_TEXT_EXTENSIONS]);
+export const BASIC_EXTENSIONS = Object.freeze(['.docx', '.docm', '.xlsx', '.xlsm', '.pptx', '.pptm', '.csv', ...PLAIN_TEXT_EXTENSIONS]);
 const MAX_SHEET_ROWS = 2000;
 const ZIP_LIMITS = { maxEntries: 5000, maxTotalBytes: 200 * 1024 * 1024 };
 
@@ -226,13 +225,6 @@ export function basicToMarkdown(bytes, ext) {
     const text = Buffer.from(bytes).toString('utf8').replace(/^﻿/, '');
     const rows = parseCsv(text);
     return { markdown: table(rows.slice(0, MAX_SHEET_ROWS + 1)) + cutNote(rows.length - MAX_SHEET_ROWS - 1), format: 'csv' };
-  }
-  if (e === '.pdf') {
-    try {
-      return { markdown: pdfToText(bytes), format: 'pdf' };
-    } catch (err) {
-      throw Object.assign(new Error(err.message), { code: err.code || 'malformed', cause: err });
-    }
   }
   let files;
   try {

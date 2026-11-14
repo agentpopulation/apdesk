@@ -44,7 +44,12 @@ export class ApprovalDoor {
     this.visited = new Set();     // hostnames the browser already opened (Careful)
     this.granted = new Map();     // id -> { action, usedAt }
     this.spendModuleOn = () => false;
-    panic.onChange((st) => { if (st.halted) this.cancelAll('halted'); });
+    this.stoppedByPanic = 0;      // waiting approvals Panic cancelled since the last Resume
+    panic.onChange((st) => {
+      if (st.halted) { this.cancelAll('halted'); return; }
+      const n = this.stoppedByPanic; this.stoppedByPanic = 0;
+      if (n) this.events.emit('toast', { text: `Panic cancelled ${n === 1 ? '1 request that was' : n + ' requests that were'} waiting for you. They are listed under Stopped by Panic in Settings › Security.`, kind: '' });
+    });
     // expire stale rows from a previous run
     this.s.run("UPDATE approvals SET status = 'timeout', decided = ? WHERE status = 'pending'", now());
   }
@@ -140,7 +145,8 @@ export class ApprovalDoor {
     const result = await new Promise((resolve) => {
       const timer = setTimeout(() => this.decide(row.id, 'timeout', 'timeout'), TIMEOUT_MS);
       this.pending.set(row.id, { resolve, timer, row, req });
-      if (req.signal) req.signal.addEventListener('abort', () => this.decide(row.id, 'aborted', 'aborted'), { once: true });
+      // a signal that aborts because of Panic (a job's signal is a child of it) is recorded as stopped by Panic
+      if (req.signal) req.signal.addEventListener('abort', () => { const why = this.panic.halted ? 'halted' : 'aborted'; this.decide(row.id, why, why); }, { once: true });
     });
     if (row.jobId) { try { this.onJobWait?.(row.jobId, row.title, false); } catch {} }
     return result;
@@ -171,6 +177,7 @@ export class ApprovalDoor {
     this.events.emit('approval', row);
     if (p) {
       clearTimeout(p.timer); this.pending.delete(id);
+      if (status === 'halted') this.stoppedByPanic++;
       if (status === 'approved') { this.remember(row.action, `${row.action}|${row.agentId || ''}|${row.jobId || row.chatId || 'none'}`, p.req); this.granted.set(id, { action: row.action, bind: bindHash(p.req.payload, p.req.amount) }); }
       p.resolve(status === 'approved' ? { ok: true, how: 'owner', id } : { ok: false, reason: status === 'denied' ? 'denied' : status, id });
     }
@@ -199,6 +206,16 @@ export class ApprovalDoor {
     return { id: r.id, agentId: r.agent_id ?? r.agentId ?? null, chatId: r.chat_id ?? r.chatId ?? null, jobId: r.job_id ?? r.jobId ?? null, action: r.action, title: r.title, detail: r.detail, payload: r.payload === undefined ? r.payload : payload, amount: r.amount, currency: r.currency, status: r.status, how: r.how, created: r.created, decided: r.decided };
   }
   listPending() { return this.s.all("SELECT * FROM approvals WHERE status = 'pending' ORDER BY created").map(r => this.rowOut(r)); }
+  /** Approvals that were waiting when Panic was pressed and that the owner has not dismissed yet. Never decidable again. */
+  listStopped(limit = 100) { return this.s.all("SELECT * FROM approvals WHERE status = 'halted' AND how = 'halted' ORDER BY decided DESC LIMIT ?", limit).map(r => this.rowOut(r)); }
+  /** Take stopped-by-Panic items off that list (one id, or all). The row stays, status 'halted'; only the reminder goes. */
+  dismissStopped(id) {
+    const r = id === 'all' ? this.s.run("UPDATE approvals SET how = 'dismissed' WHERE status = 'halted' AND how = 'halted'")
+      : this.s.run("UPDATE approvals SET how = 'dismissed' WHERE status = 'halted' AND how = 'halted' AND id = ?", String(id || ''));
+    const n = Number(r?.changes || 0);
+    if (n) { this.activity({ action: 'approval.dismiss', title: `Dismissed ${n} stopped by Panic`, how: 'dismissed' }); this.events.emit('approval', { id: id === 'all' ? null : String(id), status: 'halted', how: 'dismissed' }); }
+    return n;
+  }
   listRecent(limit = 50) { return this.s.all('SELECT * FROM approvals ORDER BY created DESC LIMIT ?', limit).map(r => this.rowOut(r)); }
   activity(a) { this.s.run('INSERT INTO activity (at, agent_id, action, title, how, detail) VALUES (?, ?, ?, ?, ?, ?)', now(), a.agentId || null, a.action, a.title || null, a.how || null, a.detail || null); }
   activityList(limit = 200) { return this.s.all('SELECT * FROM activity ORDER BY id DESC LIMIT ?', limit); }
@@ -209,6 +226,10 @@ export class ApprovalDoor {
       get level() { return undefined; }, // modules read the level through ctx.settings.get('security.level')
       state: () => this.state(), listPending: () => this.listPending(),   // read-only: only the owner's routes can decide
       endScope: (scope) => this.endScope(scope),   // a module ends its own turn's "ask once" grants; this never grants anything
+      listStopped: () => this.listStopped(),        // read-only: what Panic cancelled
+      // Takes a stopped-by-Panic reminder off the list; it cannot approve, resume or change anything else.
+      // The Safety module calls it only from a route where owner is true.
+      dismissStopped: (id) => this.dismissStopped(id),
       /** One approval by id (status pending | approved | denied | timeout | aborted | halted), or null. Read-only. */
       get: (id) => this.rowOut(this.s.get('SELECT * FROM approvals WHERE id = ?', String(id || ''))),
     });

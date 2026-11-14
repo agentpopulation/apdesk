@@ -17,7 +17,7 @@
   <a href="#-what-is-in-it-for-you"><b>What it does</b></a> ·
   <a href="#-you-stay-in-charge"><b>Safety</b></a> ·
   <a href="#-honest-status"><b>Honest status</b></a> ·
-  <a href="#-more-from-agent-population"><b>More from us</b></a>
+  <a href="#-more-from-agentpopulation"><b>More from us</b></a>
 </p>
 
 # Agent Population Desk
@@ -80,15 +80,27 @@ Draft an email to the first lead. I will approve it before it goes.
 
 ## 🚀 Quick start
 
-**You need:** [Node.js](https://nodejs.org) 22.13 or newer. That is all. There is no build step.
+**Step 1. Get it.** On this page press the green **Code** button and choose **Download ZIP**, then unzip it. Or clone it:
 
 ```bash
 git clone https://github.com/agentpopulation/apdesk.git
 ```
 
-```bash
-cd apdesk
-```
+**Step 2. Start it with one file.**
+
+| Your computer | Do this | To stop |
+|---|---|---|
+| 🪟 **Windows** | Double-click `start.bat` | Double-click `stop.bat` |
+| 🍎 **Mac** | Double-click `start.command` | Press Ctrl+C in its window |
+| 🐧 **Linux** | Run `./start.sh` in a terminal | Press Ctrl+C in its window |
+
+That is all. The first start installs the packages the desk needs, then opens it in your browser at `http://127.0.0.1:3960`. There is no build step.
+
+- **Node.js 22.13 or newer** is the one thing the desk needs. On Windows, `start.bat` installs it for you with winget. On Mac and Linux, get it from [nodejs.org](https://nodejs.org) first; the start file tells you if it is missing.
+- **On a Mac**, the first double-click may be stopped by macOS because the file came from the internet. Right-click `start.command`, choose **Open**, and confirm once.
+
+<details>
+<summary>Prefer the command line?</summary>
 
 ```bash
 npm install
@@ -98,9 +110,9 @@ npm install
 npm start
 ```
 
-Then open `http://127.0.0.1:3960` in your browser.
+Then open `http://127.0.0.1:3960`. Run the tests with `npm test`.
 
-**On Windows** you can skip the commands: double-click `start.bat`. If Node.js is missing it installs it with winget, installs the packages, and opens the desk in its own window. `stop.bat` stops it cleanly.
+</details>
 
 **First five minutes**
 
@@ -182,7 +194,7 @@ This is version **0.1.0**, a first public release. We only state what was measur
 
 | What was measured | Result | When |
 |---|---|---|
-| Automated tests (`npm test`), Linux x64, Node 22 | 211 of 211 pass | 15 Nov 2026 |
+| Automated tests (`npm test`), Linux x64, Node 22 | 217 of 217 pass | 15 Nov 2026 |
 | Start-up check (`node tools/smoke.mjs --quick`): every module loads and every page opens in a real browser | 30 modules found, 16 on, 13 switch on and off, 0 pages with problems | 15 Nov 2026 |
 | 17 acceptance asks, answered by real free models, one full run | 14 passed, 2 failed, 1 not checked | 14 Nov 2026, on the build before this one |
 | Safety probes in `tools/safety` | All hold, with one accepted limit listed below | 14 Nov 2026 |
@@ -206,10 +218,10 @@ The full list is in [`CHANGELOG.md`](CHANGELOG.md) under "Known weak points". Fo
 
 | Platform | State |
 |---|---|
-| Linux x64, Node 22 and 24 | Developed and tested here. |
+| Linux x64, Node 22 and 24 | Developed and tested here, including `start.sh`. |
 | Windows 11 x64 | The main target. An earlier build of 0.1.0 was run and tested on Windows 11 on 14 Nov 2026. This exact code has not been re-run there yet. |
 | Windows on ARM64 | Not tested. The desk is plain JavaScript with no native add-ons, so it should work. |
-| macOS | Not tested. There is no start script; use `npm start`. |
+| macOS | Not tested yet. `start.command` uses the same script as Linux. |
 
 The agents' browser uses the Edge or Chrome already installed on your computer.
 
@@ -221,27 +233,24 @@ The agents' browser uses the Edge or Chrome already installed on your computer.
 | `app/core/contracts/` | The four contracts every module follows. Start here if you want to build a module. |
 | `modules/` | The 30 modules, one folder each, with a `module.json`. |
 | `vendor/` | Browser builds of open-source code, with their licences. |
-| `setup/` | Windows first install and repair scripts. |
-| `test/`, `tools/` | Automated tests and developer checks. |
+| `start.bat`, `start.command`, `start.sh` | One-file starters for Windows, Mac and Linux. |
+| `setup/` | Windows first install and repair scripts, and the small checks the starters use. |
+| `test/` | Automated tests for the core: the model door, the approval door, storage, modules and Panic. Each module keeps its own tests in its folder. Not needed to run the desk. |
+| `tools/` | Developer checks, the acceptance asks, the safety probes and the zip builder. |
 | `data/`, `backups/` | Made on first start. Your database, workspace and backup zips. Never committed. |
 
-Run the tests with:
 
-```bash
-npm test
-```
-
-## 🌐 More from Agent Population
+## 🌐 More from AgentPopulation
 
 | Project | What it is |
 |---|---|
 | 🌍 [agentpopulation.com](https://agentpopulation.com) | The home of everything we build for AI agents. |
-| 📦 [2 Million API Endpoint Pack](https://github.com/agentpopulation/2-million-api-endpoint-pack) | Lists of public API endpoints for AI agents, in packs: weather, transit, water, finance and economy, and India. |
-| 🧭 [APDesk 63M](https://huggingface.co/agentpopulation/APDesk_63M) | A small model that routes each message. Its weights are not published yet, and this release of AP Desk does not include it or need it. |
+| 📦 [2 Million API Endpoint Pack](https://github.com/agentpopulation/2-million-api-endpoint-pack) | Lists of API endpoints that needed no key when tested, in five packs: weather, transit, water, finance and economy, and India. The name is a target, not a count. |
+| 🧭 [APDesk 63M](https://huggingface.co/agentpopulation/APDesk_63M) | A small model that routes each message, under Apache 2.0. Its weights are not published yet, and this release of AP Desk does not include it or need it. |
 
 ## 📜 Licence and credit
 
-AP Desk is **open source** under the [Apache License 2.0](LICENSE). Copyright 2026 Agent Population.
+AP Desk is **open source** under the [Apache License 2.0](LICENSE). Copyright 2026 AgentPopulation.
 
 It stands on the work of many open-source projects. Each one is listed with its licence in [`ATTRIBUTION.md`](ATTRIBUTION.md). Thank you to all of them.
 

@@ -17,6 +17,13 @@ export async function activate(ctx) {
     const d = await p;
     ctx.json(res, { level: ctx.settings.get('security.level'), asked: !!pending && !early, decidedWithoutYou: early ? early.how : null, cancelled: d.ok === false && d.reason === 'aborted' });
   });
+  // Stopped by Panic: approvals that were waiting when Panic was pressed. Read here; only the owner dismisses them.
+  ctx.route('GET', '/stopped', (req, res) => ctx.json(res, { items: ctx.approval.listStopped() }));
+  ctx.route('POST', '/stopped/dismiss', (req, res, { body, owner }) => {
+    if (!owner) return ctx.json(res, { error: 'Only the owner at this desk can dismiss these.' }, 403);
+    if (!body?.all && !body?.id) return ctx.json(res, { error: 'Say which item, or all.' }, 400);
+    ctx.json(res, { dismissed: ctx.approval.dismissStopped(body.all ? 'all' : String(body.id)) });
+  });
   ctx.expose({ scanUntrusted, wrapUntrusted });
   return { async deactivate() {} };
 }

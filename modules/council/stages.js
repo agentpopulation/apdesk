@@ -4,7 +4,7 @@
 
 export function answerMessages(question, seat, format) {
   return [
-    { role: 'system', content: `You are ${seat.name}, one of three seats on a council that advises a business owner (format: ${format?.label || 'Council'}). Your stance: ${seat.stance}. ${seat.brief}\nAnswer on your own, in at most 120 words of plain English, no headings. Your first sentence states your position. You cannot look anything up here: give a figure only as your own estimate, and say it is an estimate.` },
+    { role: 'system', content: `You are ${seat.name}, one of three seats on a council that advises a business owner (format: ${format?.label || 'Council'}). Your stance: ${seat.stance}. ${seat.brief}\nAnswer on your own, in at most 120 words of plain English, no headings. Your first sentence states your position. You cannot look anything up here: give a figure only as your own estimate, and say it is an estimate.\nEnd with one more line on its own that starts with "Recommendation:" and names the course you recommend in two to six words, key word first: yes, no or wait for a yes-or-no question, otherwise the option you pick, named the way the question names it.` },
     { role: 'user', content: question },
   ];
 }
@@ -62,38 +62,66 @@ export function aggregate(rankings, byLetter, answers) {
 }
 export const rankLineFor = (name) => `Best-argued answer by the seats' own ranking: ${name}`;
 
-// ---- agreement: from what the seats recommend, labelled by one model call, counted by code
-const PAIR = (a, b) => `${a}-${b}`;
-export function agreeMessages(question, seats) {
-  const letters = seats.map((_, k) => String.fromCharCode(65 + k));
-  const pairs = letters.flatMap((a, i) => letters.slice(i + 1).map(b => PAIR(a, b)));
-  return [
-    { role: 'system', content: 'You label what each answer recommends. You do not judge which is better.' },
-    { role: 'user', content: `Question: ${question}\n\n${seats.map((x, k) => `Answer ${letters[k]}:\n${x.text}`).join('\n\n')}\n\nFor each answer, name the course it recommends in at most six words. Then for each pair say whether the two recommend the same course (true) or not (false). If any answer gives no clear recommendation, or you are not sure, set "sure" to false.\nReturn JSON only: {"courses":{${letters.map(l => `"${l}":"..."`).join(',')}},"same":{${pairs.map(p => `"${p}":true`).join(',')}},"sure":true}` },
-  ];
+// ---- agreement: each seat ends its own answer with a "Recommendation:" line; code reads those lines and counts
+/** Asked of a seat whose answer had no readable recommendation line: that line only, from the same model. */
+export const REC_ASK = 'Give your recommendation as one line only, in this form: Recommendation: then the course you recommend in two to six words, key word first.';
+export function recommendMessages(messages, answer) {
+  return [...messages, { role: 'assistant', content: answer }, { role: 'user', content: REC_ASK }];
 }
-/** The agreement line from the labelling reply, or '' when the reply is missing, unsure or not consistent. */
-export function agreement(reply, names) {
-  const j = reply && typeof reply === 'object' ? reply : null;
-  if (!j || j.sure !== true || !j.courses || !j.same || names.length < 2) return '';
-  const letters = names.map((_, k) => String.fromCharCode(65 + k));
-  const course = letters.map(l => String(j.courses[l] ?? '').replace(/\s+/g, ' ').trim().replace(/[.]$/, '').slice(0, 80));
-  if (course.some(c => !c)) return '';
-  const same = {};
-  for (let a = 0; a < letters.length; a++) for (let b = a + 1; b < letters.length; b++) {
-    const v = j.same[PAIR(letters[a], letters[b])] ?? j.same[PAIR(letters[b], letters[a])];
-    if (typeof v !== 'boolean') return '';
-    same[a + '-' + b] = v;
+const REC_LINE = /(?:^|[\s*_>#(])(?:my\s+|final\s+)?recommendation\b[\s*_]*(?:[:\-\u2013\u2014]|\s+is\b(?:\s+to\b)?)\s*(.+)$/i;
+const NO_REC = /^(none|n\/?a|unclear|unsure|not sure|no clear recommendation|no recommendation)$/i;
+/** The seat's recommendation phrase from its answer (the last "Recommendation:" line), or null. With `bare`, a reply
+ *  that is a single short line counts as the phrase even without the label. Markdown, quotes and end punctuation go. */
+export function parseRecommendation(text, { bare = false } = {}) {
+  const lines = String(text || '').replace(/<think>[\s\S]*?<\/think>/gi, '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  let phrase = null;
+  for (let k = lines.length - 1; k >= 0 && phrase == null; k--) { const m = lines[k].match(REC_LINE); if (m) phrase = m[1]; }
+  if (phrase == null && bare && lines.length === 1 && lines[0].split(/\s+/).length <= 8 && !/[.!?:]\s/.test(lines[0])) phrase = lines[0];
+  if (phrase == null) return null;
+  let t = phrase.replace(/[*_`"“”\[\]]/g, '').replace(/\s+/g, ' ').trim()
+    .replace(/^(?:i|we)\s+recommend\s+(?:that\s+)?(?:you\s+|we\s+)?/i, '').replace(/^(?:you|we)\s+should\s+/i, '').replace(/^to\s+/i, '')
+    .split(/(?<=[.!?;])\s/)[0].replace(/[.!?;:,]+$/, '').trim();
+  if (!t || /[<>|]/.test(t) || NO_REC.test(t)) return null;
+  if (/\b(is|are|was|and|or|but|the|a|an|to|of|for|with|that|than|because)$/i.test(t)) return null;   // a line cut off mid-phrase
+  return t.split(' ').slice(0, 8).join(' ');
+}
+/** The course a phrase names, for counting: yes, no, wait, "no <thing>" or the key word the phrase starts with. */
+export function recKey(phrase) {
+  const w = String(phrase || '').toLowerCase().replace(/[\u2019]/g, "'").replace(/[^\p{L}\p{N}\s'-]/gu, ' ').split(/\s+/).filter(Boolean).filter(x => !['the', 'a', 'an', 'just'].includes(x));
+  const [a, b, c] = w;
+  if (['yes', 'proceed'].includes(a) || (a === 'go' && b === 'ahead') || (a === 'do' && b === 'it')) return 'yes';
+  if (['wait', 'delay', 'postpone', 'defer'].includes(a) || (a === 'hold' && b === 'off') || (a === 'not' && b === 'yet')) return 'wait';
+  if (a === 'no') return 'no';
+  if (['not', "don't", 'dont', 'never', 'avoid'].includes(a)) return b ? 'no ' + stem(b) : 'no';
+  if (a === 'do' && b === 'not') return c ? 'no ' + stem(c) : 'no';
+  return stem(a || '');
+}
+const stem = (w) => (w.length > 4 ? w.replace(/(ing|ed|es|s)$/, '') : w).replace(/e$/, '');   // buying, buys, buy: one key
+const figures = (p) => (String(p).replace(/(\d),(?=\d)/g, '$1').match(/\d+(?:\.\d+)?/g) || []).join(' ');
+/** Two phrases recommend the same course when they start with the same key word and give no different figures. */
+export function sameCourse(p, q) {
+  if (recKey(p) !== recKey(q)) return false;
+  const [x, y] = [figures(p), figures(q)];
+  return !x || !y || x === y;
+}
+const COUNT = ['no', 'one', 'two', 'three', 'four', 'five'];
+/** The agreement line from the seats that answered ([{ name, recommendation }]), counted by code; '' when no seat gave a
+ *  clear recommendation. A seat with none is said plainly, never dropped from the count. */
+export function agreement(recs) {
+  const n = recs.length; const given = recs.filter(r => r.recommendation);
+  if (n < 2 || !given.length) return '';
+  const groups = [];
+  for (const r of given) { const g = groups.find(x => sameCourse(x[0].recommendation, r.recommendation)); g ? g.push(r) : groups.push([r]); }
+  groups.sort((a, b) => b.length - a.length);
+  const missing = n - given.length;
+  const none = missing ? `; ${missing === 1 ? 'one seat' : (COUNT[missing] || missing) + ' seats'} gave no clear recommendation` : '';
+  const top = groups[0]; const course = top[0].recommendation;
+  if (groups.length === 1) {
+    if (missing) return `${top.length} of ${n} seats recommend${top.length === 1 ? 's' : ''} ${course}${none}`;
+    return n === 2 ? `Both seats that answered agree: ${course}` : `All ${COUNT[n] || n} seats agree: ${course}`;
   }
-  const s = (a, b) => same[Math.min(a, b) + '-' + Math.max(a, b)];
-  if (names.length === 2) return s(0, 1) ? `Both seats that answered agree: ${course[0]}` : `The two seats that answered disagree: ${names[0]}: ${course[0]}; ${names[1]}: ${course[1]}`;
-  if (names.length !== 3) return '';
-  const trues = Object.values(same).filter(Boolean).length;
-  if (trues === 3) return `All three seats agree: ${course[0]}`;
-  if (trues === 0) return 'The seats disagree';
-  if (trues !== 1) return '';                     // two pairs the same but the third not: not consistent, so not sure
-  const [a, b] = [[0, 1], [0, 2], [1, 2]].find(([x, y]) => s(x, y)); const odd = [0, 1, 2].find(k => k !== a && k !== b);
-  return `2 of 3 seats agree: ${course[a]}; ${names[odd]} differs: ${course[odd]}`;
+  if (top.length > groups[1].length) return `${top.length} of ${n} seats agree: ${course}; ` + groups.slice(1).flat().map(r => `${r.name} differs: ${r.recommendation}`).join('; ') + none;
+  return 'The seats disagree: ' + given.map(r => `${r.name}: ${r.recommendation}`).join('; ') + none;
 }
 
 // ---- answers cut off by a token limit: no half sentence reaches the seat card or the Verdict

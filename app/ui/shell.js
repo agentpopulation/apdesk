@@ -5,7 +5,7 @@ import { settingsPage, coreSettingsSections } from '/ui/pages/settings.js';
 const { $, $$, h, api, toast } = kit;
 
 const OFFICIAL = [['chat', 'Chat'], ['research', 'Research'], ['tasks', 'Tasks'], ['sales', 'Sales'], ['files', 'Files'], ['agents', 'Agents'], ['models', 'Models'], ['settings', 'Settings']];
-const state = { settings: {}, security: {}, panic: { halted: false }, modules: [], agents: [], jobs: {}, pendingApprovals: [], route: { page: 'chat', parts: [], params: {} } };
+const state = { settings: {}, security: {}, panic: { halted: false }, modules: [], agents: [], jobs: {}, pendingApprovals: [], stoppedApprovals: [], route: { page: 'chat', parts: [], params: {} } };
 const listeners = new Map();          // event type -> Set(fn)
 let pageCleanup = [];                 // unsubscribe + unmount for the page on screen
 const loaded = new Map();             // module id -> ui.js exports
@@ -26,6 +26,8 @@ const ui = {
   async setOnline(online) { await api('settings', { body: { online } }); state.settings.online = online; emitLocal('settings', { online }); return online; },
   async decide(id, decision) { const r = await api(`approvals/${id}/${decision}`, { method: 'POST' }); await refreshApprovals(); return r; },
   openApprovals: () => showApprovals(true),
+  /** Approvals Panic cancelled, until the owner dismisses them (fresh from the desk), and the section that lists them. */
+  refreshStopped: () => refreshStopped(), stoppedSection: () => stoppedSection(),
   /** Open a workspace file in Files (the folder opens with the file selected). The one link format for file cards. */
   openFile(path) { location.hash = '#/files?path=' + encodeURIComponent(String(path || '')); },
   panic: () => panic(true),
@@ -76,8 +78,9 @@ function paintChrome() {
   const halted = !!state.panic.halted;
   document.body.classList.toggle('halted', halted);
   $('#halt').hidden = !halted; $('#panic').textContent = halted ? 'Stopped' : 'Panic';
-  const n = state.pendingApprovals.length;
-  $('#waiting').hidden = n === 0; $('#waiting').textContent = n === 1 ? '1 waiting for you' : `${n} waiting for you`;
+  const n = state.pendingApprovals.length, st = state.stoppedApprovals.length;
+  $('#waiting').hidden = n === 0 && st === 0;
+  $('#waiting').textContent = n ? (n === 1 ? '1 waiting for you' : `${n} waiting for you`) : `Stopped by Panic: ${st}`;
   paintMenu();
 }
 async function setTheme(dark) {
@@ -101,7 +104,22 @@ $('#home').onclick = () => ui.go('home');
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && e.shiftKey) panic(true); });
 
 // ---------- approvals: the badge, the list, the decision
-async function refreshApprovals() { const r = await api('approvals'); state.pendingApprovals = r.pending; paintChrome(); if (!$('#pop').hidden) showApprovals(true); }
+async function refreshApprovals() { const r = await api('approvals'); state.pendingApprovals = r.pending; await refreshStopped(); paintChrome(); if (!$('#pop').hidden) showApprovals(true); }
+// ---------- approvals Panic cancelled: listed until the owner dismisses them. They cannot be approved: the work was stopped.
+async function refreshStopped() {
+  try { state.stoppedApprovals = ui.moduleOn('safety') ? (await api('m/safety/stopped')).items : []; } catch { state.stoppedApprovals = []; }
+  return state.stoppedApprovals;
+}
+async function dismissStopped(body) { try { await api('m/safety/stopped/dismiss', { body }); } catch (e) { toast(e.message, 'err'); } await refreshApprovals().catch(() => {}); }
+function stoppedSection() {
+  const list = state.stoppedApprovals; if (!list.length) return null;
+  const one = list.length === 1;
+  return h('div', { class: 'card', 'data-apd': 'stopped', style: { marginBottom: '8px' } },
+    h('div', { class: 'row' }, h('h3', null, 'Stopped by Panic'), h('span', { class: 'grow' }), one ? null : kit.btn('Dismiss all', { kind: 'ghost sm', onClick: () => dismissStopped({ all: true }) })),
+    h('p', { class: 'sub' }, one ? 'This was waiting for you when you pressed Panic. It was cancelled. Ask again if you still want it.' : 'These were waiting for you when you pressed Panic. They were cancelled. Ask again if you still want them.'),
+    ...list.map(a => kit.line(a.title, `${ui.agent(a.agentId)?.name || a.agentId || 'An agent'} · ${ACTION_WORDS[a.action] || a.action} · stopped ${kit.fmt.when(a.decided)}`,
+      kit.btn('Dismiss', { kind: 'ghost sm', onClick: () => dismissStopped({ id: a.id }) }))));
+}
 function approvalCard(a) {
   const agent = ui.agent(a.agentId)?.name || a.agentId || 'An agent';
   // Everything the approval covers is shown, in full: long text scrolls inside its box, nothing is cut or left out.
@@ -123,7 +141,7 @@ ui.approvalCard = approvalCard; ui.ACTION_WORDS = ACTION_WORDS;
 function showApprovals(open) {
   const pop = $('#pop'); pop.hidden = !open; if (!open) return;
   pop.replaceChildren(h('div', { class: 'row', style: { marginBottom: '8px' } }, h('h3', null, 'Waiting for you'), h('span', { class: 'grow' }), kit.btn('Close', { kind: 'ghost sm', onClick: () => showApprovals(false) })),
-    ...(state.pendingApprovals.length ? state.pendingApprovals.map(approvalCard) : [kit.empty('Nothing is waiting.')]));
+    ...(state.pendingApprovals.length ? state.pendingApprovals.map(approvalCard) : [kit.empty('Nothing is waiting.')]), stoppedSection());
 }
 $('#waiting').onclick = () => showApprovals($('#pop').hidden);
 
@@ -201,6 +219,7 @@ async function refresh() {
   Object.assign(state, { settings: s.settings, security: s.security, panic: s.panic, modules: s.modules, agents: s.agents, jobs: s.jobs, pendingApprovals: s.pendingApprovals, tools: s.tools, version: s.version });
   kit.setPrefs({ timeZone: s.settings.timeZone, locale: s.settings.locale, currency: s.settings.currency });
   if (s.settings.theme && s.settings.theme !== document.documentElement.dataset.theme) { document.documentElement.dataset.theme = s.settings.theme; try { localStorage.setItem('apd-theme', s.settings.theme); } catch {} }
+  await refreshStopped();
   paintChrome();
 }
 function connect() {
@@ -208,7 +227,7 @@ function connect() {
   es.addEventListener('apd', (ev) => { let m = null; try { m = JSON.parse(ev.data); } catch { return; } if (m?.type) emitLocal(m.type, m.data || {}); });
   es.onerror = () => { /* the browser reconnects on its own */ };
 }
-globalOn('panic', (st) => { if (st && 'halted' in st) { state.panic = st; paintChrome(); } });
+globalOn('panic', (st) => { if (st && 'halted' in st) { state.panic = st; paintChrome(); if (!st.halted) refreshApprovals().catch(() => {}); } });
 globalOn('approval', (a) => { refreshApprovals().catch(() => {}); if (a?.status === 'pending') toast(`Waiting for you: ${a.title}`); });
 globalOn('modules', async () => { loaded.clear(); await refresh(); bootModules(); const m = ownerOf(state.route.page); if (state.route.page === 'settings' || (m && !m.on) || !m) render(); });
 globalOn('agents', () => api('agents').then(r => { state.agents = r.agents; }).catch(() => {}));

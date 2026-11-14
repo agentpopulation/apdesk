@@ -24,7 +24,7 @@ export function hostKind(url) {
 export const skipSource = (url) => ['marketplace', 'aggregator', 'document'].includes(hostKind(url)) || /\.(pdf|docx?|xlsx?|pptx?)(\?|#|$)/i.test(String(url));
 export const notACompany = (name) => NOT_A_COMPANY.test(String(name || ''));
 
-/** The publisher of a news site, directory or shop is not itself a lead: "The Economic Times" from economictimes.com. */
+/** The publisher of a news site, directory or shop is not itself a lead: "The Harbour Times" from harbourtimes.example. */
 export function isPublisher(name, url) {
   const kind = hostKind(url); if (!kind) return false;
   const slug = normName(name).replace(/\s+/g, '');
@@ -64,7 +64,7 @@ export function normName(s) {
   return String(s || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/&amp;/g, '&').replace(/&/g, ' and ').replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ').replace(/\s+/g, ' ').trim();
 }
 /** The one same-name key for the pipeline (store) and the search (sameCompany): letters, marks and digits of every
- *  script, case, spaces and punctuation aside ("Sumo Payroll" = "SumoPayroll"; "शर्मा ट्रेडर्स" keeps its letters).
+ *  script, case, spaces and punctuation aside ("Quokka Payroll" = "QuokkaPayroll"; "शर्मा ट्रेडर्स" keeps its letters).
  *  "&" counts as "and", so "A&B Traders" = "A and B Traders" but not "AB Traders". */
 export function nameKey(s) {
   return String(s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/&amp;/g, '&').replace(/&/g, 'and').replace(/[^\p{L}\p{M}\p{N}]+/gu, '');
@@ -82,8 +82,8 @@ export function textNames(text, name) {
 export function textHas(text, needle) { const n = normName(needle); return !!n && (' ' + normName(text) + ' ').includes(' ' + n + ' '); }
 export function emailIn(text, email) { const e = String(email || '').trim().toLowerCase(); return /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/.test(e) && String(text || '').toLowerCase().includes(e); }
 
-/** One key per company for de-duplication: "Siemens India", "Siemens Ltd." and "Siemens" are the same lead;
- *  "B&R Industrial Automation (A member of ABB Group)" -> "b and r industrial automation". */
+/** One key per company for de-duplication: "Kestrel India", "Kestrel Ltd." and "Kestrel" are the same lead;
+ *  "T&K Industrial Automation (A member of Orion Group)" -> "t and k industrial automation". */
 export function companyKey(s) {
   let n = String(s || '').replace(/\(.*?\)/g, ' ').replace(/[,\-–—]\s*(a\s+)?(member|part|subsidiary|division|unit)\s+of\b.*$/i, ' ').replace(/\b(a\s+)?(member|part|subsidiary|division)\s+of\s+.*$/i, ' ');
   n = normName(n);
@@ -91,7 +91,7 @@ export function companyKey(s) {
   for (let i = 0; i < 6 && TAIL.test(n); i++) n = n.replace(TAIL, '').trim();
   return n;
 }
-/** The part of a host that names a company: "new.siemens.com" -> "siemens", "abb.co.in" -> "abb". */
+/** The part of a host that names a company: "new.kestrel.com" -> "kestrel", "orion.co.in" -> "orion". */
 export function hostLabel(url) {
   const parts = hostOf(url).split('.'); if (parts.length < 2) return parts[0] || '';
   const sld = parts[parts.length - 2]; return (['co', 'com', 'net', 'org', 'ac', 'gov'].includes(sld) && parts.length >= 3) ? parts[parts.length - 3] : sld;
@@ -159,7 +159,7 @@ export function aboutSameBusiness(page, fieldWords) {
 }
 /** Kept for callers that pass plain text: the same rule on text alone. */
 export function sameBusiness(pageText, topics) { return aboutSameBusiness({ title: '', text: pageText }, topics).ok; }
-/** "Keka" and "Keka HR" are one company: equal once generic words of the field (and of the ask) are dropped. */
+/** "Kolam" and "Kolam HR" are one company: equal once generic words of the field (and of the ask) are dropped. */
 export function sameCompany(a, b, askWords = []) {
   const ka = companyKey(a), kb = companyKey(b);
   if (!ka || !kb) return false;
@@ -179,7 +179,7 @@ export function sentenceNaming(text, company) {
   return hit || '';
 }
 
-/** The page names the company, by its full name or by its name without generic words of the field ("Keka HR" -> "Keka"). */
+/** The page names the company, by its full name or by its name without generic words of the field ("Kolam HR" -> "Kolam"). */
 export function namesCompany(text, name, askWords = []) {
   if (textNames(text, name)) return true;
   const drop = new Set([...GENERIC_FIELD, ...askWords]);
@@ -187,7 +187,7 @@ export function namesCompany(text, name, askWords = []) {
   return core.length >= 3 && core !== companyKey(name) && textNames(text, core);
 }
 
-/** "https://www.zoho.com/people" -> "zoho.com"; "https://shop.acme.co.in" -> "acme.co.in". */
+/** "https://www.nimbus.com/people" -> "nimbus.com"; "https://shop.acme.co.in" -> "acme.co.in". */
 export function registrableDomain(url) {
   const parts = hostOf(url).split('.').filter(Boolean); if (parts.length <= 2) return parts.join('.');
   const sld = parts[parts.length - 2];
@@ -208,8 +208,8 @@ export function sameSeller(a, b, askWords = []) {
   const wa = words(a), wb = words(b); const ba = wa[0] || '', bb = wb[0] || '';
   const ask = new Set(askWords.map(w => String(w).toLowerCase()));
   if (!ba || ba !== bb || ba.length < 3 || GENERIC_FIELD.has(ba) || STOPWORDS.has(ba) || ask.has(ba)) return false;
-  // by name alone: the rest of each name is only product or field words ("Zoho People" and "Zoho Payroll"), never a
-  // distinctive word of its own ("Tata Consultancy" and "Tata Motors", "Siemens India" and "Siemens Healthineers")
+  // by name alone: the rest of each name is only product or field words ("Nimbus People" and "Nimbus Payroll"), never a
+  // distinctive word of its own ("Varma Consultancy" and "Varma Motors", "Kestrel India" and "Kestrel Healthcare")
   const product = (w) => PRODUCT_WORDS.has(w) || ask.has(w) || ask.has(w.replace(/s$/, ''));
   if (wa.slice(1).every(product) && wb.slice(1).every(product)) return true;
   return [da, db].some(d => d && hostLabel('https://' + d).replace(/[^a-z0-9]/g, '') === ba);
@@ -217,19 +217,20 @@ export function sameSeller(a, b, askWords = []) {
 
 const COUNTRIES = { india: 'in', indian: 'in', germany: 'de', german: 'de', france: 'fr', french: 'fr', uk: 'uk', britain: 'uk', british: 'uk', 'united kingdom': 'uk', usa: 'us', 'united states': 'us', american: 'us', canada: 'ca', canadian: 'ca', australia: 'au', australian: 'au', japan: 'jp', japanese: 'jp', china: 'cn', chinese: 'cn', singapore: 'sg', uae: 'ae', dubai: 'ae', brazil: 'br', spain: 'es', spanish: 'es', italy: 'it', italian: 'it', netherlands: 'nl', dutch: 'nl', 'south africa': 'za', nepal: 'np', 'sri lanka': 'lk', bangladesh: 'bd', pakistan: 'pk', indonesia: 'id', malaysia: 'my', thailand: 'th', vietnam: 'vn', mexico: 'mx' };
 const CC_TLDS = new Set(Object.values(COUNTRIES).concat(['ch', 'at', 'se', 'no', 'dk', 'fi', 'pl', 'pt', 'ie', 'be', 'ru', 'kr', 'tr', 'hk', 'nz', 'ar', 'sa', 'qa', 'ph', 'eg', 'ng', 'ke']));
-/** The country an ask names: "Indian companies ..." -> { name: 'india', tld: 'in' }, or null. */
+const LABELS = { in: 'India', de: 'Germany', fr: 'France', uk: 'the UK', us: 'the USA', ca: 'Canada', au: 'Australia', jp: 'Japan', cn: 'China', sg: 'Singapore', ae: 'the UAE', br: 'Brazil', es: 'Spain', it: 'Italy', nl: 'the Netherlands', za: 'South Africa', np: 'Nepal', lk: 'Sri Lanka', bd: 'Bangladesh', pk: 'Pakistan', id: 'Indonesia', my: 'Malaysia', th: 'Thailand', vn: 'Vietnam', mx: 'Mexico' };
+/** The country an ask names: "Indian companies ..." -> { name: 'india', tld: 'in', label: 'India' }, or null. */
 export function askCountry(query) {
   const q = ' ' + normName(query) + ' ';
-  for (const [name, tld] of Object.entries(COUNTRIES)) if (q.includes(' ' + name + ' ')) return { name, tld };
+  for (const [name, tld] of Object.entries(COUNTRIES)) if (q.includes(' ' + name + ' ')) return { name, tld, label: LABELS[tld] || tld.toUpperCase() };
   return null;
 }
-/** The country a site's address says: "sunpharma.de" -> "de", "acme.co.in" -> "in", "/de/" path or "de." host on a .com -> "de"; '' when it says none. */
+/** The country a site's address says: "northwind-pharma.de" -> "de", "acme.co.in" -> "in", "/de/" path or "de." host on a .com -> "de"; '' when it says none. */
 export function siteCountry(url) {
   let u; try { u = new URL(String(url)); } catch { return ''; }
   const parts = u.hostname.toLowerCase().split('.'); const tld = parts[parts.length - 1];
   if (CC_TLDS.has(tld)) return tld;
   const sub = parts.length > 2 ? parts[0] : ''; if (CC_TLDS.has(sub)) return sub;
-  const label = hostLabel(url);                                   // "zydususa.com" -> us, "acme-india.com" -> in
+  const label = hostLabel(url);                                   // "kavyalabsusa.com" -> us, "acme-india.com" -> in
   const named = [[/(usa|america)$/, 'us'], [/india$/, 'in'], [/(deutschland|germany)$/, 'de'], [/(europe|emea)$/, 'eu'], [/japan$/, 'jp'], [/china$/, 'cn'], [/canada$/, 'ca'], [/australia$/, 'au']].find(([re]) => re.test(label));
   if (named && label.replace(named[0], '').length >= 2) return named[1];
   const seg = (u.pathname.split('/')[1] || '').toLowerCase().split(/[-_]/); const hit = seg.find(x => CC_TLDS.has(x));
@@ -242,12 +243,25 @@ export const wrongCountrySite = (url, country) => { const c = siteCountry(url); 
 // London") in a sentence about the company, and only when the same text gives no sign of the ask's country. Silence keeps.
 const US_STATES = 'alabama alaska arizona arkansas california colorado connecticut delaware florida hawaii idaho illinois indiana iowa kansas kentucky louisiana maine maryland massachusetts michigan minnesota mississippi missouri montana nebraska nevada ohio oklahoma oregon pennsylvania tennessee texas utah vermont virginia washington wisconsin wyoming'.split(' ')
   .concat(['new hampshire', 'new jersey', 'new mexico', 'new york', 'north carolina', 'north dakota', 'rhode island', 'south carolina', 'south dakota', 'west virginia']);
-const PLACES = { ...COUNTRIES, ...Object.fromEntries(US_STATES.map(x => [x, 'us'])), america: 'us', 'san francisco': 'us', 'silicon valley': 'us', 'united states of america': 'us',
-  england: 'uk', scotland: 'uk', london: 'uk', berlin: 'de', munich: 'de', paris: 'fr', amsterdam: 'nl', toronto: 'ca', sydney: 'au', melbourne: 'au', tokyo: 'jp', ireland: 'ie', dublin: 'ie', switzerland: 'ch', israel: 'il' };
 // signs of the ask's country besides its names: its larger business cities
 const SIGNS = { in: ['bengaluru', 'bangalore', 'mumbai', 'delhi', 'new delhi', 'pune', 'chennai', 'hyderabad', 'kolkata', 'ahmedabad', 'noida', 'gurugram', 'gurgaon', 'kochi', 'jaipur', 'chandigarh', 'indore', 'coimbatore'] };
+const PLACES = { ...COUNTRIES, ...Object.fromEntries(US_STATES.map(x => [x, 'us'])), america: 'us', 'san francisco': 'us', 'silicon valley': 'us', 'united states of america': 'us', austin: 'us',
+  england: 'uk', scotland: 'uk', london: 'uk', berlin: 'de', munich: 'de', paris: 'fr', amsterdam: 'nl', toronto: 'ca', sydney: 'au', melbourne: 'au', tokyo: 'jp', ireland: 'ie', dublin: 'ie', switzerland: 'ch', israel: 'il',
+  ...Object.fromEntries(Object.entries(SIGNS).flatMap(([tld, xs]) => xs.map(x => [x, tld]))) };
 const PLACED = /\b(?:(?:head-?quartered|based)\s+(?:out of|in|at)|(?:headquarters|head office|hq|registered office)\s*(?:is |are )?(?:located )?(?:in|at|:))\s+([^.;!?\n]{2,80})/gi;
-const placeOf = (words) => { const t = ' ' + normName(words) + ' '; for (const [name, tld] of Object.entries(PLACES)) if (t.includes(' ' + name + ' ')) return tld; return ''; };
+/** The place named first in these words ("San Francisco and an office in Bengaluru, India" -> us), or ''. */
+const placeOf = (words) => {
+  const t = ' ' + normName(words) + ' '; let best = ''; let at = Infinity;
+  for (const [name, tld] of Object.entries(PLACES)) { const i = t.indexOf(' ' + name + ' '); if (i >= 0 && i < at) { at = i; best = tld; } }
+  return best;
+};
+const sentencesOf = (text) => String(text || '').replace(/\s+/g, ' ').split(/(?<=[.!?])\s+/);
+/** A "headquartered in" / "based in" statement at m.index in sentence x is about the company itself: right after its name,
+ *  "we", "is", "our", a comma, or a word for a company ("customers based in the USA" is not about where the company is). */
+function aboutItself(x, index, company) {
+  const before = x.slice(0, index).trim();
+  return !before || /(?:^|[\s,(])(?:we|we're|we are|is|are|our|its|company|firm|startup|provider|platform|business|inc\.?|ltd\.?|llc)$/i.test(before) || /[,(—–-]$/.test(before) || [normName(company), coreName(company)].some(n => n && (' ' + normName(before)).endsWith(' ' + n));
+}
 /** A sign of the ask's country in the text: its names ("India", "Indian"), or one of its larger cities. */
 export function countrySign(text, country) {
   if (!country) return false;
@@ -258,16 +272,53 @@ export function countrySign(text, country) {
 /** The text plainly places the company in another country than the ask's, and gives no sign of the ask's country. */
 export function placedElsewhere(text, company, country) {
   if (!country || countrySign(text, country)) return false;
-  const sents = String(text || '').replace(/\s+/g, ' ').split(/(?<=[.!?])\s+/).filter(x => textNames(x, company) || /\b(we|we're|we are|our)\b/i.test(x));
+  const sents = sentencesOf(text).filter(x => textNames(x, company) || /\b(we|we're|we are|our)\b/i.test(x));
   for (const x of sents) for (const m of x.matchAll(PLACED)) {
-    // the statement is about the company itself: right after its name, "we", "is", "our", a comma, or a word for a company
-    // ("customers based in the USA" is not about where the company is)
-    const before = x.slice(0, m.index).trim();
-    const own = !before || /(?:^|[\s,(])(?:we|we're|we are|is|are|our|its|company|firm|startup|provider|platform|business|inc\.?|ltd\.?|llc)$/i.test(before) || /[,(—–-]$/.test(before) || [normName(company), coreName(company)].some(n => n && (' ' + normName(before)).endsWith(' ' + n));
-    const c = own ? placeOf(m[1]) : '';
+    const c = aboutItself(x, m.index, company) ? placeOf(m[1]) : '';
     if (c && c !== country.tld) return true;
   }
   return false;
+}
+
+// ---- country evidence: when the ask names a country, a lead is kept only when a page that was read places the company
+// there. Silence is not evidence: a list of "HR software in India" names what is sold there, not where its makers are.
+const CALLING = { in: '91', de: '49', fr: '33', uk: '44', us: '1', ca: '1', au: '61', jp: '81', cn: '86', sg: '65', ae: '971', br: '55', es: '34', it: '39', nl: '31', za: '27', np: '977', lk: '94', bd: '880', pk: '92', id: '62', my: '60', th: '66', vn: '84', mx: '52' };
+const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const namesOf = (tld) => Object.entries(COUNTRIES).filter(([, t]) => t === tld).map(([n]) => n);
+const phoneRe = (tld) => CALLING[tld] ? new RegExp(`(?:\\+|\\b00)\\s?\\(?${CALLING[tld]}\\)?[\\s.-]*\\d[\\d\\s.-]{6,}`) : null;
+// words that may stand between "is a" and the country word ("is a leading Indian"); a preposition may not ("a favourite of Indian startups")
+const FREE = '(?:(?!(?:of|for|among|with|in|to|by|across|from|and|or|like)\\b)[\\p{L}-]+\\s+){0,2}?';
+/**
+ * The text places the company in the ask's country, from what it says about the company itself: a "headquartered in" /
+ * "based in" / "registered office:" statement naming a place there; "is an Indian ...", ", a Pune-based ...". On its own
+ * site (own) every sentence is about the company ("We are headquartered in Chennai", "Registered office: ..."), and a
+ * phone with the country's calling code counts; on another page a phone is the publisher's, never the company's. Returns the words that place it, or ''.
+ */
+export function placedIn(text, company, country, { own = false } = {}) {
+  if (!country?.tld) return '';
+  const names = namesOf(country.tld).map(reEsc).join('|'); const cities = [...namesOf(country.tld), ...(SIGNS[country.tld] || [])].map(reEsc).join('|');
+  const described = new RegExp(`(?:\\b(?:is|are|was)\\s+(?:(?:a|an)\\s+${FREE})?|,\\s*(?:a|an)\\s+${FREE})(?:(?:${names})\\b(?![- ]based)|(?:${cities})[- ]based\\b)|^(?:the\\s+)?(?:${cities})[- ]based\\b`, 'iu');
+  const phone = phoneRe(country.tld);
+  // on its own site every sentence is the company's own (a bare "Registered office: ..." line); elsewhere only those naming it
+  const sents = sentencesOf(text).filter(x => own || textNames(x, company));
+  for (const x of sents) {
+    for (const m of x.matchAll(PLACED)) if (aboutItself(x, m.index, company) && placeOf(m[1]) === country.tld) return m[0].trim();
+    const d = x.match(described); if (d) return d[0].trim();
+  }
+  if (own && phone) { const p = String(text || '').match(phone); if (p) return p[0].trim(); }
+  return '';
+}
+/** The page itself is a list of companies of the ask's country: its title says so ("Top 10 Indian HR software companies"),
+ *  or its title or opening lines say "companies based in India". Not a list of what is sold or used there ("HR software
+ *  in India", "for Indian small businesses"), and never the audience in its text ("Indian startups need ..."). Returns the words, or ''. */
+export function listPlaces(page, country) {
+  if (!country?.tld) return '';
+  const names = namesOf(country.tld).map(reEsc).join('|');
+  const KIND = '(?:companies|firms|manufacturers|makers|suppliers|brands|vendors|providers|exporters)';
+  const title = String(page?.title || ''); const head = `${title}. ${String(page?.text || '').slice(0, 300)}`;
+  const m = title.match(new RegExp(`(?<!\\b(?:for|among|to|by|with|of|serving|in|from)\\s)\\b(?:${names})\\s+(?:[\\p{L}&-]+\\s+){0,3}?${KIND}\\b`, 'iu'))
+    || head.match(new RegExp(`\\b${KIND}\\s+(?:based|headquartered)\\s+in\\s+(?:${names})\\b`, 'iu'));
+  return m ? m[0].trim() : '';
 }
 /** The need or sector line is kept only when its distinctive words are on the page that names the company. */
 export function needOnPage(need, pageText) {
@@ -284,8 +335,8 @@ export function emailCountry(e) { const m = String(e || '').toLowerCase().split(
 const STAGE_HOST = /(^|[.-])(stage|staging|dev|test|testing|demo|uat|sandbox|beta|preprod|qa)([.-]|$)/;
 const APP_SUB = /^(app|apps|login|portal|payroll|sns|my|secure|accounts?|dashboard|admin|client|customers?|support|help|docs|blog|careers|jobs|mail|web|go|get|try|signup|auth|cloud|erp|hrms|ess)$/;
 /**
- * The address to read as a company's own site: '' for a staging or test host (uknowva-stage.in); the main site for an app
- * or login subdomain (payroll.beehivesoftware.in -> www.beehivesoftware.in); otherwise the address's own origin.
+ * The address to read as a company's own site: '' for a staging or test host (hrdesk-stage.in); the main site for an app
+ * or login subdomain (payroll.hivelinksoftware.in -> www.hivelinksoftware.in); otherwise the address's own origin.
  */
 export function siteRoot(url) {
   let u; try { u = new URL(String(url)); } catch { return ''; }

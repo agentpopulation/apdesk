@@ -20,14 +20,15 @@ export async function activate(ctx) {
   const money = (minor, cur) => { if (minor == null) return 'not checked'; try { return new Intl.NumberFormat(ctx.settings.get('locale') || 'en-IN', { style: 'currency', currency: cur || currency(), maximumFractionDigits: 0 }).format(minor / 100); } catch { return `${cur} ${minor / 100}`; } };
   const mdLink = (s) => s ? `[${String(s.title || s.url).replace(/[[\]]/g, '')}](${s.url})` : 'not checked';
 
-  function leadsCard(leads, { query, reason, asked } = {}) {
+  function leadsCard(leads, { query, reason, asked, where = '' } = {}) {
+    const placedNote = where ? ` that could be placed in ${where}` : '';   // the ask named a country: only leads a page placed there are kept
     const notIn = leads.filter(l => !store.getLead(l.id));        // rows not (or no longer) in the pipeline
     const scroll = leads.length > 8 ? ` (all ${leads.length} rows: scroll inside the table)` : '';
     return {
       kind: 'table',
-      title: (asked && leads.length < asked ? `${leads.length} of ${asked} found${query ? ` for "${clip(query, 70)}"` : ''}: ${reason}. Find more continues from here.`
+      title: (asked && leads.length < asked ? `${leads.length} of ${asked} found${placedNote}${query ? ` for "${clip(query, 70)}"` : ''}: ${reason}. Find more continues from here.`
         : `${leads.length} lead${leads.length === 1 ? '' : 's'}${query ? ` for "${clip(query, 80)}"` : ''}`) + scroll,
-      note: asked && leads.length < asked ? `${leads.length} of ${asked} found: ${reason}. Saved in the pipeline as New. Nothing is sent.` : 'Saved in the pipeline as New. Nothing is sent.',
+      note: asked && leads.length < asked ? `${leads.length} of ${asked} found${placedNote}: ${reason}. Saved in the pipeline as New. Nothing is sent.` : 'Saved in the pipeline as New. Nothing is sent.',
       columns: ['Company', 'Contact', 'Value', 'Need', 'Source'],
       rows: leads.map(l => [l.company, contactText(l), money(l.value, l.currency), l.need || 'not checked', mdLink(l.sources?.[0])]),
       rowIds: leads.map(l => l.id),
@@ -54,6 +55,9 @@ export async function activate(ctx) {
     if (ctx.settings.get('online') === false) return { ok: false, offline: true, text: 'The desk is offline. Finding leads needs the internet.' };
     const search = ctx.modules.api('search');
     if (!search?.search || !search?.read) return { ok: false, text: 'Search is switched off, so I cannot look for new leads on the web. Switch on Search in Settings › Modules, or add a lead by hand.' };
+    // one lead search per chat at a time: a repeat (however it is worded) while one from this chat runs gets that job back
+    const running = chatId && ['running', 'waiting'].flatMap(status => ctx.jobs.list({ status, limit: 50 })).find(j => j.kind === 'sales.find' && j.chatId === chatId);
+    if (running) return { ok: true, already: true, jobId: running.id, title: running.title, text: `A lead search is already running for this chat: "${running.title}". Its progress and table will appear here; no second search was started.` };
     const job = await ctx.jobs.start({ kind: 'sales.find', title: `Find ${count} leads: ${clip(query, 60)}`, agentId: 'closer', chatId, input: { query, count },
       async run(job) {
         const card = (detail, progress, status = 'running') => job.card({ kind: 'progress', id: 'sales-find-' + job.id, title: `Finding ${count} leads`, detail, progress, status, jobId: job.id });
@@ -75,12 +79,13 @@ export async function activate(ctx) {
         const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
         ctx.kv.set(memKey, { queries: [...mem.queries, ...r.queries].slice(-200), urls: [...mem.urls, ...r.readUrls].slice(-600) });
         const reason = saved.length < count ? [r.reason || `${r.pagesRead} pages read from ${r.searches} searches`, twice && plural(twice, 'was the same company found twice', 'were the same companies found twice'), wasThere && plural(wasThere, 'was already in your pipeline', 'were already in your pipeline')].filter(Boolean).join('; ') : '';
-        const tableCard = leadsCard(saved, { query, reason, asked: count });
+        const where = r.country?.label || '';
+        const tableCard = leadsCard(saved, { query, reason, asked: count, where });
         card(`read ${r.pagesRead} pages, ${saved.length} leads`, 1, 'done');
         job.card(tableCard);
         const siteLine = r.sites ? ` ${r.sites.own} of ${saved.length} have their own site as the main source${r.sites.emails ? `; ${r.sites.emails} mail address${r.sites.emails === 1 ? '' : 'es'} taken from those sites` : ''}. Contacts a page did not give are marked not checked.` : '';
-        const text = (saved.length >= count ? `Found ${saved.length} leads, each with a page that names it. They are in the pipeline as New. Nothing is sent.`
-          : `${saved.length} of ${count} found: ${reason}. They are in the pipeline as New. Nothing is sent. Press Find more to keep looking from here.`) + siteLine;
+        const text = (saved.length >= count ? `Found ${saved.length} leads, each with a page that names it${where ? ` and places it in ${where}` : ''}. They are in the pipeline as New. Nothing is sent.`
+          : `${saved.length} of ${count} found${where ? ` that could be placed in ${where}` : ''}: ${reason}. They are in the pipeline as New. Nothing is sent. Press Find more to keep looking from here.`) + siteLine;
         return { leadIds: saved.map(l => l.id), sites: r.sites, searches: r.searches, ms: r.ms, rounds: r.rounds, extraRounds: r.extraRounds, found: saved.length, asked: count, pagesRead: r.pagesRead, queries: r.queries, rejected: r.rejected, reason, label: r.label, text, card: tableCard };
       } });
     return { ok: true, jobId: job.id, text: `Looking for ${count} leads now. Progress and the table will appear here.` };

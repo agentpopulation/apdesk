@@ -162,7 +162,10 @@ body.panic .wire::after,body.panic .cursor,body.panic .typing span{animation-pla
   .drawer.open{position:absolute;right:0;top:0;bottom:0;z-index:3;box-shadow:-8px 0 24px rgba(0,0,0,.25)}
   .two,.cols,.crm,.split,.agrid,.levels,.seats,.fx-body,.fx-body.nop{grid-template-columns:minmax(0,1fr)}.list{flex-direction:row;overflow-x:auto}
 }
-@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+/* Reduce motion: no decorative movement (typing dots, spinners, the wire, toasts, page and switch slides). Everything stays shown. */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}
+}
 
 /* ---- shell additions (not in the preview) ---- */
 body{font-size:14px}a{color:var(--accent)}

@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { testDesk } from '../../test/helpers/desk.js';
-import { aggregate, parseRanking, endsWhole, toLastSentence, wholeSentences, agreement } from './stages.js';
+import { aggregate, parseRanking, endsWhole, toLastSentence, wholeSentences, agreement, parseRecommendation, recKey, sameCourse, REC_ASK } from './stages.js';
 import * as stages from './stages.js';
 import { liveSlots, spread, modelNote, figuresNote, FIGURES_NOTE } from './seats.js';
 
@@ -29,7 +29,7 @@ test('council: a run stores answers, rankings and a Verdict; Panic stops a secon
     const job = await t.core.jobs.wait(r.jobId, 10000);
     assert.equal(job.status, 'done', job.error);
     const run = (await t.call('/api/m/council/runs/' + r.runId)).json.run;
-    assert.equal(run.answers.length, 3); assert.equal(run.rankings.length, 3); assert.equal(run.verdict.voteLine, run.verdict.rankLine); assert.match(run.verdict.voteLine, /^Best-argued answer by the seats' own ranking: /); assert.equal(run.verdict.agreeLine, '', 'the labelling reply was not readable, so only the ranking line shows'); assert.ok(run.answers.every(a => a.label));
+    assert.equal(run.answers.length, 3); assert.equal(run.rankings.length, 3); assert.equal(run.verdict.voteLine, run.verdict.rankLine); assert.match(run.verdict.voteLine, /^Best-argued answer by the seats' own ranking: /); assert.equal(run.verdict.agreeLine, '', 'no seat gave a recommendation line, so only the ranking line shows'); assert.ok(run.verdict.notes.includes('No seat gave a clear recommendation, so the Verdict cannot say how far the seats agree; the headline shows how they ranked each other instead.'), run.verdict.notes.join(' | ')); assert.ok(run.answers.every(a => a.label));
     // the fake desk has one model: the result says so, and figures are labelled as not checked
     assert.ok(run.verdict.notes.some(n => /Only one model answered/.test(n)), run.verdict.notes.join(' | ')); assert.ok(run.verdict.notes.includes(FIGURES_NOTE));
     const d = (await t.call('/api/m/council/defaults')).json; assert.equal(d.distinct, 1); assert.match(d.notice, /Only one model is answering now, so all seats will use it/);
@@ -119,16 +119,55 @@ test('council: an answer cut off mid-sentence is continued once, else trimmed to
   } finally { await t.close(); }
 });
 
-test('council: agreement comes from what the seats recommend, counted by code; unsure shows only the ranking line', () => {
-  const names = ['Builder', 'Buyer', 'Judge'];
-  const all = { A: true, B: true, C: true };
-  const reply = (same, sure = true) => ({ courses: { A: 'buy the CRM', B: 'buy the CRM', C: 'build in-house' }, same, sure });
-  assert.equal(agreement(reply({ 'A-B': true, 'A-C': true, 'B-C': true }), names), 'All three seats agree: buy the CRM');
-  assert.equal(agreement(reply({ 'A-B': true, 'A-C': false, 'B-C': false }), names), '2 of 3 seats agree: buy the CRM; Judge differs: build in-house');
-  assert.equal(agreement(reply({ 'A-B': false, 'A-C': false, 'B-C': false }), names), 'The seats disagree');
-  assert.equal(agreement(reply({ 'A-B': true, 'A-C': true, 'B-C': false }), names), '', 'not consistent: not sure');
-  assert.equal(agreement(reply({ 'A-B': true, 'A-C': true, 'B-C': true }, false), names), '', 'the labeller said it is not sure');
-  assert.equal(agreement(null, names), ''); assert.equal(agreement({ courses: all, sure: true }, names), '');
+test('council: each seat\'s recommendation line is read tolerantly, and agreement is counted by code from those lines', () => {
+  assert.equal(parseRecommendation('Buy it, it is cheaper.\nRecommendation: buy the CRM'), 'buy the CRM');
+  assert.equal(parseRecommendation('Build.\n\n**Recommendation:** Build in-house.'), 'Build in-house');
+  assert.equal(parseRecommendation('Wait.\n- Recommendation \u2013 wait for the Q3 quote. Then decide.'), 'wait for the Q3 quote');
+  assert.equal(parseRecommendation('So my recommendation is to buy a ready CRM.'), 'buy a ready CRM');
+  assert.equal(parseRecommendation('<think>Recommendation: no</think>I argue for it.\nRecommendation: "Yes"'), 'Yes');
+  assert.equal(parseRecommendation('I argue for it. It pays back fast.'), null, 'no line, no guess');
+  assert.equal(parseRecommendation('Recommendation: <the course>'), null, 'an echoed template is not a recommendation');
+  assert.equal(parseRecommendation('Recommendation: none'), null);
+  assert.equal(parseRecommendation('buy the CRM', { bare: true }), 'buy the CRM', 'a one-line reply to the second ask counts');
+  assert.equal(parseRecommendation('My position: buy. It costs about 50,000 a year.', { bare: true }), null, 'two sentences are not a bare line');
+  assert.equal(recKey("Don't build it"), 'no build'); assert.equal(recKey('Hold off until March'), 'wait'); assert.equal(recKey('Yes, open it'), 'yes');
+  assert.equal(parseRecommendation('Recommendation: Buying a standard CRM is'), null, 'a line cut off mid-phrase is a miss, so the seat is asked again');
+  assert.ok(sameCourse('Buying a standard CRM', 'buy CRM'), 'one key word whatever its ending'); assert.ok(sameCourse("Don't building", 'do not build'));
+  assert.ok(sameCourse('buy the CRM', 'Buy a ready-made CRM')); assert.ok(!sameCourse('buy the CRM', 'build in-house'));
+  assert.ok(!sameCourse('pay 28 lakh a year', 'pay 20 lakh a year'), 'different figures are different courses');
+  const seats = (...r) => ['Builder', 'Buyer', 'Judge'].map((name, k) => ({ name, recommendation: r[k] ?? null }));
+  assert.equal(agreement(seats('buy the CRM', 'Buy a CRM', 'buy')), 'All three seats agree: buy the CRM');
+  assert.equal(agreement(seats('buy the CRM', 'buy', 'build in-house')), '2 of 3 seats agree: buy the CRM; Judge differs: build in-house');
+  assert.equal(agreement(seats('build', 'buy', 'wait')), 'The seats disagree: Builder: build; Buyer: buy; Judge: wait');
+  assert.equal(agreement(seats('buy the CRM', null, 'buy')), '2 of 3 seats recommend buy the CRM; one seat gave no clear recommendation');
+  assert.equal(agreement(seats('build', null, 'buy')), 'The seats disagree: Builder: build; Judge: buy; one seat gave no clear recommendation');
+  assert.equal(agreement(seats(null, null, 'wait')), '1 of 3 seats recommends wait; two seats gave no clear recommendation');
+  assert.equal(agreement(seats(null, null, null)), '', 'nothing to count: the Verdict falls back to the ranking with a plain note');
+  assert.equal(agreement([{ name: 'Builder', recommendation: 'buy' }, { name: 'Judge', recommendation: 'buy now' }]), 'Both seats that answered agree: buy');
+});
+
+test('council: a seat without a recommendation line is asked once more; one that still gives none is said plainly in the Verdict', async () => {
+  const asked = [];
+  const script = (body) => {
+    const u = body.messages.at(-1).content; const s = body.messages[0].content;
+    if (/chairman/.test(s)) return JSON.stringify({ decision: 'Buy the CRM.', reasons: ['Cheaper'] });
+    if (/review answers/.test(s)) return JSON.stringify({ ranking: ['A', 'B', 'C'] });
+    const seat = s.match(/You are (\w+)/)[1];
+    if (u === REC_ASK) { asked.push(seat); return seat === 'Buyer' ? 'Recommendation: buy a ready CRM' : 'It depends on many things, really. Hard to say.'; }
+    if (seat === 'Builder') return 'Buy it; building costs more.\nRecommendation: buy the CRM';
+    return 'Buying is cheaper this year.';
+  };
+  const t = await testDesk({ modules: ['council'], script });
+  try {
+    const r = (await t.call('/api/m/council/ask', { body: { question: 'Should we build or buy a CRM?' } })).json;
+    assert.equal((await t.core.jobs.wait(r.jobId, 10000)).status, 'done');
+    const run = (await t.call('/api/m/council/runs/' + r.runId)).json.run;
+    assert.deepEqual(asked.sort(), ['Buyer', 'Judge'], 'only the seats without a line are asked, once each');
+    assert.deepEqual(run.answers.map(a => a.recommendation), ['buy the CRM', 'buy a ready CRM', null]);
+    assert.equal(run.verdict.voteLine, '2 of 3 seats recommend buy the CRM; one seat gave no clear recommendation');
+    assert.match(run.verdict.rankLine, /^Best-argued answer by the seats' own ranking: /);
+    assert.ok(!run.verdict.notes.some(n => /No seat gave a clear recommendation/.test(n)));
+  } finally { await t.close(); }
 });
 
 test('council: no code rewrites a sum in an answer (checkArithmetic removed; it flagged correct lakh sums)', () => {
@@ -139,10 +178,9 @@ test('council: the Verdict headline counts the seats\' recommendations, the rank
   const script = (body) => {
     const u = body.messages.at(-1).content; const s = body.messages[0].content;
     if (body.model === 'broken-model') return { status: 500, text: 'down' };
-    if (/label what each answer recommends/.test(s)) return JSON.stringify({ courses: { A: 'buy the CRM', B: 'buy the CRM', C: 'buy the CRM' }, same: { 'A-B': true, 'A-C': true, 'B-C': true }, sure: true });
     if (/chairman/.test(s)) return JSON.stringify({ decision: 'Buy the CRM.', reasons: ['Hiring 2 people at ₹6 lakh each plus ₹3 lakh tools = ₹15 lakh.'], answer: 'Buy.' });
     if (/review answers/.test(s)) return JSON.stringify({ notes: { A: 'ok' }, ranking: ['A', 'B', 'C'] });
-    return 'Buy the CRM. At 1,500 × 10 × 12 = 18,000 rupees a year it is cheaper than building.';
+    return 'Buy the CRM. At 1,500 × 10 × 12 = 18,000 rupees a year it is cheaper than building.\nRecommendation: buy the CRM';
   };
   const t = await testDesk({ modules: ['council'], script });
   try {
@@ -153,7 +191,7 @@ test('council: the Verdict headline counts the seats\' recommendations, the rank
     assert.match(run.verdict.rankLine, /^Best-argued answer by the seats' own ranking: (Builder|Buyer|Judge|\w+)/);
     assert.ok(!/agreed \d+ to \d+/.test(JSON.stringify(run.verdict)));
     // a case the earlier rule got wrong: a correct lakh sum was flagged; now no seat answer or Verdict line is changed by code
-    for (const a of run.answers) assert.equal(a.text, 'Buy the CRM. At 1,500 × 10 × 12 = 18,000 rupees a year it is cheaper than building.');
+    for (const a of run.answers) assert.equal(a.text, 'Buy the CRM. At 1,500 × 10 × 12 = 18,000 rupees a year it is cheaper than building.\nRecommendation: buy the CRM');
     assert.equal(run.verdict.reasons[0], 'Hiring 2 people at ₹6 lakh each plus ₹3 lakh tools = ₹15 lakh.');
     assert.ok(!/does not add up/.test(JSON.stringify(run)));
     assert.ok(run.verdict.notes.includes(FIGURES_NOTE), 'the figures note tells the owner the figures are not checked');

@@ -10,7 +10,7 @@ built and tested on Linux. An earlier build was run and tested on Windows 11 on 
 been re-run there.
 
 ### Published as open source (15 Nov 2026)
-- Licence: Apache License 2.0. `LICENSE` and `NOTICE` added; copyright Agent Population.
+- Licence: Apache License 2.0. `LICENSE` and `NOTICE` added; copyright AgentPopulation.
 - New README with pictures; the zip keeps its own plain README (`tools/zip-readme.md`).
 - Build notes that only made sense on the first build computer were removed; `ATTRIBUTION.md` now lists third-party work only.
 
@@ -43,11 +43,25 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Research never cites a reference-list entry, and compares two values only when both carry the same unit.
 - Leads: a firm named "X Enterprises" is not treated as enterprise-only; company names in every script are kept apart; a company a page plainly places in another country is left out.
 
+### Later on 15 Nov 2026
+- One-file starters: `start.sh` for Linux and `start.command` for Mac, next to `start.bat`. The first start installs the packages and opens the desk in the browser. Run on Linux; not yet run on a Mac.
+- Lead search: when the ask names a country, a lead is kept only if a page that was read places the company there. Its findings say what placed it, and a shortfall reads "N of M found that could be placed in India".
+- Lead search: a repeat request in the same chat while a search is running returns that search instead of starting a second one.
+- Council: each seat now ends its answer with a one-line recommendation, and the Verdict counts agreement from those lines. A seat that gives none is said plainly ("2 of 3 seats recommend X; one seat gave no clear recommendation") instead of the agreement line being dropped.
+- Panic no longer makes waiting approvals vanish. They are listed under "Stopped by Panic" (in Waiting for you and Settings › Security) with Dismiss and Dismiss all, and one notice after Resume says how many were cancelled. Nothing is approved or resumed by itself.
+- PDF text in previews, file reading and Knowledge now comes from the shipped pdf.js reader; PDFs made by the desk's own Office module no longer read as garbled text.
+- Models › Per agent: the main-model select shows "Desk default"; hover it to see the full model chain.
+- With "reduce motion" set in the system, the desk stops its decorative animations.
+- Windows zip trimmed from 39.9 MB to 18.4 MB: packages ship without type declarations, source maps, docs, tests, examples or browser-only builds. Every module and heavy package was checked from the unzipped copy.
+- Sales tests and fixtures use invented companies and domains only.
+
 ### Known weak points
 - No run of the 17 acceptance asks has passed every ask. Results vary with the free model that answers.
 - In the last full run (14 Nov 2026) two asks failed: the compare-table reply stated values the file marks "not checked", and the lead search returned some companies from the wrong country.
 - Free models can be slow or busy: on 15 Nov 2026 one plain chat question got no answer in over four minutes.
 - A table inside a chat reply can show as plain text (seen 15 Nov 2026).
+- PDF documents made by the Office module leave out Hindi and other Indian-script text: the built-in PDF font has no such letters (seen 15 Nov 2026).
+- The "Stopped by Panic" list shows in the top-bar pop-up and in Settings › Security, not yet on Home or Tasks.
 - Ask 2 (offline with a local model) has never been checked: no test run so far had Ollama installed.
 - Small local models (4B, 8B): not checked.
 - Offline does not cover programs the desk starts as separate processes, mail servers, or DNS lookups.

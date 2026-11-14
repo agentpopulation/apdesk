@@ -2,7 +2,7 @@
 // what code can check on the fetched text (the company is named there; a contact or address only if it is on the page).
 // Rules: never invent a company, contact, email or number; a news site, directory or shop is not itself a lead;
 // anything a page did not say stays empty.
-import { hostKind, hostOf, skipSource, notACompany, isPublisher, looksLikeSeller, buyerAsk, textNames, textHas, emailIn, normName, coreName, companyKey, siteMatches, emailsOn, sentenceNaming, strictEmail, topicWords, sameBusiness, sameCompany, namesCompany, sameSeller, askCountry, siteCountry, wrongCountrySite, needOnPage, emailCountry, aboutSameBusiness, siteRoot, segmentClash, placedElsewhere } from './rules.js';
+import { hostKind, hostOf, skipSource, notACompany, isPublisher, looksLikeSeller, buyerAsk, textNames, textHas, emailIn, normName, coreName, companyKey, siteMatches, emailsOn, sentenceNaming, strictEmail, topicWords, sameBusiness, sameCompany, namesCompany, sameSeller, askCountry, siteCountry, wrongCountrySite, needOnPage, emailCountry, aboutSameBusiness, siteRoot, segmentClash, placedElsewhere, placedIn, listPlaces } from './rules.js';
 
 const clip = (v, n) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 const PAGE_CHARS = 4000;
@@ -31,7 +31,7 @@ Strict rules:
 - The site that published the page (a news site, a directory, a shop, an encyclopedia) is "publisher" unless the page is about that company itself.
 - contact_name, contact_role, email, website: only when the page text gives them, copied exactly; otherwise "".
 - need: one short line on why this company fits, from what the page says. quote: a short exact phrase from the page that describes the company.
-- fits: true only when the page shows the company matches the ask (sector, what it makes or does, place). When the ask names a country or place for the companies ("Indian companies", "companies in Pune"), fits is false for a company the page shows is based elsewhere, unless the page names its own unit there (for example "Siemens India").
+- fits: true only when the page shows the company matches the ask (sector, what it makes or does, place). When the ask names a country or place for the companies ("Indian companies", "companies in Pune"), fits is false for a company the page shows is based elsewhere, unless the page names its own unit there (for example "Kestrel India").
 Reply with JSON only: {"leads": [{"page": 1, "company": "", "kind": "company", "website": "", "contact_name": "", "contact_role": "", "email": "", "need": "", "quote": "", "fits": true}]}`;
 
 /** Ask the model which companies these pages name. pages: [{ n, url, title, text }] */
@@ -68,10 +68,15 @@ export function checkRow(row, page, { query, buyerProduct }) {
   if (segmentClash(query, `${need} ${quoteOk ? row.quote : ''}`)) return { reject: 'does not fit' };
   // the ask names a country and the page's own sentences about this company plainly place it elsewhere, with no sign of that country
   const about = String(page.text || '').replace(/\s+/g, ' ').split(/(?<=[.!?])\s+/).filter(x => textNames(x, company)).join(' ');
-  if (placedElsewhere(about, company, askCountry(query))) return { reject: 'does not fit' };
+  const country = askCountry(query);
+  if (placedElsewhere(about, company, country)) return { reject: 'does not fit' };
   const hk = hostKind(page.url);
   const findings = [need, quoteOk ? `The page says: "${clip(row.quote, 240)}"` : '', `From ${page.title || hostOf(page.url)}${hk ? ` (${hk} page)` : ''}.`].filter(Boolean).join(' ');
-  return { company, contactName, contactRole, email, website, need, findings, sources: [{ title: clip(page.title || hostOf(page.url), 200), url: page.url }], query };
+  const lead = { company, contactName, contactRole, email, website, need, findings, sources: [{ title: clip(page.title || hostOf(page.url), 200), url: page.url }], query };
+  // the ask names a country: what on this page places the company there (its sentences, or the page being a list of that country's companies)
+  const placed = country ? placedIn(page.text, company, country) || listPlaces(page, country) : '';
+  if (placed) lead.placed = { words: clip(placed, 120), url: page.url };
+  return lead;
 }
 
 /** More search wordings when the first round runs dry: by city, by product type, by association members, by kind. */
@@ -104,6 +109,7 @@ const WHY = {
   'already in your pipeline': (n) => `${n} ${n === 1 ? 'was' : 'were'} already in your pipeline and skipped`,
   'a seller, the ask wants buyers': (n) => `${n} ${n === 1 ? 'was a seller' : 'were sellers'}, and you asked for buyers`,
   'model failed on a batch': (n) => `the model failed on ${n} batch${n === 1 ? '' : 'es'} of pages`,
+  'not placed in the country': (n, country) => `${n} ${n === 1 ? 'was' : 'were'} left out because no page read placed ${n === 1 ? 'it' : 'them'} in ${country?.label || 'the country asked for'}`,
 };
 
 /**
@@ -121,7 +127,7 @@ export async function findLeads({ query, count = 20, search, model, agentId = 'c
   const B = { pages: Math.min(90, Math.max(12, target * 3)), searches: Math.min(50, 12 + target), totalMs: (budget.totalMinutes ?? 14) * 60000, firstMs: (budget.searchMinutes ?? 8) * 60000, extraRounds: 3, firstRounds: 3, ...budget };
   if (budget.siteMinutes === 0) B.noSites = true;
   const left = () => B.totalMs - (Date.now() - t0);
-  const buyerProduct = buyerAsk(query);
+  const buyerProduct = buyerAsk(query); const country = askCountry(query);
   const used = []; const usedSet = new Set(skipQueries.map(q => q.toLowerCase()));
   const queue = []; const seenUrl = new Set(skipUrls); const readUrls = [];
   let searches = 0;
@@ -162,7 +168,7 @@ export async function findLeads({ query, count = 20, search, model, agentId = 'c
       if (lead.reject) { bump(lead.reject); continue; }
       const key = companyKey(lead.company) || normName(lead.company);
       const twin = [...final, ...pool, ...held].find(x => sameCompany(x.company, lead.company, askWords));
-      if (twin || seenNames.some(n => sameCompany(n, lead.company, askWords))) { bump('merged as the same company'); if (twin && !twin.sources.some(s => s.url === page.url) && twin.sources.length < 4) twin.sources.push(lead.sources[0]); continue; }
+      if (twin || seenNames.some(n => sameCompany(n, lead.company, askWords))) { bump('merged as the same company'); if (twin && !twin.sources.some(s => s.url === page.url) && twin.sources.length < 4) twin.sources.push(lead.sources[0]); if (twin && !twin.placed && lead.placed) twin.placed = lead.placed; continue; }
       if (known(lead.company, key, askWords)) { bump('already in your pipeline'); seenNames.push(lead.company); continue; }
       seenNames.push(lead.company);
       if (pool.filter(x => x.sources[0]?.url === page.url).length >= perPage) held.push(lead); else pool.push(lead);
@@ -228,21 +234,25 @@ export async function findLeads({ query, count = 20, search, model, agentId = 'c
     if (cand.siteSaid && segmentClash(query, `${cand.need} ${cand.siteSaid}`)) { bump('does not fit'); continue; }
     delete cand.siteSaid;
     if (cand.elsewhere) { bump('does not fit'); continue; }
+    // the ask names a country and no page that was read places this company there: left out, never shown as checked
+    if (country && !cand.placed) { bump('not placed in the country'); continue; }
     // a seller already in the pipeline (same company, or the same own site) is skipped and does not count
     if (pipeline.some(x => sameCompany(x.company, cand.company, askWords) || (cand.ownSite && sameSeller(x, cand)))) { bump('already in your pipeline'); continue; }
     const twin = final.find(x => sameSeller(x, cand, askWords) || sameCompany(x.company, cand.company, askWords));
     if (twin) { mergePair(final, final.indexOf(twin), cand, askWords); bump('merged as the same company'); continue; }
     final.push(cand);
   }
+  // what placed each lead in the ask's country is said in its findings
+  for (const l of final) { if (country && l.placed) l.findings = `${l.findings} Placed in ${country.label} by "${l.placed.words}" (${l.placed.url}).`.trim(); delete l.placed; }
   const leads = final;
   onProgress({ pages: pagesRead, leads: leads.length, p: 0.97, detail: `read ${pagesRead} pages, ${leads.length} leads` });
   let reason = '';
   if (leads.length < count) {
-    const why = Object.entries(rejected).sort((a, b) => (b[0] === 'already in your pipeline') - (a[0] === 'already in your pipeline') || b[1] - a[1]).map(([k, v]) => (WHY[k] ? WHY[k](v) : `${v}: ${k}`)).slice(0, 4);
+    const why = Object.entries(rejected).sort((a, b) => (b[0] === 'already in your pipeline') - (a[0] === 'already in your pipeline') || b[1] - a[1]).map(([k, v]) => (WHY[k] ? WHY[k](v, country) : `${v}: ${k}`)).slice(0, 4);
     const stop = signal?.aborted ? 'stopped' : pagesRead >= B.pages ? `the page budget (${B.pages}) was spent` : searches >= B.searches ? `the search budget (${B.searches}) was spent` : left() < 60000 ? `the time limit (${Math.round(B.totalMs / 60000)} minutes) was reached` : `${extra} extra search round${extra === 1 ? '' : 's'} found no more new companies`;
     reason = `${pagesRead} pages read from ${searches} searches; ${why.length ? why.join(', ') + '; ' : ''}${stop}`;
   }
-  return { leads, pagesRead, searches, queries: used, readUrls, rejected, label, reason, buyerProduct, sites, ms: Date.now() - t0, rounds: round, extraRounds: extra };
+  return { leads, pagesRead, searches, queries: used, readUrls, rejected, label, reason, buyerProduct, country, sites, ms: Date.now() - t0, rounds: round, extraRounds: extra };
 }
 
 const SITE_PATHS = ['/contact-us', '/contact', '/about-us'];
@@ -263,10 +273,10 @@ export async function checkSites({ leads, search, query = '', fetchHtml = null, 
       let cands = [];
       if (lead.website && siteMatches(lead.company, lead.website) && !wrongCountrySite(lead.website, country)) cands.push(lead.website);
       if (!cands.length) {
-        // search with the field words, so "Beehive hr payroll" finds the HR software company, not a namesake
+        // search with the field words, so "Hivelink hr payroll" finds the HR software company, not a namesake
         const hits = await search.search(`${lead.company} ${field.slice(0, 3).join(' ')} official website`.replace(/\s+/g, ' '), { count: 6, signal }).catch(() => []);
         cands = (hits || []).map(h => String(h?.url || '')).filter(u => /^https?:\/\//.test(u) && !hostKind(u) && !skipSource(u) && siteMatches(lead.company, u));
-        // never a site of another country than the ask's (sunpharma.de for an Indian company); the ask's own country first
+        // never a site of another country than the ask's (northwind-pharma.de for an Indian company); the ask's own country first
         const dropped = cands.filter(u => wrongCountrySite(u, country)).length; wrongCountry += dropped;
         cands = cands.filter(u => !wrongCountrySite(u, country)).sort((a, b) => (siteCountry(b) === country?.tld ? 1 : 0) - (siteCountry(a) === country?.tld ? 1 : 0));
       }
@@ -304,6 +314,8 @@ export async function checkSites({ leads, search, query = '', fetchHtml = null, 
       lead.ownSite = true;
       // its own site plainly says it is headquartered or based in another country than the ask's, with no sign of that one
       if (siteCountry(origin) !== country?.tld && placedElsewhere(text, lead.company, country)) lead.elsewhere = true;
+      // what on its own site places it in the ask's country: a site of that country (acme.co.in), or its own words or phone code
+      if (country && !lead.placed) { const words = siteCountry(origin) === country.tld ? `its own site ${host}` : placedIn(text, lead.company, country, { own: true }); if (words) lead.placed = { words: clip(words, 120), url: home.url }; }
     } catch (e) { if (signal?.aborted) break; }
   }
   onProgress(leads.length, leads.length);
@@ -319,6 +331,7 @@ export function mergePair(final, i, drop, askWords = []) {
   keep.need = clip(`${base}${base ? '. ' : ''}Also listed as ${drop.company}.`, 400);
   for (const src of drop.sources || []) if (!keep.sources.some(x => x.url === src.url) && keep.sources.length < 4) keep.sources.push(src);
   if (!keep.email && drop.email) keep.email = drop.email;
+  if (!keep.placed && drop.placed) keep.placed = drop.placed;
   final[i] = keep;
 }
 /** Merge leads of one seller in place (see rules.sameSeller). Keeps the row whose text fits the ask best; returns how many were merged away. */

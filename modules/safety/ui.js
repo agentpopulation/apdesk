@@ -48,6 +48,12 @@ export const settings = {
   security: { title: 'Security', async render(el, ui) {
     const { h, card, line, btn, pill, api, toast, empty } = ui;
     await ui.coreSettingsSections.security.render(el, ui);
+    // Stopped by Panic: right after "Waiting for you"; shown only while there is something to dismiss
+    const stopped = h('div');
+    const waitCard = [...el.querySelectorAll('.card')].find(c => c.querySelector('h3')?.textContent === 'Waiting for you');
+    if (waitCard) waitCard.after(stopped); else el.append(stopped);
+    const paintStopped = async () => { if (ui.refreshStopped) await ui.refreshStopped(); stopped.replaceChildren(...[ui.stoppedSection?.()].filter(Boolean)); };
+    paintStopped(); ui.on('approval', paintStopped); ui.on('panic', paintStopped);
     // Fine-tune: read-only, from the door's own table
     const fine = h('div');
     const paintFine = async () => {

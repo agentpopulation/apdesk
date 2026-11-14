@@ -7,7 +7,7 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 const out = process.argv[2] || path.join(os.tmpdir(), 'apd-sales-ui'); fs.mkdirSync(out, { recursive: true });
 const results = []; const check = (n, ok, ev = '') => { results.push(!!ok); console.log(`${ok ? 'PASS' : 'FAIL'}  ${n}  ${ev}`); };
 const t = await testDesk({ modules: ['sales', 'mail', 'calendar'] });
-const names = ['Northgate Logistics', 'Kaveri Foods', 'Sahyadri Pharma', 'Coastal Cold Chain', 'Meridian Textiles', 'Orbit Components', 'Deccan Motors', 'Larsen & Toubro', 'ABB India', 'Siemens Ltd', 'Honeywell Automation India', 'Schneider Electric India', 'Yokogawa India', 'Fanuc India', 'Omron Automation', 'Bosch Rexroth India', 'Beckhoff Automation', 'Danfoss India'];
+const names = ['Northgate Logistics', 'Kaveri Foods', 'Sahyadri Pharma', 'Coastal Cold Chain', 'Meridian Textiles', 'Orbit Components', 'Deccan Motors', 'Harlow & Penn', 'Orion Drives India', 'Kestrel Ltd', 'Marlow Automation India', 'Tarang Electric India', 'Vellore Controls', 'Sahyog Robotics', 'Nilgiri Automation', 'Konkan Hydraulics', 'Ridgeway Automation', 'Pallava Valves'];
 for (const [i, c] of names.entries()) {
   const r = await t.call('/api/m/sales/leads', { body: { company: c, contactName: i % 3 ? '' : 'R. Menon', contactRole: i % 3 ? '' : 'Operations head', valueMinor: i % 4 ? (i + 3) * 120000 : null, need: 'Warehouse automation', sources: [{ title: 'Top automation companies', url: 'https://example.com/list' }], findings: 'The page lists them among industrial automation makers.' } });
   if (i % 4 === 1) await t.call(`/api/m/sales/leads/${r.json.lead.id}/move`, { body: { stage: 'Researched' } });
