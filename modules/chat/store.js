@@ -1,5 +1,5 @@
 // Chats and messages in m_chat_* tables. Cards live inside messages, so they survive a closed browser and a restart.
-import { previewText } from './ui-text.js';
+import { previewText, cutAtWord } from './ui-text.js';
 const now = () => new Date().toISOString();
 const j = (x, f) => { try { return x ? JSON.parse(x) : f; } catch { return f; } };
 
@@ -48,7 +48,7 @@ export function makeStore(ctx) {
     setMembers(id, members) { db.run('UPDATE m_chat_chats SET members = ?, updated = ? WHERE id = ?', members === null ? null : JSON.stringify(members), now(), id); return s.chat(id); },
     setSettings(id, patch) { const c = s.chat(id); db.run('UPDATE m_chat_chats SET opts = ? WHERE id = ?', JSON.stringify({ ...c.settings, ...patch }), id); return s.chat(id); },
     remove(id) { db.run('DELETE FROM m_chat_messages WHERE chat_id = ?', id); db.run('DELETE FROM m_chat_chats WHERE id = ?', id); },
-    touch(id, last) { db.run('UPDATE m_chat_chats SET updated = ?, last = ? WHERE id = ?', now(), previewText(last).slice(0, 140), id); },
+    touch(id, last) { db.run('UPDATE m_chat_chats SET updated = ?, last = ? WHERE id = ?', now(), cutAtWord(previewText(last), 140), id); },
     messages(chatId, { limit = 200, after = 0 } = {}) {
       return db.all('SELECT * FROM (SELECT * FROM m_chat_messages WHERE chat_id = ? AND id > ? ORDER BY id DESC LIMIT ?) ORDER BY id', chatId, Number(after) || 0, limit).map(msgRow);
     },

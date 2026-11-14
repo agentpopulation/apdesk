@@ -33,6 +33,8 @@ export async function activate(ctx) {
         const onDelta = (d) => { chars += d.length; const t = Date.now(); if (t - lastTick > 1500) { lastTick = t; job.progress(Math.min(0.9, 0.1 + chars / 6000), `Writing the answer (${Math.round(chars / 5)} words so far)`); } };
         const out = await turn(ctx, { chatId, agentId: agent, text, signal: job.signal, onDelta, note: `Background task: ${name}` });
         job.throwIfStopped();
+        // a turn that did not do what it was asked ends the task as failed, with its plain-words reason
+        if (out.unfinished) throw Object.assign(new Error(out.unfinished), { code: 'unfinished' });
         // When the turn posted in the chat, `text` is left out so the Chat module does not post the same answer twice.
         const files = (out.cards || []).filter(c => c && ['file', 'report'].includes(c.kind)).slice(0, 6);
         return { answer: out.text, label: out.label, chatId: out.chatId || null, delivered: out.posted || (out.chatId && ctx.modules.api('chat')) ? 'chat' : 'job', files, ...(out.posted ? {} : { text: out.text }) };

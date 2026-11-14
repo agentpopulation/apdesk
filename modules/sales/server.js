@@ -2,8 +2,8 @@
 // Nothing is sent from here: an approved draft is handed to Mail, which asserts the send.person approval right before sending.
 import { SalesStore, STAGES, CHANNELS, stageId, stageLabel } from './store.js';
 import { parseDraftReply } from './parse.js';
-import { findLeads, closingLine, leadCounts } from './find.js';
-import { companyKey, sameCompany } from './rules.js';
+import { findLeads, closingLine, leadCounts, groupLine, cutWords } from './find.js';
+import { companyKey, sameCompany, askCountry } from './rules.js';
 import { unsupportedClaims, removeSentences, senderNameProblems, stripSenderNames, greetingNameProblems, fillerSentences, plainDefault, languageOf, scriptProblem } from './claims.js';
 
 const clip = (v, n) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
@@ -20,26 +20,38 @@ export async function activate(ctx) {
   const money = (minor, cur) => { if (minor == null) return 'not checked'; try { return new Intl.NumberFormat(ctx.settings.get('locale') || 'en-IN', { style: 'currency', currency: cur || currency(), maximumFractionDigits: 0 }).format(minor / 100); } catch { return `${cur} ${minor / 100}`; } };
   const mdLink = (s) => s ? `[${String(s.title || s.url).replace(/[[\]]/g, '')}](${s.url})` : 'not checked';
 
-  function leadsCard(leads, { query, reason, asked, where = '' } = {}) {
-    const placedNote = where ? ` that could be placed in ${where}` : '';   // the ask named a country: only leads a page placed there are kept
-    const notIn = leads.filter(l => !store.getLead(l.id));        // rows not (or no longer) in the pipeline
+  const OPEN_GROUP = 'Not checked: no page read said where these are or what they sell';
+  /** One table card. all: every row shown (both groups), for the title and the buttons; open: this card is the not-checked group. */
+  function leadsCard(leads, { query, reason, asked, where = '', all = leads, open = false, first = true, last = true } = {}) {
+    const placedNote = where && !all.some(l => l.unchecked?.length) ? ` that could be placed in ${where}` : '';   // only when every row shown was placed there
+    const notIn = all.filter(l => !store.getLead(l.id));        // rows not (or no longer) in the pipeline
     const scroll = leads.length > 8 ? ` (all ${leads.length} rows: scroll inside the table)` : '';
+    const short = asked && all.length < asked;
+    const head = short ? `${all.length} of ${asked} found${placedNote}${query ? ` for "${cutWords(query, 70)}"` : ''}: ${reason}. Find more continues from here.`
+      : `${all.length} lead${all.length === 1 ? '' : 's'}${query ? ` for "${cutWords(query, 80)}"` : ''}`;
     return {
       kind: 'table',
-      title: (asked && leads.length < asked ? `${leads.length} of ${asked} found${placedNote}${query ? ` for "${clip(query, 70)}"` : ''}: ${reason}. Find more continues from here.`
-        : `${leads.length} lead${leads.length === 1 ? '' : 's'}${query ? ` for "${clip(query, 80)}"` : ''}`) + scroll,
-      note: asked && leads.length < asked ? `${leads.length} of ${asked} found${placedNote}: ${reason}. Saved in the pipeline as New. Nothing is sent.` : 'Saved in the pipeline as New. Nothing is sent.',
-      columns: ['Company', 'Contact', 'Value', 'Need', 'Source'],
-      rows: leads.map(l => [l.company, contactText(l), money(l.value, l.currency), l.need || 'not checked', mdLink(l.sources?.[0])]),
+      title: (open ? (first ? `${head}. ${OPEN_GROUP}` : OPEN_GROUP) : head) + scroll,
+      note: !last ? '' : short ? `${all.length} of ${asked} found${placedNote}: ${reason}. Saved in the pipeline as New. Nothing is sent.` : 'Saved in the pipeline as New. Nothing is sent.',
+      columns: ['Company', 'Contact', 'Value', 'Need', ...(open ? ['Not checked'] : []), 'Source'],
+      rows: leads.map(l => [l.company, contactText(l), money(l.value, l.currency), (l.unchecked || []).some(x => /^What it sells/.test(x)) ? 'not checked' : l.need || 'not checked', ...(open ? [(l.unchecked || []).join('; ')] : []), mdLink(l.sources?.[0])]),
       rowIds: leads.map(l => l.id),
       rowActions: [{ label: 'Draft', tool: 'outreach_draft', args: { leadIds: ['$row'] } }],
-      actions: [
+      actions: !last ? [] : [
         ...(notIn.length ? [{ label: 'Add all to pipeline', tool: 'lead_add', args: { leadIds: notIn.map(l => l.id) } }] : []),
-        { label: 'Draft outreach for all', tool: 'outreach_draft', args: { leadIds: leads.map(l => l.id) } },
-        { label: 'Find more', tool: 'leads_find', args: { query, count: asked && leads.length < asked ? asked - leads.length : 10, more: true } },
+        { label: 'Draft outreach for all', tool: 'outreach_draft', args: { leadIds: all.map(l => l.id) } },
+        { label: 'Find more', tool: 'leads_find', args: { query, count: short ? asked - all.length : 10, more: true } },
         { label: 'Open Sales', go: '#/sales' },
       ],
     };
+  }
+  /** The leads shown as two groups kept apart: checked rows in the first table, then a labelled table of not-checked ones. */
+  function leadsCards(leads, opts = {}) {
+    const checked = leads.filter(l => !l.unchecked?.length); const open = leads.filter(l => l.unchecked?.length);
+    const cards = [];
+    if (checked.length || !open.length) cards.push(leadsCard(checked, { ...opts, all: leads, last: !open.length }));
+    if (open.length) cards.push(leadsCard(open, { ...opts, all: leads, open: true, first: !cards.length }));
+    return cards;
   }
   // Our own card (ui.js chatCards 'sales.draft'): an email shows "Approve and send" (the approval is asked only on that press);
   // any other channel is copy-only: the text and a Copy button, no approval, nothing can send it.
@@ -58,7 +70,7 @@ export async function activate(ctx) {
     // one lead search per chat at a time: a repeat (however it is worded) while one from this chat runs gets that job back
     const running = chatId && ['running', 'waiting'].flatMap(status => ctx.jobs.list({ status, limit: 50 })).find(j => j.kind === 'sales.find' && j.chatId === chatId);
     if (running) return { ok: true, already: true, jobId: running.id, title: running.title, text: `A lead search is already running for this chat: "${running.title}". Its progress and table will appear here; no second search was started.` };
-    const job = await ctx.jobs.start({ kind: 'sales.find', title: `Find ${count} leads: ${clip(query, 60)}`, agentId: 'closer', chatId, input: { query, count },
+    const job = await ctx.jobs.start({ kind: 'sales.find', title: `Find ${count} leads: ${cutWords(query, 60)}`, agentId: 'closer', chatId, input: { query, count },
       async run(job) {
         const card = (detail, progress, status = 'running') => job.card({ kind: 'progress', id: 'sales-find-' + job.id, title: `Finding ${count} leads`, detail, progress, status, jobId: job.id });
         card('Planning searches', 0.02);
@@ -75,20 +87,24 @@ export async function activate(ctx) {
         // earlier in this same job is the same company found twice, never called "already in your pipeline"
         const before = new Set(store.listLeads().map(l => l.id));
         let wasThere = 0, twice = 0;
-        const saved = r.leads.map(l => store.addLead({ ...l, stage: 'new', foundBy: 'Closer' }, { who: 'Closer' })).filter(l => { if (!l.duplicate) return true; if (before.has(l.id)) wasThere++; else twice++; return false; });
+        const saved0 = r.leads.map(l => store.addLead({ ...l, stage: 'new', foundBy: 'Closer' }, { who: 'Closer' })).filter(l => { if (!l.duplicate) return true; if (before.has(l.id)) wasThere++; else twice++; return false; });
+        const saved = [...saved0.filter(l => !l.unchecked?.length), ...saved0.filter(l => l.unchecked?.length)];   // checked first: "top n" takes them first
         const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
         ctx.kv.set(memKey, { queries: [...mem.queries, ...r.queries].slice(-200), urls: [...mem.urls, ...r.readUrls].slice(-600) });
         const reason = saved.length < count ? [r.reason || `${r.pagesRead} pages read from ${r.searches} searches`, twice && plural(twice, 'was the same company found twice', 'were the same companies found twice'), wasThere && plural(wasThere, 'was already in your pipeline', 'were already in your pipeline')].filter(Boolean).join('; ') : '';
         const where = r.country?.label || '';
-        const tableCard = leadsCard(saved, { query, reason, asked: count, where });
+        const cards = leadsCards(saved, { query, reason, asked: count, where });
         card(`read ${r.pagesRead} pages, ${saved.length} leads`, 1, 'done');
-        job.card(tableCard);
+        for (const c of cards) job.card(c);
         // every number in this line is counted over the rows saved and shown now (closingLine), never over candidates checked
         const siteLine = saved.length ? ' ' + closingLine(saved) : '';
         const sites = { ...(r.sites || {}), ...leadCounts(saved) };
-        const text = (saved.length >= count ? `Found ${saved.length} leads, each with a page that names it${where ? ` and places it in ${where}` : ''}. They are in the pipeline as New. Nothing is sent.`
-          : `${saved.length} of ${count} found${where ? ` that could be placed in ${where}` : ''}: ${reason}. They are in the pipeline as New. Nothing is sent. Press Find more to keep looking from here.`) + siteLine;
-        return { leadIds: saved.map(l => l.id), sites, searches: r.searches, ms: r.ms, rounds: r.rounds, extraRounds: r.extraRounds, found: saved.length, asked: count, pagesRead: r.pagesRead, queries: r.queries, rejected: r.rejected, reason, label: r.label, text, card: tableCard };
+        // two groups: both numbers, never blurred; "places it in" only when every row shown was placed there
+        const allPlaced = where && !saved.some(l => l.unchecked?.length);
+        const groups = saved.length ? groupLine(saved, { country: r.country, kindAsk: r.kindAsk, asked: count }) : '';
+        const text = (saved.length >= count ? `Found ${saved.length} leads, each with a page that names it${allPlaced ? ` and places it in ${where}` : ''}.${groups ? ' ' + groups : ''} They are in the pipeline as New. Nothing is sent.`
+          : `${saved.length} of ${count} found${allPlaced ? ` that could be placed in ${where}` : ''}: ${reason}.${groups ? ' ' + groups : ''} They are in the pipeline as New. Nothing is sent. Press Find more to keep looking from here.`) + siteLine;
+        return { leadIds: saved.map(l => l.id), sites, searches: r.searches, ms: r.ms, rounds: r.rounds, extraRounds: r.extraRounds, found: saved.length, asked: count, pagesRead: r.pagesRead, queries: r.queries, rejected: r.rejected, reason, label: r.label, text, card: cards[0], tables: cards };
       } });
     return { ok: true, jobId: job.id, text: `Looking for ${count} leads now. Progress and the table will appear here.` };
   }
@@ -156,7 +172,13 @@ export async function activate(ctx) {
     const lang = languageOf(language);
     const langRule = lang && lang.name !== 'English' ? ` Write the whole message${channel === 'email' ? ', subject and body,' : ''} in ${lang.name}${lang.script ? `, in ${lang.script} script` : ''}; only names of companies and people, numbers and addresses may stay as they are.` : '';
     const email = channel === 'email';
-    const facts = [offer ? `What the owner offers, in his words (the only claims you may make about him): ${offer}` : 'What the owner offers: not given.', business && `The owner's business: ${business}`, `Company: ${lead.company}`, lead.contactName && `Contact: ${lead.contactName}${lead.contactRole ? ', ' + lead.contactRole : ''}`, lead.need && `Why they may fit: ${lead.need}`, lead.findings && `What a page said: ${clip(lead.findings, 700)}`, lead.sources?.[0] && `Source: ${lead.sources[0].title}`, lead.notes && `Owner's notes: ${clip(lead.notes, 400)}`].filter(Boolean).join('\n');
+    // a not-checked lead: what no page said is passed as "not checked" and its need and findings (which name the ask's place
+    // or product) are left out, so the draft cannot state them; the contact is handled the same way
+    const placeOpen = (lead.unchecked || []).some(x => /^Country/.test(x)); const sellsOpen = (lead.unchecked || []).some(x => /^What it sells/.test(x));
+    const open = placeOpen || sellsOpen;
+    const facts = [offer ? `What the owner offers, in his words (the only claims you may make about him): ${offer}` : 'What the owner offers: not given.', business && `The owner's business: ${business}`, `Company: ${lead.company}`, lead.contactName && `Contact: ${lead.contactName}${lead.contactRole ? ', ' + lead.contactRole : ''}`,
+      placeOpen && 'Where the company is based: not checked. No page read said it: do not say or suggest where they are.', sellsOpen && 'What the company sells: not checked. No page read said it: do not say or suggest what they sell or make.',
+      !open && lead.need && `Why they may fit: ${lead.need}`, !open && lead.findings && `What a page said: ${clip(lead.findings, 700)}`, lead.sources?.[0] && `Source: ${open ? 'a page that names them' : lead.sources[0].title}`, lead.notes && `Owner's notes: ${clip(lead.notes, 400)}`].filter(Boolean).join('\n');
     const rules = offer
       ? 'Use only the facts given. About the owner, say only what his offer text says: never add clients, results, numbers, awards, experience or "we have helped".'
       : 'The owner gave no offer text, so the message does three things only: introduce the owner by name, say why this company (from what the page said about them), and ask for a short call. Nothing else: no claims about the owner, no clients, results, numbers, awards, experience, relationships, products, "I work with" or "we have helped", and no filler such as "see how you approach" or "since you are working with this product".';
@@ -178,7 +200,10 @@ export async function activate(ctx) {
       throw Object.assign(new Error(`the model's reply could not be read as ${email ? 'a subject and a message' : 'a message'} (${why}), twice`), { code: 'bad_reply' });
     };
     let w = await ask('');
-    const problems = (x) => [...unsupportedClaims(`${x.subject}. ${x.body}`, support), ...fillerSentences(x.body), ...senderNameProblems(x.body, owner), ...greetingNameProblems(x.body, lead.contactName)];
+    // the country no page placed them in: a sentence that names it anyway is treated like a claim nobody gave (checked in code)
+    const askedIn = placeOpen ? askCountry(lead.query) : null;
+    const placeClaims = (text) => askedIn ? String(text || '').split(/(?<=[.!?])\s+/).filter(x => askCountry(x)?.tld === askedIn.tld) : [];
+    const problems = (x) => [...unsupportedClaims(`${x.subject}. ${x.body}`, support), ...fillerSentences(x.body), ...senderNameProblems(x.body, owner), ...greetingNameProblems(x.body, lead.contactName), ...placeClaims(`${x.subject}. ${x.body}`)];
     let bad = problems(w); let regenerated = false; let removed = [];
     if (bad.length) {
       regenerated = true;
@@ -186,11 +211,11 @@ export async function activate(ctx) {
       bad = problems(w);
       if (bad.length) {
         removed = bad;
-        if (unsupportedClaims(w.subject, support).length) w.subject = `A quick question for ${lead.company}`;
-        const left = [...unsupportedClaims(w.body, support), ...fillerSentences(w.body)];
+        if (unsupportedClaims(w.subject, support).length || placeClaims(w.subject).length) w.subject = `A quick question for ${lead.company}`;
+        const left = [...unsupportedClaims(w.body, support), ...fillerSentences(w.body), ...placeClaims(w.body)];
         if (left.length && (!lang || lang.name === 'English')) {
           // in English the plain default replaces the whole message: who the owner is, why this company, a short call
-          w.body = plainDefault({ owner, business, company: lead.company, contactName: lead.contactName, need: lead.need, channel });
+          w.body = plainDefault({ owner, business, company: lead.company, contactName: lead.contactName, need: open ? '' : lead.need, channel });
         } else {
           w.body = stripSenderNames(removeSentences(w.body, left), senderNameProblems(w.body, owner), owner);
           for (const g of greetingNameProblems(w.body, lead.contactName)) w.body = w.body.replace(g, 'Hello,');
@@ -214,7 +239,7 @@ export async function activate(ctx) {
         return { leads, why: leads.length < n ? `the table above has only ${leads.length} lead${leads.length === 1 ? '' : 's'} left` : leads.length === 1 ? 'the first row of the table above' : `the first ${leads.length} of the table above` };
       }
     }
-    const leads = store.listLeads({ stage: 'new' }).slice(0, n);
+    const leads = store.listLeads({ stage: 'new' }).sort((a, b) => !!a.unchecked?.length - !!b.unchecked?.length).slice(0, n);   // as the page shows it: checked first
     return { leads, why: !leads.length ? '' : leads.length < n ? `the New lane of the Sales page has only ${leads.length}` : leads.length === 1 ? 'the first lead in the New lane of the Sales page' : `the first ${leads.length} in the New lane of the Sales page` };
   }
   async function startDrafts({ leadIds, top, chatId = null, wait = true, channel = 'email', language = '' }) {

@@ -1,12 +1,12 @@
 // Chat page: rail of chats, the conversation at full width, the folding panel. Matches the Chat section of the approved preview.
 import { chipsFor } from '/ui/pages/home.js';
-import { cleanReply, uniqueOutputs, previewText, stepChips, footTag, waitLine, hasTable, shortCell } from '/modules/chat/ui-text.js';
+import { cleanReply, uniqueOutputs, previewText, stepChips, footTag, waitLine, hasTable, shortCell, railLine, liveText } from '/modules/chat/ui-text.js';
 
 const API = 'm/chat/';
 const PRESETS = [['everyone', 'Everyone'], ['sales-room', 'Sales room'], ['build-room', 'Build room']];
 const PRESET_MEMBERS = { 'sales-room': ['coordinator', 'closer', 'scout'], 'build-room': ['coordinator', 'coder', 'operator'] };
 const PROVIDER_NAMES = { router: 'Free router', ollama: 'Ollama', gemini: 'Gemini', openai: 'OpenAI', anthropic: 'Anthropic', openrouter: 'OpenRouter', groq: 'Groq', mistral: 'Mistral', deepseek: 'DeepSeek', together: 'Together', fireworks: 'Fireworks', cerebras: 'Cerebras', xai: 'xAI', custom: 'Custom' };
-const STATUS = { running: ['Running', 'run'], waiting: ['Waiting for you', 'wait'], done: ['Done', 'ok'], failed: ['Failed', 'stop'], stopped: ['Stopped', 'stop'], interrupted: ['Stopped', 'stop'] };
+const STATUS = { running: ['Running', 'run'], waiting: ['Waiting for you', 'wait'], done: ['Done', 'ok'], failed: ['Did not finish', 'stop'], stopped: ['Stopped', 'stop'], interrupted: ['Stopped', 'stop'] };
 const DRAFT_WORDS = { pending: 'Waiting for you', approved: 'Approved', denied: 'Denied', timeout: 'Timed out', aborted: 'Stopped', halted: 'Stopped', sent: 'Sent', failed: 'Not sent' };
 
 let mdLib = null;
@@ -84,13 +84,15 @@ async function render(el, ui, route) {
   const form = h('form', { class: 'compose', id: 'form' }, input, micBtn, sendBtn);
   const under = h('div', { class: 'under' });
   const drawerBody = h('div');
-  const drawer = h('aside', { class: 'drawer open', id: 'drawer', 'aria-label': 'Chat panel' }, drawerBody);
+  const drawer = h('aside', { class: 'drawer', id: 'drawer', 'aria-label': 'Chat panel' }, drawerBody);
   const fileIn = h('input', { type: 'file', hidden: true, multiple: true });
   el.append(rail, h('div', { class: 'talk' }, h('div', { class: 'row hd' }, grp, grpN, panelBtn), chatEl, chips, form, under, fileIn), drawer);
 
-  let panelOpen = true; try { panelOpen = localStorage.getItem('apd-chat-panel') !== 'closed'; } catch {}
-  const setPanel = (open) => { panelOpen = open; drawer.classList.toggle('open', open); panelBtn.setAttribute('aria-pressed', String(open)); try { localStorage.setItem('apd-chat-panel', open ? 'open' : 'closed'); } catch {} };
-  setPanel(panelOpen);
+  // On a narrow screen the panel covers the conversation, so it starts closed there and opens only from its button (not remembered).
+  const narrow = () => { try { return matchMedia('(max-width: 860px)').matches; } catch { return false; } };
+  let panelOpen = !narrow(); try { panelOpen = panelOpen && localStorage.getItem('apd-chat-panel') !== 'closed'; } catch {}
+  const setPanel = (open, { keep = true } = {}) => { panelOpen = open; drawer.classList.toggle('open', open); panelBtn.setAttribute('aria-pressed', String(open)); if (keep && !narrow()) { try { localStorage.setItem('apd-chat-panel', open ? 'open' : 'closed'); } catch {} } };
+  setPanel(panelOpen, { keep: false });
   panelBtn.onclick = () => setPanel(!panelOpen);
 
   let chats = []; let chat = null; let messages = []; let alive = true;
@@ -117,7 +119,7 @@ async function render(el, ui, route) {
     rail.replaceChildren(...[
       h('button', { class: 'who-t', type: 'button', onclick: newChat }, h('span', { class: 'av g' }, '+'), h('span', { class: 'nm' }, 'New chat')),
       h('h6', null, 'Groups'), ...groups.map(c => row(c, chatTitle(c), previewText(c.last) || `${c.members.length} agents`)),
-      h('h6', null, 'Agents'), ...agents.map(c => row(c, agentName(c.members[0]), previewText(c.last) || ui.agent(c.members[0])?.role || '')),
+      h('h6', null, 'Agents'), ...agents.map(c => row(c, agentName(c.members[0]), railLine(c.last, ui.agent(c.members[0])?.role || ''))),
       recent.length ? h('h6', { class: 'rc' }, 'Recent') : null, ...recent.map(c => row(c, chatTitle(c), null, 'rc')),
       h('span', { class: 'grow' }),
       h('button', { class: 'who-t', type: 'button', onclick: () => ui.go('settings') }, h('span', { class: 'av g' }, 'S'), h('span', { class: 'nm' }, 'Settings'))].filter(Boolean));
@@ -173,7 +175,7 @@ async function render(el, ui, route) {
       return h('div', { class: 'msg me' + (m.cards?.length ? ' wide' : ''), 'data-role': 'user', dataset: { id: m.id } }, m.text ? md(ui, m.text) : null, ...(m.cards || []).map(c => cardEl(c, m)));
     }
     const live = m.status === 'streaming';
-    const text = live ? cleanReply(streaming.get(m.id) ?? m.text) : m.text;
+    const text = live ? liveText(cleanReply(streaming.get(m.id) ?? m.text), m.meta?.steps) : m.text;
     const wide = (m.cards || []).some(c => ['table', 'report', 'draft', 'progress', 'sources'].includes(c.kind) || String(c.kind).includes('.'));
     const who = h('span', { class: 'who' }, agentName(m.agentId), m.label ? [' · ', h('span', { class: 'mdl' }, m.label)] : null, m.meta?.note ? ' · ' + m.meta.note : null);
     const steps = (m.meta?.steps || []).filter(s => s.tool);

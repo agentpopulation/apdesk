@@ -120,6 +120,14 @@ export function verifyQuote(quote, text, claim) {
 }
 
 export const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
+/** A title from free text: at most max characters, cut at a word boundary with "…" (never mid-word). */
+export function shortTitle(s, max = 80) {
+  const t = String(s || '').replace(/\s+/g, ' ').trim();
+  if (t.length <= max) return t;
+  let cut = t.slice(0, max - 1); const sp = cut.lastIndexOf(' ');
+  if (t[max - 1] !== ' ' && sp > max * 0.4) cut = cut.slice(0, sp);   // one very long word is still cut, rather than left empty
+  return cut.replace(/[\s,;:.\-–—]+$/u, '') + '…';
+}
 export const slug = (s) => String(s || 'report').toLowerCase().normalize('NFKD').replace(/[^\w\s-]/g, '').trim().replace(/[\s_-]+/g, '-').slice(0, 60) || 'report';
 /** Run fn over items with at most `limit` at once. */
 export async function pool(items, limit, fn) {

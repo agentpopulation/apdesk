@@ -56,7 +56,12 @@ try {
     const secs = Math.round((Date.now() - t0) / 1000);
     check(`leads found for "${ASK}"`, job?.status === 'done' && out.found >= COUNT, `${out.found} of ${COUNT} in ${secs} s (${Math.floor(secs / 60)} min ${secs % 60} s), ${out.pagesRead} pages read, ${out.searches} searches in ${out.rounds} round${out.rounds === 1 ? '' : 's'} (${out.extraRounds || 0} after the merge), model ${out.label}${out.reason ? '; reason: ' + out.reason : ''}${job?.error ? '; error ' + job.error : ''}`);
     check('the whole job stays under 15 minutes', secs < 900, `${secs} s`);
-    const leads = (await call('/api/m/sales/leads')).json.leads.filter(l => (out.leadIds || []).includes(l.id));
+    const byId = new Map((await call('/api/m/sales/leads')).json.leads.map(l => [l.id, l]));
+    const leads = (out.leadIds || []).map(id => byId.get(id)).filter(Boolean);    // in the order shown: checked first, then not checked
+    const checkedLeads = leads.filter(l => !l.unchecked?.length); const openLeads = leads.filter(l => l.unchecked?.length);
+    info(`reply: ${out.text}`);
+    info(`checked: ${checkedLeads.length}; not checked: ${openLeads.length} (${openLeads.map(l => `${l.company}: ${l.unchecked.join(', ')}`).slice(0, 25).join(' | ') || 'none'})`);
+    check('checked leads come first, then the not-checked ones', leads.every((l, i) => !i || !leads[i - 1].unchecked?.length || l.unchecked?.length), leads.map(l => (l.unchecked?.length ? '?' : '+') + l.company).join(', '));
     let ok200 = 0, named = 0; const bad = [];
     for (const l of leads) {
       const s = l.sources[0];
@@ -68,8 +73,11 @@ try {
     for (const l of leads.slice(0, 25)) info(`${l.company} | ${l.contactName || 'contact not checked'} | ${l.need.slice(0, 70)} | ${l.sources[0].url}`);
     const askC = askCountry(ASK);
     if (askC) {
-      const unplaced = leads.filter(l => !String(l.findings || '').includes(`Placed in ${askC.label} by `));
-      check(`every lead is placed in ${askC.label} by a page that was read (the evidence is in its findings)`, leads.length > 0 && unplaced.length === 0, `${leads.length - unplaced.length} of ${leads.length}; left out for want of a place: ${out.rejected?.['not placed in the country'] || 0}`);
+      const unplaced = checkedLeads.filter(l => !String(l.findings || '').includes(`Placed in ${askC.label} by `));
+      check(`every checked lead is placed in ${askC.label} by a page that was read (the evidence is in its findings)`, unplaced.length === 0, `${checkedLeads.length - unplaced.length} of ${checkedLeads.length} checked`);
+      const claimed = openLeads.filter(l => l.unchecked.includes('Country: not checked') && String(l.findings || '').includes('Placed in '));
+      const unlabelled = openLeads.filter(l => !String(l.findings || '').includes(`Placed in ${askC.label} by `) && !l.unchecked.includes('Country: not checked'));
+      check('a lead no page placed is labelled "Country: not checked" and never claims a place', claimed.length === 0 && unlabelled.length === 0, `${openLeads.filter(l => l.unchecked.includes('Country: not checked')).length} labelled`);
       for (const l of leads.slice(0, 25)) info(`${l.company}: ${(String(l.findings || '').match(/Placed in .*$/) || ['not placed'])[0].slice(0, 200)}`);
     }
     const invented = leads.filter(l => l.email && !l.sources.length);
@@ -96,8 +104,8 @@ try {
     for (const l of ownPrimary) { try { const r = await reread(l.sources[0].url); const f = siteFits(r, { query: ASK, company: l.company, need: l.need }); if (!f.ok) wrongSite.push(`${l.company} <- ${l.sources[0].url} (${f.why})`); } catch {} }
     check('own-site sources are about the same business as the ask', wrongSite.length === 0, `${ownPrimary.length - wrongSite.length} of ${ownPrimary.length} pass the job's own site test (field words ${topicWords(ASK).join(', ')}; no other kind of business); site step turned down ${out.sites?.wrongBusiness || 0} site(s)${wrongSite.length ? '; not: ' + wrongSite.join('; ') : ''}`);
     if (askKind(ASK)) {
-      const unsaid = leads.filter(l => !/What it sells, from https?:\/\/\S+: "/.test(l.findings || ''));
-      check('every lead carries the words of a read page that say what it sells', leads.length > 0 && unsaid.length === 0, `${leads.length - unsaid.length} of ${leads.length}; left out as another kind of business: ${out.rejected?.['another kind of business'] || 0}, as what it sells not checked: ${out.rejected?.['what it sells not checked'] || 0}${unsaid.length ? '; not: ' + unsaid.map(l => l.company).join(', ') : ''}`);
+      const unsaid = leads.filter(l => !/What it sells, from https?:\/\/\S+: "/.test(l.findings || '') && !l.unchecked?.includes('What it sells: not checked'));
+      check('every lead carries the words of a read page that say what it sells, or the label "What it sells: not checked"', leads.length > 0 && unsaid.length === 0, `${leads.length - unsaid.length} of ${leads.length}; left out as another kind of business: ${out.rejected?.['another kind of business'] || 0}, as what it sells not checked: ${out.rejected?.['what it sells not checked'] || 0}${unsaid.length ? '; not: ' + unsaid.map(l => l.company).join(', ') : ''}`);
       for (const l of leads.slice(0, 25)) info(`${l.company}: ${(String(l.findings || '').match(/What it sells, from .*$/) || ['what it sells: not said'])[0].slice(0, 260)}`);
     }
     const pairs = [...String(out.text || '').matchAll(/(\d+) of (\d+)/g)].map(m => [Number(m[1]), Number(m[2])]);
@@ -109,15 +117,16 @@ try {
     check('no same company twice (e.g. "Keka" and "Keka HR")', twins.length === 0, twins.join('; ') || `${leads.length} companies, none the same`);
     check('every mail address is printed on the company\'s own pages', mailBad.length === 0, `${mailOk} of ${leads.filter(x => x.email).length} found again by a fresh fetch${mailBad.length ? '; not: ' + mailBad.join('; ') : ''}`);
     check('no contact or email without a page that gives it', invented.length === 0, `${leads.filter(l => l.contactName).length} contacts and ${leads.filter(l => l.email).length} emails, each found in the source text by code`);
-    const table = cards.find(c => c.kind === 'table');
+    const tables = cards.filter(c => c.kind === 'table'); const table = tables[0] && { ...tables[0], actions: tables[tables.length - 1].actions };
     if (table && out.found < COUNT) check('short: the card title and the reply say how many and why', new RegExp(`^${out.found} of ${COUNT} found`).test(table.title) && table.title.includes(out.reason) && out.text.includes(out.reason) && table.actions.find(a => a.label === 'Find more')?.args?.more === true, `title: ${table.title} | reply: ${out.text}`);
     else info(`not short: card title "${table?.title}"`);
-    check('table card in the chat: columns and actions', table && JSON.stringify(table.columns) === JSON.stringify(['Company', 'Contact', 'Value', 'Need', 'Source']) && ['Draft outreach for all', 'Find more', 'Open Sales'].every(a => table.actions.some(x => x.label === a)) && !table.actions.some(x => x.label === 'Add all to pipeline') && table.rowActions?.[0]?.label === 'Draft',
+    if (tables[1]) info(`second table: "${tables[1].title}" · columns: ${tables[1].columns.join(', ')} · ${tables[1].rows.length} rows`);
+    check('table card in the chat: columns and actions', table && JSON.stringify(table.columns) === JSON.stringify(tables.length > 1 || !openLeads.length ? ['Company', 'Contact', 'Value', 'Need', 'Source'] : ['Company', 'Contact', 'Value', 'Need', 'Not checked', 'Source']) && ['Draft outreach for all', 'Find more', 'Open Sales'].every(a => table.actions.some(x => x.label === a)) && !table.actions.some(x => x.label === 'Add all to pipeline') && table.rowActions?.[0]?.label === 'Draft',
       table ? `columns: ${table.columns.join(', ')} · actions: ${table.actions.map(a => a.label).join(', ')} · row action: ${table.rowActions.map(a => a.label).join(', ')} · ${table.rows.length} rows · first source cell: ${table.rows[0]?.[4]}` : 'no table card');
     if (core.modules.isOn('chat')) {
       const msgs = (await call(`/api/m/chat/chats/${CHAT}/messages`)).json?.messages || [];
-      const inChat = msgs.flatMap(m => m.cards || []).find(c => c.kind === 'table');
-      check('the table card is in the real chat', !!inChat && inChat.rows.length === out.found, `${msgs.length} messages; table "${inChat?.title}" with ${inChat?.rows?.length} rows; job reply: ${msgs.map(m => m.text).filter(Boolean).slice(-1)[0]?.slice(0, 200) || 'none'}`);
+      const inChats = msgs.flatMap(m => m.cards || []).filter(c => c.kind === 'table'); const inChat = inChats[0];
+      check('the table card is in the real chat', !!inChat && inChats.reduce((a, c) => a + c.rows.length, 0) === out.found, `${msgs.length} messages; table "${inChat?.title}" with ${inChat?.rows?.length} rows; job reply: ${msgs.map(m => m.text).filter(Boolean).slice(-1)[0]?.slice(0, 200) || 'none'}`);
     }
     check('leads saved as New', leads.every(l => l.stage === 'new'), `${leads.filter(l => l.stage === 'new').length} New`);
 

@@ -1,6 +1,6 @@
 // The 17 acceptance asks. Each returns { state, evidence, how, ... } or throws NotChecked / Fail.
 import fs from 'node:fs'; import path from 'node:path';
-import { chatIdle, chatBusy, browserText, SEL, sleep, go, shot, openDesk, chatOpen, chatAsk, chatWithAgent, readTheirs, viewText, offNote, clickText, firstVisible, probe, arrayIn, newFiles, walk, fetchText, LABEL_RE, hash, appRequire, askJudge } from './lib.mjs';
+import { chatIdle, chatBusy, browserText, SEL, sleep, go, shot, openDesk, chatOpen, chatAsk, chatWithAgent, readTheirs, viewText, offNote, clickText, firstVisible, probe, arrayIn, newFiles, walk, fetchText, LABEL_RE, hash, appRequire, askJudge, jobsStartedWhileHalted } from './lib.mjs';
 
 export class NotChecked extends Error {}
 const nc = (m) => { throw new NotChecked(m); };
@@ -130,13 +130,14 @@ export async function ask3(t) {
       o.caught = true; t.shot2 = await shot(page, t.shots, 'ask03_tasks_running');
       const lastId = await t.desk.lastCallId(); const tP = Date.now(); await page.click('#panic');
       for (let i = 0; i < 12 && o.jobStoppedMs == null; i++) { await sleep(250); const js = (await t.desk.call('/api/jobs/' + job.id)).json; if (js && !['running', 'waiting'].includes(js.status)) { o.jobStoppedMs = Date.now() - tP; o.statusAtStop = js.status; } }
-      o.halted = (await t.desk.call('/api/panic')).json?.halted === true;
+      // the moment the desk registered Panic, from its own state (a job created before it was running when Panic hit)
+      const ps = (await t.desk.call('/api/panic')).json; o.halted = ps?.halted === true; o.haltedAt = ps?.at ? Date.parse(ps.at) : o.halted ? Date.now() : tP;
       o.runningAfter = (await t.desk.call('/api/jobs?status=running')).json?.jobs?.length || 0;
       o.overlay = await page.locator('#halt').isVisible().catch(() => false);
       o.refused = await refusedWhileHalted(page);
       await sleep(6000);
       o.stillShownRunning = await shownRunning();
-      o.newJobsWhileHalted = (await jobsSince(t, tP + 2000)).length;
+      o.newJobsWhileHalted = jobsStartedWhileHalted((await t.desk.call('/api/jobs?limit=50')).json?.jobs, o.haltedAt).length;
       o.callsAfter = (await usageAfter(t, lastId, tP)).length;
       t.shot = await shot(page, t.shots, 'ask03_halted');
       const tR = Date.now(); await resumeFromScreen(page); await sleep(15000);
@@ -248,7 +249,7 @@ export async function ask4(t) {
   }
   const supported = verdicts.filter(v => v.yes && v.figOk).length;
   t.did = `typed "${q}"; waited for job ${done?.status}; read ${files.length} new files; fetched ${fetched.length} sources; judged ${verdicts.length} claims`;
-  t.saw = `job ${done?.status}; pdf ${pdfOk}, docx ${docxOk}, md ${mdOk}; distinct sources ${sources.length}, opened ${opened.length}; claims supported ${supported}/${verdicts.length}: ${verdicts.filter(v => !(v.yes && v.figOk)).map(v => `[${v.n}] claim "${v.claim}" cites ${v.url} (page ${v.status}, ${v.len} chars; figures on page ${v.figOk}; judge: ${v.why.replace(/\s+/g, ' ')})`).join(' | ')}`;
+  t.saw = `job ${done?.status}; pdf ${pdfOk}, docx ${docxOk}, md ${mdOk}; distinct sources ${sources.length}, opened ${opened.length}; claims supported ${supported}/${verdicts.length}, judge unclear ${verdicts.filter(v => v.unclear).length}: ${verdicts.filter(v => !(v.yes && v.figOk)).map(v => `[${v.n}] ${v.unclear ? 'judge unclear' : 'not supported'}: claim "${v.claim}" cites ${v.url} (page ${v.status}, ${v.len} chars; figures on page ${v.figOk}; judge: ${v.why.replace(/\s+/g, ' ')})`).join(' | ')}`;
   t.expected = '≥10 distinct sources that return 200 with readable text, ≥5 sampled claims supported by their cited page, PDF, Word and Markdown files that open';
   t.repro = 'Chat › ' + q;
   const okWith = (n) => done?.status === 'done' && sources.length >= 10 && opened.length >= 10 && verdicts.length >= 5 && n === verdicts.length && pdfOk && docxOk && mdOk;
@@ -256,7 +257,7 @@ export async function ask4(t) {
   // a judge that could not be read twice decides nothing: NOT CHECKED only when it is the one thing between this run and a PASS
   const unclear = verdicts.filter(v => v.unclear);
   if (!ok && unclear.length && okWith(supported + unclear.filter(v => v.figOk).length)) nc(`judge unclear on ${unclear.length} claim(s) (${unclear.map(v => '[' + v.n + '] ' + v.why).join(' | ')}); everything else holds: job ${done?.status}, ${sources.length} sources, ${opened.length} open, ${supported}/${verdicts.length} claims supported`);
-  return { ok, evidence: `job ${done?.status}; ${sources.length} sources, ${opened.length} open; claims ${supported}/${verdicts.length} supported; pdf ${pdfOk ? 'ok' : 'NO'}, docx ${docxOk ? 'ok' : 'NO'}, md ${mdOk ? 'ok' : 'NO'}` };
+  return { ok, evidence: `job ${done?.status}; ${sources.length} sources, ${opened.length} open; claims ${supported}/${verdicts.length} supported${verdicts.some(v => v.unclear) ? ', ' + verdicts.filter(v => v.unclear).length + ' judge unclear (not counted as unsupported)' : ''}; pdf ${pdfOk ? 'ok' : 'NO'}, docx ${docxOk ? 'ok' : 'NO'}, md ${mdOk ? 'ok' : 'NO'}` };
 }
 
 // ---------------------------------------------------------------- 5

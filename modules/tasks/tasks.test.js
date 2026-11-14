@@ -48,3 +48,19 @@ test('a task whose prompt carries the chat context note is titled and listed by 
     assert.ok(row.input.prompt.includes(HEAD), 'the stored prompt stays whole for the run');
   } finally { await t.close(); }
 });
+
+test('a task whose turn did not do its work ends failed with the reason in plain words; one that did its work is Done', async () => {
+  const t = await testDesk({ modules: ['tasks'], script: () => 'x' });
+  try {
+    let reason = 'The research did not finish (it was stopped)';
+    const api = t.core.modules.api.bind(t.core.modules);
+    t.core.modules.api = (name) => name === 'chat' ? { ask: async () => ({ text: 'I started the research.', chatId: null, posted: false, unfinished: reason }) } : api(name);
+    const tasks = t.core.modules.api('tasks');
+    const bad = await t.core.jobs.wait((await tasks.create({ prompt: 'Research the suppliers' })).id, 10000);
+    assert.equal(bad.status, 'failed');
+    assert.equal(bad.error, 'The research did not finish (it was stopped)');
+    reason = null;
+    const ok = await t.core.jobs.wait((await tasks.create({ prompt: 'Research the suppliers' })).id, 10000);
+    assert.equal(ok.status, 'done'); assert.equal(ok.output.answer, 'I started the research.');
+  } finally { await t.close(); }
+});

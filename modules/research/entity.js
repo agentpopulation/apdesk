@@ -86,12 +86,13 @@ export function checkQuantities(items) {
   const groups = new Map(); for (const r of rows) { if (!groups.has(r.k)) groups.set(r.k, []); groups.get(r.k).push(r); }
   for (const g of groups.values()) {
     const differs = (a, b) => Math.abs(a - b) > 0.02 * Math.max(Math.abs(a), Math.abs(b));
-    if (!g.some((r) => differs(r.value, g[0].value))) continue;
-    if (new Set(g.map((r) => r.id)).size === 1) continue;            // two values in ONE sentence (two products, two sizes) are not two sources disagreeing
+    // a conflict needs two sentences (two values in ONE sentence are two products or sizes) about the same thing (sameThing)
+    const clash = (a, b) => a.id !== b.id && differs(a.value, b.value) && sameThing(a.text, b.text);
+    if (!g.some((r) => g.some((o) => clash(r, o)))) continue;
     const top = Math.max(...g.map((r) => officialRank(r.host)));
     const best = g.filter((r) => officialRank(r.host) === top);
-    if (best.some((r) => differs(r.value, best[0].value))) { for (const r of g) fail(r, `sources disagree on ${r.quantity}: ${[...new Set(g.map((x) => show(x.value)))].join(' against ')}`); continue; }
-    for (const r of g) { if (officialRank(r.host) === top) { const other = g.find((x) => differs(x.value, r.value)); if (other) notes.set(r.id, `Another source gives ${show(other.value)}.`); } else if (differs(r.value, best[0].value)) fail(r, `conflicts with a more official source, which gives ${show(best[0].value)}`); }
+    if (best.some((r) => best.some((o) => clash(r, o)))) { for (const r of g) { const vs = g.filter((x) => x === r || clash(r, x)); if (vs.length > 1) fail(r, `sources disagree on ${r.quantity}: ${[...new Set(vs.map((x) => show(x.value)))].join(' against ')}`); } continue; }
+    for (const r of g) { if (officialRank(r.host) === top) { const other = g.find((x) => clash(x, r)); if (other) notes.set(r.id, `Another source gives ${show(other.value)}.`); } else { const b = best.find((x) => clash(r, x)); if (b) fail(r, `conflicts with a more official source, which gives ${show(b.value)}`); } }
   }
   const alive = () => rows.filter((r) => !failed.has(r.id));
   // 2. parts against their whole (same unit, not percentages)
@@ -109,6 +110,20 @@ export function checkQuantities(items) {
     if (distinct.size > 1 && [...distinct.values()].reduce((a, b) => a + b, 0) > 100.5) for (const r of left) fail(r, 'the shares of one whole add up to more than 100%');
   }
   return { failed, notes };
+}
+
+/**
+ * Do two sentences state a figure for the same thing? Only when they share most of their content words (at least half of all
+ * the content words either uses, numbers left out), so a qualifier one of them carries (record, tandem, commercial, a lab, a
+ * name) counts against it. With years: the same years in both, or none in either (a different year is history, not a rival).
+ * Unsure means no: no note is better than a wrong one.
+ */
+export function sameThing(a, b, { years = true } = {}) {
+  const yrs = (t) => [...new Set(String(t || '').match(/\b(?:19|20)\d{2}\b/g) || [])].sort().join(',');
+  if (years && yrs(a) !== yrs(b)) return false;
+  const wa = words(a).filter((w) => !/\d/.test(w)), wb = new Set(words(b).filter((w) => !/\d/.test(w)));
+  const both = wa.filter((w) => wb.has(w)).length, all = new Set([...wa, ...wb]).size;
+  return all > 0 && both / all >= 0.5;
 }
 
 /** One model call labels the numbers in the kept claims; checkQuantities judges them. claims: [{ id, text, host }] */
@@ -206,7 +221,7 @@ export function otherValues(items, others) {
     if (new Set(top.map((x) => Number(x.value))).size > 1) continue;            // the kept claims already differ: the sanity pass speaks
     for (const c of top) for (const o of others || []) {
       const ou = Number.isFinite(Number(o.value)) ? unitOf(o.text, o.value) : null;   // the page sentence itself must hold the value, with the same unit
-      if (!ou || key(o.quantity) + '|' + ou.unit !== q) continue;
+      if (!ou || key(o.quantity) + '|' + ou.unit !== q || !sameThing(c.text, o.text, { years: false })) continue;   // a later year is shown with its year
       const a = Number(c.value), b = Number(o.value);
       if (Math.abs(a - b) <= 0.005 * Math.max(Math.abs(a), Math.abs(b))) continue;
       if (yr(o) !== null && yr(c) !== null && yr(o) < yr(c)) continue;          // an older value is history, not a rival

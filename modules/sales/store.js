@@ -28,6 +28,8 @@ export function migrate(db) {
     CREATE TABLE IF NOT EXISTS m_sales_activity (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, lead_id TEXT, who TEXT, text TEXT);
     CREATE INDEX IF NOT EXISTS m_sales_drafts_lead ON m_sales_drafts (lead_id);
   `);  db.migrate(2, `ALTER TABLE m_sales_drafts ADD COLUMN channel TEXT NOT NULL DEFAULT 'email'`);
+  // what no page read said about a found lead, as plain labels ("Country: not checked"); empty for a checked lead
+  db.migrate(3, `ALTER TABLE m_sales_leads ADD COLUMN unchecked TEXT`);
 }
 
 export class SalesStore {
@@ -36,7 +38,7 @@ export class SalesStore {
     if (!r) return null;
     return { id: r.id, company: r.company, contactName: r.contact_name || '', contactRole: r.contact_role || '', email: r.email || '', contactOther: r.contact_other || '', website: r.website || '',
       value: r.value_minor == null ? null : Number(r.value_minor), currency: r.currency || this.currency(), need: r.need || '', stage: r.stage || 'new', stageLabel: stageLabel(r.stage),
-      nextStep: r.next_step || '', findings: r.findings || '', sources: j(r.sources, []), notes: r.notes || '', query: r.query || '', foundBy: r.found_by || '', created: r.created, updated: r.updated };
+      nextStep: r.next_step || '', findings: r.findings || '', sources: j(r.sources, []), notes: r.notes || '', query: r.query || '', foundBy: r.found_by || '', unchecked: j(r.unchecked, []), created: r.created, updated: r.updated };
   }
   draftOut(r) {
     if (!r) return null;
@@ -56,10 +58,10 @@ export class SalesStore {
     const id = rid('ld_'); const t = now();
     const sources = (Array.isArray(lead.sources) ? lead.sources : []).filter(s => /^https?:\/\//i.test(s?.url || '')).map(s => ({ title: clip(s.title || s.url, 200), url: String(s.url).slice(0, 1000) })).slice(0, 12);
     const value = lead.value == null || lead.value === '' ? null : Math.round(Number(lead.value));
-    this.db.run(`INSERT INTO m_sales_leads (id, company, contact_name, contact_role, email, contact_other, website, value_minor, currency, need, stage, next_step, findings, sources, notes, query, found_by, created, updated)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, company, clip(lead.contactName, 120) || null, clip(lead.contactRole, 120) || null, clip(lead.email, 200) || null, wordClip(lead.contactOther, 1000) || null,
+    this.db.run(`INSERT INTO m_sales_leads (id, company, contact_name, contact_role, email, contact_other, website, value_minor, currency, need, stage, next_step, findings, sources, notes, query, found_by, unchecked, created, updated)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, company, clip(lead.contactName, 120) || null, clip(lead.contactRole, 120) || null, clip(lead.email, 200) || null, wordClip(lead.contactOther, 1000) || null,
       clip(lead.website, 300) || null, Number.isFinite(value) ? value : null, lead.currency || this.currency(), clip(lead.need, 400) || null, stageId(lead.stage) || 'new', clip(lead.nextStep, 300) || null,
-      String(lead.findings || '').slice(0, 4000) || null, JSON.stringify(sources), String(lead.notes || '').slice(0, 4000) || null, clip(lead.query, 300) || null, clip(lead.foundBy, 60) || null, t, t);
+      String(lead.findings || '').slice(0, 4000) || null, JSON.stringify(sources), String(lead.notes || '').slice(0, 4000) || null, clip(lead.query, 300) || null, clip(lead.foundBy, 60) || null, JSON.stringify((Array.isArray(lead.unchecked) ? lead.unchecked : []).map(x => clip(x, 60)).filter(Boolean).slice(0, 4)), t, t);
     this.log(id, who, sources.length ? `Lead found · ${sources.length} source${sources.length > 1 ? 's' : ''}` : 'Lead added');
     this.emit({ change: 'lead', id });
     return this.getLead(id);

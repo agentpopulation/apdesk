@@ -33,11 +33,13 @@ export async function gatherBrief(ctx, { topics = [], signal, since = null, sinc
   const sections = []; const sources = [];
   // flows runs are the brief itself; quiet jobs are the desk's own upkeep and show here only when they failed
   const own = (j) => !String(j.kind).startsWith('flows.') && (!j.quiet || j.status === 'failed');
+  // a scheduled run that is not a brief and did not finish is the owner's work too
+  const ranForOwner = (j) => j.kind === 'flows.schedule' && j.input?.kind && j.input.kind !== 'brief';
   const jobs = ctx.jobs.list({ limit: 200 });
   const running = jobs.filter(j => j.status === 'running' && own(j));
   const waitingJobs = jobs.filter(j => j.status === 'waiting' && own(j));
   const done = jobs.filter(j => j.status === 'done' && j.finished >= since && own(j));
-  const unfinished = jobs.filter(j => ['failed', 'interrupted', 'stopped'].includes(j.status) && (j.finished || j.updated) >= since && own(j));
+  const unfinished = jobs.filter(j => ['failed', 'interrupted', 'stopped'].includes(j.status) && (j.finished || j.updated) >= since && (own(j) || ranForOwner(j)));
   let pending = [];
   try { pending = ctx.approval.listPending() || []; } catch {}
   const name = (id) => ctx.agents.get(id)?.name || 'An agent';
@@ -54,7 +56,7 @@ export async function gatherBrief(ctx, { topics = [], signal, since = null, sinc
   counted('Running now', running, j => `${one(j.title)}: running (${name(j.agentId)}), started ${at(j.created)}`);
   counted('Waiting for you', waiting, x => x);
   counted(`Finished ${sinceWords}`, done, j => { const s = storedSummary(ctx, j); return `${one(j.title)}: done (${name(j.agentId)}), finished ${at(j.finished)}${s ? `. Its summary: "${s}"` : ''}`; });
-  counted(`Did not finish ${sinceWords}`, unfinished, j => `${one(j.title)}: ${word[j.status]}, ${at(j.finished || j.updated)}`);
+  counted(`Did not finish ${sinceWords}`, unfinished, j => `${one(j.title)}: ${j.status === 'failed' && j.error ? `did not finish: ${one(j.error, 200)}` : word[j.status]}, ${at(j.finished || j.updated)}`);
   const sales = ctx.modules.api('sales');
   if (sales?.listLeads) {
     try {

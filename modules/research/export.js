@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import PDFDocument from 'pdfkit';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx';
-import { slug } from './util.js';
+import { slug, shortTitle } from './util.js';
 
 /** Markdown lines -> simple blocks: { type: 'h1'|'h2'|'h3'|'li'|'p', text } with links and bold stripped to plain text. */
 export function blocks(markdown) {
@@ -61,7 +61,7 @@ export async function writeReport(ctx, { title, markdown, sources, jobId, agentI
     if (out.md && out.pdf && out.docx) return out;
   }
   out.via = out.via ? 'office and research' : 'research';
-  const d = await ctx.approval.request({ agentId, jobId, chatId, action: 'file.write', title: `Write the report "${title.slice(0, 60)}" (Markdown, PDF, Word)`, detail: 'Workspace › reports', payload: { path: 'reports/' }, signal });
+  const d = await ctx.approval.request({ agentId, jobId, chatId, action: 'file.write', title: `Write the report "${shortTitle(title, 60)}" (Markdown, PDF, Word)`, detail: 'Workspace › reports', payload: { path: 'reports/' }, signal });
   if (!d.ok) { out.errors.push(`Not written: ${d.reason}`); return out; }
   const dir = ctx.workspacePath('reports'); await fs.mkdir(dir, { recursive: true });
   const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '').replace(/^(\d{8})(\d{4})$/, '$1-$2');

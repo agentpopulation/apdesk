@@ -1,7 +1,7 @@
 // Deep research: plan -> search -> read many pages -> write with numbered sources -> check every citation -> files.
 // The flow (plan sub-questions, fan out searches, gather pages, write a cited report) follows GPT Researcher's
 // planner/researcher/writer split (https://github.com/assafelovic/gpt-researcher, Apache-2.0); prompts are our own words.
-import { askModel, asSource, DATA_RULE, passages, verifyQuote, quoteOnPage, codeSupport, sentencesFor, listIn, host, pool, stopped } from './util.js';
+import { askModel, asSource, DATA_RULE, passages, verifyQuote, quoteOnPage, codeSupport, sentencesFor, listIn, host, pool, stopped, shortTitle } from './util.js';
 import { writeReport } from './export.js';
 import { domainIn, onDomain, anchorFromSite, namesExactly, applyScreen, screenPages, sanityPass, rivalSentences, otherValues, readOwnSite, uncorroborated, ownSiteLine, topLines, tailLines } from './entity.js';
 
@@ -39,7 +39,7 @@ export async function runDeep(ctx, job, { rid, question, agentId, chatId, store 
   if (ctx.settings.get('online') === false) throw Object.assign(new Error('The desk is offline. Research needs the internet.'), { code: 'offline' });
   const signal = job.signal; const meter = { calls: 0 }; const cache = new Map();
   const cardId = 'research-' + rid;
-  let title = question.length > 80 ? question.slice(0, 77) + '…' : question;
+  let title = shortTitle(question, 80);
   const step = (p, detail, extra = {}) => {
     job.throwIfStopped();
     job.progress(p, detail);
@@ -67,7 +67,7 @@ export async function runDeep(ctx, job, { rid, question, agentId, chatId, store 
       { role: 'system', content: sys('You plan web research. Reply with JSON only.') },
       { role: 'user', content: `Research question from the owner: "${question}"\n\n${anchor ? `The question is about ONE entity: ${anchor.name} (${anchor.domain}). ${anchor.siteRead ? `Its own site says: "${anchor.description.slice(0, 300)}"` : ''} Every search query must name it exactly ("${anchor.domain}" or "${anchor.name}" in quotes); other organisations with similar names are NOT it.\n\n` : ''}Return JSON: {"entity": ${anchor ? 'null' : '{"name": "exact name", "about": "what the question says about it"} when the question is about ONE named organisation, company, product, person or website, else null (null for topics, places and technologies in general)'}, "title": "a plain title for the report, at most 10 words", "subquestions": ["4 to 6 sub-questions that together answer it"], "queries": ["7 short web search queries, varied: facts and figures, recent news, official or statistical sources, expert analysis, criticism or risks"]}` }] }, { meter, onWait });
     const j = r.json || {};
-    if (Array.isArray(j.queries) && j.queries.length) plan = { title: String(j.title || title).slice(0, 120), subquestions: (j.subquestions || []).map(String).slice(0, 6), queries: j.queries.map(String).slice(0, 8) };
+    if (Array.isArray(j.queries) && j.queries.length) plan = { title: shortTitle(j.title || title, 120), subquestions: (j.subquestions || []).map(String).slice(0, 6), queries: j.queries.map(String).slice(0, 8) };
     if (!anchor && j.entity && typeof j.entity === 'object' && String(j.entity.name || '').trim()) anchor = { name: String(j.entity.name).trim().slice(0, 80), domain: null, description: String(j.entity.about || question).slice(0, 300), siteRead: false };
   } catch (e) { if (stopped(e, signal)) throw e; ctx.log('plan failed, using the question as the query', e.message); }
   if (anchor) plan.queries = [...new Set([`"${anchor.domain || anchor.name}"`, ...(anchor.domain ? [`site:${anchor.domain}`] : []), ...plan.queries])].slice(0, 8);
@@ -219,7 +219,7 @@ export async function runDeep(ctx, job, { rid, question, agentId, chatId, store 
   take(draft.summary, 'Summary');
   for (const s of Array.isArray(draft.sections) ? draft.sections : []) take(s?.claims, String(s?.heading || 'Findings').slice(0, 100));
   if (!claims.length) throw new Error('The model did not write a usable report (' + writer + ').');
-  if (draft.title) title = String(draft.title).slice(0, 120);
+  if (draft.title) title = shortTitle(draft.title, 120);
 
   // 5b. top-up: until ten distinct sources are confirmed, the pages run out, four rounds, or the time limit.
   //     Each round reads more pages when the unused verified passages cannot reach ten, then turns passages of uncited sources into findings.

@@ -1,7 +1,7 @@
 // Plumbing tests for Research with the fake model (never evidence that research works; see real-check.mjs).
 import test from 'node:test'; import assert from 'node:assert/strict';
 import { testDesk } from '../../test/helpers/desk.js';
-import { verifyQuote, codeSupport, passages, asSource } from './util.js';
+import { verifyQuote, codeSupport, passages, asSource, shortTitle } from './util.js';
 import { pdfBuffer, docxBuffer } from './export.js';
 import { domainIn, anchorFromSite, applyScreen, checkQuantities, uncorroborated, agrees, siteOf, readOwnSite, topLines, tailLines, ownSiteLine } from './entity.js';
 import { mergeFindings, distinctiveWords, mentionsTopic } from './swarm.js';
@@ -330,6 +330,44 @@ test('rival values and the sanity pass compare only the same unit read by code; 
   // different units for one label: nothing compared
   assert.equal(otherValues([{ id: 'c1', quantity: 'price', value: 600000, text: 'It costs ₹6 lakh.' }], [{ id: 'p1', quantity: 'price', value: 7000, text: 'It costs $7,000.', url: 'https://n.example' }]).size, 0);
   // the same currency: shown as the page writes it
-  assert.deepEqual(otherValues([{ id: 'c1', quantity: 'price', value: 600000, text: 'It costs ₹6 lakh.' }], [{ id: 'p1', quantity: 'price', value: 650000, text: 'The price is ₹6.5 lakh.', url: 'https://n.example' }]).get('c1'), [{ value: '₹6.5 lakh', url: 'https://n.example', year: null }]);
+  assert.deepEqual(otherValues([{ id: 'c1', quantity: 'price', value: 600000, text: 'It costs ₹6 lakh.' }], [{ id: 'p1', quantity: 'price', value: 650000, text: 'It costs ₹6.5 lakh.', url: 'https://n.example' }]).get('c1'), [{ value: '₹6.5 lakh', url: 'https://n.example', year: null }]);
   assert.equal(unitOf('a 500 MW plant', 500).unit, 'mw'); assert.equal(unitOf('in 17 years', 17), null); assert.equal(unitOf('the 68th tables', 68), null); assert.equal(unitOf('', 5), null);
+});
+
+test('titles made from a question are cut at a word boundary with an ellipsis, never mid-word', () => {
+  const q = 'What has changed in the solar industry in India over the last ten years, and how have prices changed since their introduction?';
+  for (const max of [60, 70, 80, 120]) {
+    const t = shortTitle(q, max);
+    assert.ok(t.length <= max, `${max}: ${t}`);
+    if (q.length > max) { assert.ok(t.endsWith('…'), t); const kept = t.slice(0, -1); assert.ok(q.startsWith(kept) && /[\s,]/.test(q[kept.length]), `${max} cut mid-word: ${t}`); }
+  }
+  assert.equal(shortTitle('Short question?', 80), 'Short question?');
+  assert.equal(shortTitle('  many   spaces  here ', 80), 'many spaces here');
+  assert.equal(shortTitle('x'.repeat(100), 20), 'x'.repeat(19) + '…');
+});
+
+test('a conflict needs the same thing: same unit, the same subject words and the same years; else no note', async () => {
+  const { sameThing } = await import('./entity.js');
+  // from a real report: a 2012-era 10% set against today's 26.7% ("Another source gives 10.")
+  const old = checkQuantities([
+    { id: 'c1', quantity: 'power conversion efficiency of perovskite solar cells', value: 26.7, percent: true, text: 'The power conversion efficiency of perovskite solar cells has reached 26.7%.', host: 'nature.com' },
+    { id: 'c2', quantity: 'power conversion efficiency of perovskite solar cells', value: 10, percent: true, text: 'In 2012 Oxford University and EPFL Switzerland independently hit 10% efficiency.', host: 'blog.example' }]);
+  assert.equal(old.failed.size, 0); assert.equal(old.notes.size, 0);
+  // the same, with no year written at all: the subjects still differ
+  const old2 = checkQuantities([
+    { id: 'c1', quantity: 'pce', value: 26.7, percent: true, text: 'The power conversion efficiency of perovskite solar cells has reached 26.7%.', host: 'nature.com' },
+    { id: 'c2', quantity: 'pce', value: 10, percent: true, text: 'Oxford University and EPFL Switzerland independently hit 10% efficiency.', host: 'blog.example' }]);
+  assert.equal(old2.failed.size, 0); assert.equal(old2.notes.size, 0);
+  // a record for one tandem cell against what tandem cells reach now: different things, neither is "not checked"
+  const tandem = checkQuantities([
+    { id: 'c3', quantity: 'power conversion efficiency of perovskite-silicon tandem cells', value: 33.9, percent: true, text: 'Longi broke the world record for perovskite-silicon tandem cells at 33.9%.', host: 'a.example' },
+    { id: 'c4', quantity: 'power conversion efficiency of perovskite-silicon tandem cells', value: 35.2, percent: true, text: 'Perovskite/silicon tandem cells have reached 35.2%.', host: 'b.example' }]);
+  assert.equal(tandem.failed.size, 0); assert.equal(tandem.notes.size, 0);
+  // a real conflict: two pages, different values for the same thing in the same year
+  const real = checkQuantities([
+    { id: 'c5', quantity: 'record efficiency of perovskite-silicon tandem cells', year: '2024', value: 33.9, percent: true, text: 'In 2024 the record efficiency of perovskite-silicon tandem cells was 33.9%.', host: 'a.example' },
+    { id: 'c6', quantity: 'record efficiency of perovskite-silicon tandem cells', year: '2024', value: 34.6, percent: true, text: 'The record efficiency for perovskite-silicon tandem cells in 2024 was 34.6%.', host: 'b.example' }]);
+  assert.match(real.failed.get('c5'), /sources disagree/); assert.match(real.failed.get('c6'), /sources disagree/);
+  assert.equal(sameThing('Commercial modules reach 24% efficiency.', 'Laboratory cells reach 26.7% efficiency.'), false, 'a different qualifier');
+  assert.equal(sameThing('The record was 33.9% in 2024.', 'The record was 35.5% in 2026.'), false, 'different years');
 });

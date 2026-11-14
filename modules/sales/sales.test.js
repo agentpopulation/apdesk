@@ -659,7 +659,7 @@ test('one lead search per chat at a time: a reworded repeat while the first runs
   } finally { await t.close(); }
 });
 
-test('country evidence: for an ask that names a country a lead is kept only when a page that was read places it there; the shortfall is plain', async () => {
+test('country evidence: a lead is checked only when a page that was read places it in the asked country; the others are labelled not checked', async () => {
   const { placedIn, listPlaces, askCountry } = await import('./rules.js');
   const { findLeads } = await import('./find.js');
   const IN = askCountry('Indian companies that sell payroll software');
@@ -689,7 +689,7 @@ test('country evidence: for an ask that names a country a lead is kept only when
   for (const title of ['Best HR software in India', 'Top HR software for Indian small businesses', 'HR tools popular with Indian startups', 'Top 10 HR software companies', 'Indian startups pick these HR tools'])
     assert.equal(listPlaces({ title, text: 'x' }, IN), '', title);
   assert.equal(listPlaces({ title: 'HRMS with payroll', text: 'Indian startups and Indian companies alike need simple payroll. Here are ten tools.' }, IN), '', 'the opening text names the audience, not the makers');
-  // through the whole search (stubs): only the leads a page places in India are kept, and the reason says why the rest are missing
+  // through the whole search (stubs): the leads a page places in India come first; the others follow, labelled not checked
   const pad = ' Payroll software for small businesses, compared side by side.'.repeat(6);
   const pages = {
     'https://list.example/in': { title: 'Best payroll software in India', text: 'Northwind People offers payroll software. Quillpay is a Pune-based payroll software company. Harbor HR offers payroll software. Lumen Payroll offers payroll software.' + pad },
@@ -701,9 +701,9 @@ test('country evidence: for an ask that names a country a lead is kept only when
   const names = ['Northwind People', 'Quillpay', 'Harbor HR', 'Lumen Payroll'];
   const model = { async chat({ purpose, messages }) { if (purpose === 'plan') return { json: { queries: ['q'] } }; const t = messages[1].content; return { json: { leads: names.filter(n => t.includes(n)).map(n => ({ page: 0, company: n, kind: 'company', fits: true, need: 'payroll software' })) } }; } };
   const r = await findLeads({ query: 'Find 4 Indian companies that sell payroll software', count: 4, search, model, budget: { extraRounds: 0, firstRounds: 1 } });
-  assert.deepEqual(r.leads.map(l => l.company).sort(), ['Harbor HR', 'Quillpay'], 'placed by the list sentence and by its own .in site');
-  assert.equal(r.rejected['not placed in the country'], 2);
-  assert.match(r.reason, /2 were left out because no page read placed them in India/);
+  assert.deepEqual(r.leads.slice(0, 2).map(l => l.company).sort(), ['Harbor HR', 'Quillpay'], 'placed by the list sentence and by its own .in site');
+  assert.deepEqual(r.leads.slice(2).map(l => [l.company, l.unchecked]).sort(), [['Lumen Payroll', ['Country: not checked']], ['Northwind People', ['Country: not checked']]]);
+  assert.equal(r.reason, '', 'the count is met with the not-checked group');
   assert.equal(r.country.label, 'India');
   assert.match(r.leads.find(l => l.company === 'Quillpay').findings, /Placed in India by "is a Pune-based" \(https:\/\/list\.example\/in\)\./, 'the evidence is said in the findings');
   assert.match(r.leads.find(l => l.company === 'Harbor HR').findings, /Placed in India by "its own site www\.harborhr\.in"/);
@@ -712,7 +712,7 @@ test('country evidence: for an ask that names a country a lead is kept only when
   assert.equal(r2.leads.length, 4);
 });
 
-test('country shortfall in the reply: "2 of 4 found that could be placed in India", and why the rest are missing', async () => {
+test('country in the reply: "2 of 4 are placed in India", the two not placed are listed apart as not checked', async () => {
   const names = ['Northwind People', 'Quillpay', 'Lumen Payroll', 'Tarang HR'];
   const t = await testDesk({ modules: ['sales'], script: findScript(names) });
   try {
@@ -720,11 +720,10 @@ test('country shortfall in the reply: "2 of 4 found that could be placed in Indi
       (q) => /official website/.test(q) ? [] : [{ url: 'https://list.example/a' }]);
     const s = await t.core.modules.runTool('leads_find', { query: 'Indian companies that sell HR or payroll software to small businesses', count: 4 }, { chatId: 'c1' });
     const out = (await t.core.jobs.wait(s.jobId, 60000)).output;
-    assert.equal(out.found, 2, out.text);
-    assert.match(out.text, /^2 of 4 found that could be placed in India: /, out.text);
-    assert.match(out.text, /2 were left out because no page read placed them in India/);
-    assert.match(out.card.title, /^2 of 4 found that could be placed in India/);
+    assert.equal(out.found, 4, out.text);
+    assert.match(out.text, /^Found 4 leads, each with a page that names it\. 2 of 4 are placed in India and sell what you asked for; 2 more are listed as not checked\./, out.text);
     assert.deepEqual(out.card.rows.map(r => r[0]).sort(), ['Quillpay', 'Tarang HR']);
+    assert.deepEqual(out.tables[1].rows.map(r => r[0]).sort(), ['Lumen Payroll', 'Northwind People']);
   } finally { await t.close(); }
 });
 
@@ -810,4 +809,97 @@ test('fit: kept only when a read page says what the company itself sells; staffi
   assert.equal(r.rejected['another kind of business'], 2, JSON.stringify(r.rejected));
   assert.match(r.reason, /2 were another kind of business than the ask/);
   void checkSites;
+});
+
+// ---- two groups: checked leads first, then "not checked" ones up to the count; evidence against still leaves a lead out
+const GROUP_ASK = 'Indian companies that sell payroll software to small businesses';
+const groupPad = ' Payroll software for small businesses, compared side by side.'.repeat(6);
+const groupPages = {
+  'https://list.example/one': { title: 'Payroll software roundup', text: 'Quillpay is a Pune-based payroll software company. Tarang Pay, based in Chennai, sells payroll software. Northwind People offers payroll software. Cedarline HR is a payroll software company headquartered in Lehi, Utah. Brightwell Staffing is a recruitment and staffing company.' + groupPad },
+  'https://list.example/two': { title: 'More payroll tools', text: 'Lumen Payroll offers payroll software. Northwind People offers payroll software. Kelvo Works is listed here among many names.' + groupPad },
+};
+const groupNames = ['Quillpay', 'Tarang Pay', 'Northwind People', 'Cedarline HR', 'Brightwell Staffing', 'Lumen Payroll', 'Kelvo Works'];
+const groupSearch = { async search(q) { return /official website/.test(q) ? [] : [{ url: 'https://list.example/one' }, { url: 'https://list.example/two' }]; },
+  async read(u) { const p = groupPages[u]; if (!p) throw new Error('404'); return { url: u, ...p }; } };
+const groupModel = { async chat({ purpose, messages }) { if (purpose === 'plan') return { json: { queries: ['payroll software india'] } }; const t = messages[1].content; return { json: { leads: groupNames.filter(n => t.includes(n)).map(n => ({ page: 0, company: n, kind: 'company', fits: true, need: 'payroll software' })) } }; } };
+
+test('two groups: checked leads first, then not-checked ones fill up to the count; evidence against and duplicates stay out', async () => {
+  const { findLeads, groupLine } = await import('./find.js');
+  const r = await findLeads({ query: GROUP_ASK, count: 6, search: groupSearch, model: groupModel, budget: { extraRounds: 0, firstRounds: 1 } });
+  const names = r.leads.map(l => l.company);
+  assert.deepEqual(names.slice(0, 2).sort(), ['Quillpay', 'Tarang Pay'], 'checked leads come first: ' + names.join(', '));
+  assert.deepEqual(names.slice(2).sort(), ['Kelvo Works', 'Lumen Payroll', 'Northwind People'], 'then the not-checked ones');
+  assert.ok(!names.includes('Cedarline HR'), 'a page places it in another country: left out');
+  assert.ok(!names.includes('Brightwell Staffing'), 'a page names another kind of business: left out');
+  assert.equal(names.filter(n => n === 'Northwind People').length, 1, 'a duplicate is merged');
+  for (const l of r.leads.slice(0, 2)) assert.deepEqual(l.unchecked, [], l.company);
+  assert.deepEqual(r.leads.find(l => l.company === 'Northwind People').unchecked, ['Country: not checked']);
+  assert.deepEqual(r.leads.find(l => l.company === 'Kelvo Works').unchecked, ['Country: not checked', 'What it sells: not checked']);
+  assert.doesNotMatch(r.leads.find(l => l.company === 'Lumen Payroll').findings, /Placed in India/, 'a not-checked lead never claims the place');
+  // the count is filled from the not-checked group only up to what was asked
+  const r4 = await findLeads({ query: GROUP_ASK, count: 4, search: groupSearch, model: groupModel, budget: { extraRounds: 0, firstRounds: 1 } });
+  assert.equal(r4.leads.length, 4);
+  assert.deepEqual(r4.leads.slice(0, 2).map(l => l.company).sort(), ['Quillpay', 'Tarang Pay']);
+  assert.ok(r4.leads.slice(2).every(l => l.unchecked.length), 'the last two are the not-checked ones');
+  // the closing line states both numbers, counted over the rows shown
+  assert.equal(groupLine(r.leads, { country: r.country, kindAsk: true, asked: 6 }), '2 of 6 are placed in India and sell what you asked for; 3 more are listed as not checked.');
+  assert.equal(groupLine(r.leads.slice(0, 2), { country: r.country, kindAsk: true, asked: 2 }), '2 of 2 are placed in India and sell what you asked for.');
+  assert.equal(groupLine(r.leads, {}), '', 'an ask with no country and no kind of product has one group');
+});
+
+test('two groups on screen: labels on the rows, a labelled not-checked table, both numbers in the reply; top five takes checked leads first; a draft for a not-checked lead asserts no country or product', async () => {
+  const prompts = [];
+  const script = (body) => {
+    const s = sys(body);
+    if (/plan web searches/.test(s)) return { text: JSON.stringify({ queries: ['payroll software india'] }) };
+    if (/list the real companies/.test(s)) { const u = usr(body); return { text: JSON.stringify({ leads: groupNames.filter(n => u.includes(n)).map(n => ({ page: 0, company: n, kind: 'company', fits: true, need: 'payroll software' })) }) }; }
+    prompts.push(usr(body));
+    if (usr(body).includes('Company: Kelvo Works')) return { text: '{"subject": "A quick question", "body": "Hello, I see you are a growing company in India. Could we have a short call next week?"}' };
+    return { text: '{"subject": "A quick question", "body": "Hello, could we have a short call next week?"}' };
+  };
+  const t = await testDesk({ modules: ['sales'], script });
+  try {
+    t.core.modules.active.set('search', { handle: null, api: groupSearch });
+    const s = await t.core.modules.runTool('leads_find', { query: GROUP_ASK, count: 6 }, { chatId: 'c1' });
+    const out = (await t.core.jobs.wait(s.jobId, 60000)).output;
+    assert.equal(out.found, 5, out.text);
+    assert.match(out.text, /2 of 6 are placed in India and sell what you asked for; 3 more are listed as not checked\./, out.text);
+    assert.doesNotMatch(out.text, /that could be placed in India|and places it in India/, 'the reply never says the not-checked ones were placed');
+    assert.deepEqual(out.card.rows.map(r => r[0]).sort(), ['Quillpay', 'Tarang Pay'], 'the first table holds the checked leads');
+    const open = out.tables[1];
+    assert.match(open.title, /^Not checked: no page read said where these are or what they sell/);
+    assert.deepEqual(open.rows.map(r => r[0]).sort(), ['Kelvo Works', 'Lumen Payroll', 'Northwind People']);
+    const col = open.columns.indexOf('Not checked');
+    assert.ok(col > 0, open.columns.join(', '));
+    assert.equal(open.rows.find(r => r[0] === 'Kelvo Works')[col], 'Country: not checked; What it sells: not checked');
+    assert.ok(!out.card.actions?.length && open.actions.some(a => a.label === 'Find more'), 'the buttons show once, under the last table');
+    const leads = (await t.call('/api/m/sales/leads')).json.leads;
+    assert.deepEqual(leads.find(l => l.company === 'Lumen Payroll').unchecked, ['Country: not checked'], 'the pipeline keeps the label');
+    assert.deepEqual(leads.find(l => l.company === 'Quillpay').unchecked, []);
+    // "top five" is the first five rows shown: the checked ones first
+    const d = await t.core.modules.runTool('outreach_draft', { top: 5 }, { chatId: 'c1' });
+    assert.deepEqual(d.taken.slice(0, 2).map(x => x.company).sort(), ['Quillpay', 'Tarang Pay'], JSON.stringify(d.taken));
+    assert.equal(d.taken.length, 5);
+    const kelvo = prompts.find(p => p.includes('Company: Kelvo Works'));
+    assert.ok(kelvo, 'a draft was asked for Kelvo Works');
+    assert.match(kelvo, /Where the company is based: not checked/);
+    assert.match(kelvo, /What the company sells: not checked/);
+    assert.doesNotMatch(kelvo, /India|payroll software/i, 'the facts given for a not-checked lead state no country and no product');
+    const drafts = (await t.call('/api/m/sales/state')).json.drafts;
+    const kDraft = drafts.find(x => x.leadId === leads.find(l => l.company === 'Kelvo Works').id);
+    assert.ok(kDraft && !/India/.test(kDraft.body), 'a place the model added anyway is taken out in code: ' + kDraft?.body);
+    const quill = prompts.find(p => p.includes('Company: Quillpay'));
+    assert.doesNotMatch(quill, /not checked/, 'a checked lead is drafted as before');
+  } finally { await t.close(); }
+});
+
+test('page text and titles: phone brackets balance; titles and quotes are cut at a word with an ellipsis', async () => {
+  const { balanceBrackets, placedIn, askCountry } = await import('./rules.js');
+  const { cutWords } = await import('./find.js');
+  assert.equal(balanceBrackets('+91) 9311776363'), '+91 9311776363');
+  assert.equal(balanceBrackets('(+91) 9311776363'), '(+91) 9311776363');
+  assert.equal(balanceBrackets('+91 (22 4000 1234'), '+91 22 4000 1234');
+  assert.equal(placedIn('Call us on (+91) 9311776363 today.', 'Zentra Pay', askCountry('Indian payroll companies'), { own: true }), '+91 9311776363');
+  assert.equal(cutWords('Indian companies that sell HR or payroll software to small businesses', 60), 'Indian companies that sell HR or payroll software to small…');
+  assert.equal(cutWords('short ask', 60), 'short ask');
 });

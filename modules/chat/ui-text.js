@@ -114,10 +114,45 @@ export function stepReason(st) {
   const r = st?.result?.refused;
   if (r === 'read pages first') return 'no page was read yet';
   if (r === 'binary file through the plain file tool') return 'plain text cannot make that kind of file';
+  if (r === 'the research saves its own report') return 'the research saves its own report';
   if (r) return String(r);
   if (st?.result?.skipped) return String(st.result.skipped);
   if (st?.status === 'stopped') return 'stopped';
   return st?.error ? String(st.error).replace(/\s+/g, ' ').trim().slice(0, 160) : 'it did not work';
+}
+/** Why a try did not make what was asked, as a sentence for the owner (no tool names, no desk terms). */
+export function plainWhy(st) {
+  const r = st?.result?.refused;
+  if (r === 'read pages first') return 'no web page had been read yet, and the desk does not save facts no page backs up';
+  if (r === 'binary file through the plain file tool') return 'plain text cannot make that kind of file';
+  if (r === 'the research saves its own report') return 'the research started here saves its own report';
+  if (r) return 'the desk did not allow it (' + String(r) + ')';
+  if (st?.result?.skipped) return 'the same work had already started';
+  if (st?.status === 'stopped') return 'it was stopped';
+  return st?.error ? 'it did not work: ' + String(st.error).replace(/\s+/g, ' ').trim().slice(0, 160) : 'it did not work';
+}
+/** Shorten at a word, never in the middle of one, and end with "…". */
+export function cutAtWord(text, n) {
+  const s = String(text ?? '').replace(/\s+/g, ' ').trim();
+  if (s.length <= n) return s;
+  const cut = s.slice(0, n + 1); const i = cut.lastIndexOf(' ');
+  return (i > n * 0.4 ? cut.slice(0, i) : s.slice(0, n)).replace(/[\s,;:.·-]+$/, '') + '…';
+}
+/** The rail's line under a chat: the cleaned last message, or the fallback (the agent's role) when it has under three letters. */
+export function railLine(last, fallback = '') {
+  const p = previewText(last);
+  return (p.match(/\p{L}/gu) || []).length >= 3 ? p : fallback;
+}
+/** A streaming reply while one of its steps waits for the owner's approval: a sentence that says a file is saved, written or
+ *  sent is not shown (the step has not done it yet); the line that is true is shown instead. Once the step is done, nothing changes here. */
+export function liveText(text, steps = []) {
+  const waiting = (steps || []).filter(st => st && st.waiting);
+  if (!waiting.length) return text;
+  const written = (steps || []).flatMap(st => st.status === 'done' ? st.wrote || [] : []);
+  const kept = dropFileClaims(text, written, { jobStarted: true }).text;
+  const names = waiting.map(st => { const p = String(st.args?.path || st.args?.name || st.args?.title || '').trim(); return p ? p.split(/[\\/]/).pop() : ''; });
+  const line = names.every(Boolean) ? `Waiting for your approval to write ${names.join(' and ')}.` : `Waiting for your approval: ${waiting.map(st => st.waiting).join('; ')}.`;
+  return kept ? kept + '\n\n' + line : line;
 }
 export const TOOL_WORDS = { web_search: 'searched the web', web_read: 'read a page', research_deep: 'started deep research', research_swarm: 'started a swarm', browser_task: 'started a browser task', file_write: 'wrote a file', file_read: 'read a file', file_list: 'listed files', table_file: 'made a table file', doc_file: 'made a document', task_create: 'made a task', schedule_create: 'made a schedule', leads_find: 'looked for leads', outreach_draft: 'drafted outreach', memory_remember: 'remembered something', memory_recall: 'looked in memory', council_ask: 'asked the Council', agent_update: 'asked to change an agent' };
 const BASE = { searched: 'search', read: 'read', started: 'start', wrote: 'write', listed: 'list', made: 'make', looked: 'look', drafted: 'draft', remembered: 'remember', asked: 'ask', used: 'use' };

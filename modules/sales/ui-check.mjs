@@ -9,7 +9,7 @@ const results = []; const check = (n, ok, ev = '') => { results.push(!!ok); cons
 const t = await testDesk({ modules: ['sales', 'mail', 'calendar'] });
 const names = ['Northgate Logistics', 'Kaveri Foods', 'Sahyadri Pharma', 'Coastal Cold Chain', 'Meridian Textiles', 'Orbit Components', 'Deccan Motors', 'Harlow & Penn', 'Orion Drives India', 'Kestrel Ltd', 'Marlow Automation India', 'Tarang Electric India', 'Vellore Controls', 'Sahyog Robotics', 'Nilgiri Automation', 'Konkan Hydraulics', 'Ridgeway Automation', 'Pallava Valves'];
 for (const [i, c] of names.entries()) {
-  const r = await t.call('/api/m/sales/leads', { body: { company: c, contactName: i % 3 ? '' : 'R. Menon', contactRole: i % 3 ? '' : 'Operations head', valueMinor: i % 4 ? (i + 3) * 120000 : null, need: 'Warehouse automation', sources: [{ title: 'Top automation companies', url: 'https://example.com/list' }], findings: 'The page lists them among industrial automation makers.' } });
+  const r = await t.call('/api/m/sales/leads', { body: { company: c, contactName: i % 3 ? '' : 'R. Menon', contactRole: i % 3 ? '' : 'Operations head', valueMinor: i % 4 ? (i + 3) * 120000 : null, need: 'Warehouse automation', sources: [{ title: 'Top automation companies', url: 'https://example.com/list' }], findings: 'The page lists them among industrial automation makers.', unchecked: i % 4 === 3 ? ['Country: not checked'] : [] } });
   if (i % 4 === 1) await t.call(`/api/m/sales/leads/${r.json.lead.id}/move`, { body: { stage: 'Researched' } });
   if (i % 4 === 2) await t.call(`/api/m/sales/leads/${r.json.lead.id}/move`, { body: { stage: 'In talks' } });
 }
@@ -31,6 +31,7 @@ for (const [w, hgt] of [[1920, 1080], [1366, 768]]) for (const theme of ['light'
   check(`Sales ${w}x${hgt} ${theme}: full window, no page scroll, board scrolls inside its lanes`, g.pageScroll <= 0 && g.viewScroll <= 1 && g.boardBottom <= g.paneBottom && g.laneCanScroll.every(x => x === 'auto') && g.paneW > g.vw - 40, JSON.stringify({ pageScroll: g.pageScroll, viewScroll: g.viewScroll, laneOverflowing: g.laneScrolls, boardBottom: g.boardBottom, paneBottom: g.paneBottom }));
   await page.screenshot({ path: path.join(out, `sales_${w}x${hgt}_${theme}.png`) });
   if (w === 1920 && theme === 'light') {
+    check('the New lane shows checked leads first, then the labelled not-checked group', await page.evaluate(() => { const lane = document.querySelector('.lane .cards'); const kids = [...lane.children]; const g = kids.findIndex(x => x.classList.contains('grp')); return g > 0 && kids.slice(g + 1).every(x => /Country: not checked/.test(x.textContent)) && kids.slice(0, g).every(x => !/not checked/.test(x.querySelectorAll('.sub')[2]?.textContent || '')); }), '');
     check('title, tiles', g.title === 'Sales' && g.tiles.length === 4, g.tiles.join(' | '));
     // drag a card from New to In talks
     const first = page.locator('.lane[data-stage="new"] .lead').first(); const name = (await first.locator('b').first().textContent());

@@ -219,6 +219,11 @@ export async function chatWithAgent(page, agentId, name) {
 // ---------------------------------------------------------------- judge (the runner's own yes/no model calls)
 /** Appended to every yes/no question the runner asks a judge model: the verdict is one word on the last line. */
 export const JUDGE_FORMAT = '\nGive one short reason first. Then end your reply with a last line that holds exactly one word: YES or NO.';
+/** Added to the second try when the first reply could not be read: the strict rule, said plainly. */
+export const JUDGE_RETRY = '\nYour answer is read by a program. It reads ONLY the last line, and that line must be exactly YES or NO, nothing else. A reply that starts "Yes, the text says..." or ends with a sentence counts as no answer.';
+/** Jobs created after the desk registered Panic (haltedAt in ms, from the desk's own panic state). A job created before
+ *  that moment, even by a few ms, was running when Panic hit: whether it stopped is checked separately, it is not counted here. */
+export function jobsStartedWhileHalted(jobs, haltedAt) { return (jobs || []).filter(j => new Date(j.created).getTime() > haltedAt); }
 /** The verdict in a judge's reply: 'YES', 'NO', or null when it cannot be read. The last line, stripped of markdown and
  *  end punctuation, may be the word alone (any case, "Answer: YES" too); else the last upper-case YES or NO token in
  *  the reply counts. Lower-case "yes" or "no" inside the reasoning is never read as a verdict. */
@@ -235,7 +240,7 @@ export function judgeVerdict(text) {
 export async function askJudge(desk, prompt) {
   const texts = [];
   for (let i = 0; i < 2; i++) {
-    const j = await desk.ask(prompt + JUDGE_FORMAT);
+    const j = await desk.ask(prompt + JUDGE_FORMAT + (i ? JUDGE_RETRY : ''));
     const text = String(j.text || (j.error ? 'error: ' + j.error : '')); texts.push(text);
     const verdict = j.text ? judgeVerdict(j.text) : null;
     if (verdict) return { verdict, text, tries: i + 1 };

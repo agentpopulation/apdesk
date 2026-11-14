@@ -199,7 +199,7 @@ test('a file ask: searches are capped, the last step is forced onto the file too
     t.core.modules.tools.set('table_file', { module: 'office', name: 'table_file', description: 'table', parameters: { type: 'object', properties: {} }, async run() { return { ok: false, error: 'disk full' }; } });
     await t.call('/api/m/chat/chats/dm-coder/send', { body: { text: 'Compare C and D into a table file, xlsx.' } });
     const r2 = await waitReply(t, 'dm-coder');
-    assert.match(r2.last.text, /The table file was not made/); assert.ok(r2.last.meta.blocked); assert.ok(r2.last.cards.some(c => c.kind === 'actions'));
+    assert.match(r2.last.text, /The table file was not saved/); assert.ok(r2.last.meta.blocked); assert.ok(r2.last.cards.some(c => c.kind === 'actions'));
   } finally { await t.close(); }
 });
 
@@ -779,7 +779,7 @@ test('fix 8c: the reason says what happened (refused calls and why); a tool refu
     const refused = last.meta.steps.filter(s => s.tool === 'doc_file' && s.status === 'refused');
     assert.equal(refused.length, 2); assert.equal(docs.length, 0);
     assert.ok(offeredLog.slice(2).every(o => !o.includes('doc_file')), JSON.stringify(offeredLog));
-    assert.match(last.text, /called doc file 2 times and each call was refused \(no page was read yet\)/); assert.doesNotMatch(last.text, /did not call/);
+    assert.match(last.text, /The document was not saved\. The agent tried twice, but no web page had been read yet/); assert.doesNotMatch(last.text, /did not call|doc file|refused/);
   } finally { await t.close(); }
 });
 
@@ -1397,4 +1397,133 @@ test('a table in a reply: the bubble widens as soon as the table starts, short c
   assert.match(src, /\.chatv \.msg th\{[^}]*hyphens:none/);
   assert.match(src, /\.chatv \.msg \.scroll\{[^}]*overflow-x:auto/);
   assert.match(src, /\.chatv \.msg\.tbl\{[^}]*max-width:100%/);
+});
+
+// ---------- research tasks, outcomes, approvals, previews
+const BIKE = 'In the background, research the history of the bicycle and save a short brief.';
+test('a background task for a research ask goes to the research agent, whichever agent the model named', async () => {
+  const started = [];
+  const t = await testDesk({ modules: ['chat', 'agents'], script: (b) => {
+    const offered = (b.tools || []).map(x => x.function.name);
+    return offered.includes('task_create') && !b.messages.some(m => m.role === 'tool') ? { toolCalls: [{ name: 'task_create', args: { prompt: 'Research the history of the bicycle and save a short brief.', agentId: 'coder' } }] } : 'Started.';
+  } });
+  try {
+    taskTool(t, started);
+    await t.call('/api/m/chat/chats/dm-coordinator/send', { body: { text: BIKE } });
+    await waitReply(t, 'dm-coordinator');
+    assert.equal(started.length, 1); assert.equal(started[0].agentId, 'scout');
+  } finally { await t.close(); }
+});
+
+const researchFake = (t, { finish } = {}) => t.core.modules.tools.set('research_deep', { module: 'research', name: 'research_deep', description: 'deep research', parameters: { type: 'object', properties: { question: { type: 'string' } } }, async run(a, call) {
+  const j = await t.core.jobs.start({ kind: 'research.deep', title: 'Deep research: bicycles', agentId: 'scout', chatId: call.chatId, run: async () => { await finish; return { summary: 'report' }; } });
+  return { started: true, jobId: j.id };
+} });
+const docFake = (t, docs) => t.core.modules.tools.set('doc_file', { module: 'office', name: 'doc_file', description: 'd', parameters: { type: 'object', properties: {} }, async run(a) { docs.push(a); return { ok: true, path: 'docs/b.docx' }; } });
+const researchThenDoc = (b) => {
+  const offered = (b.tools || []).map(x => x.function.name); const ran = b.messages.filter(m => m.role === 'tool').length;
+  if (ran === 0 && offered.includes('research_deep')) return { toolCalls: [{ name: 'research_deep', args: { question: 'History of the bicycle' } }] };
+  if (offered.includes('doc_file')) return { toolCalls: [{ name: 'doc_file', args: { title: 'Bicycle', markdown: '# Bicycle' } }] };
+  return 'The research is running; its report will be the brief.';
+};
+
+test('a research job started in the turn writes the brief: no document is made before any page is read, and the turn is not marked unfinished', async () => {
+  const docs = [];
+  const t = await testDesk({ modules: ['chat', 'agents'], script: researchThenDoc });
+  try {
+    researchFake(t, { finish: Promise.resolve() }); docFake(t, docs);
+    await t.call('/api/m/chat/chats/dm-scout/send', { body: { text: 'Research the history of the bicycle and save a short brief as a Word document.' } });
+    const { all } = await waitReply(t, 'dm-scout'); const last = all.filter(m => m.role === 'assistant' && m.meta?.steps).at(-1);
+    assert.ok(last.meta.steps.some(s => s.tool === 'research_deep' && s.status === 'done'), JSON.stringify(last.meta.steps));
+    assert.equal(docs.length, 0);
+    assert.equal(last.meta.blocked, undefined); assert.equal(last.meta.unfinished ?? null, null);
+    assert.doesNotMatch(last.text, /not made|not saved/);
+  } finally { await t.close(); }
+});
+
+test('a task turn that did not make what it was asked records why in plain words, and its task card does not say Done', async () => {
+  const t = await testDesk({ modules: ['chat', 'agents'], script: (b) => {
+    const offered = (b.tools || []).map(x => x.function.name);
+    return offered.includes('doc_file') ? { toolCalls: [{ name: 'doc_file', args: { title: 'Prices', markdown: '# Prices' } }] } : 'I could not.';
+  } });
+  try {
+    t.core.modules.tools.set('web_search', { module: 'search', name: 'web_search', description: 's', parameters: { type: 'object', properties: {} }, async run() { return { results: [] }; } });
+    docFake(t, []);
+    let out;
+    const j = await t.core.jobs.start({ kind: 'tasks.run', title: 'Prices', agentId: 'coder', chatId: 'dm-coder', run: async (job) => { out = await t.core.modules.api('chat').ask({ chatId: 'dm-coder', agentId: 'coder', text: 'Compare the prices of the iPhone 16 and Pixel 9 in a Word document.', signal: job.signal, note: 'Background task: Prices' }); return { answer: out.text }; } });
+    await t.core.jobs.wait(j.id); await new Promise(r => setTimeout(r, 150));
+    assert.ok(out.unfinished, 'the outcome says it did not finish');
+    for (const s of [out.text, out.unfinished]) { assert.doesNotMatch(s, /doc file|refused|called|\(no page/); }
+    assert.match(out.unfinished, /not saved/i);
+    const msgs = (await t.call('/api/m/chat/chats/dm-coder/messages')).json.messages;
+    const card = msgs.flatMap(m => m.cards || []).filter(c => c.kind === 'progress' && c.jobId === j.id).at(-1);
+    assert.ok(card, 'the task has a card'); assert.equal(card.status, 'failed'); assert.match(card.detail, /not saved/i);
+  } finally { await t.close(); }
+});
+
+test('a task that started research is not over until the research is: ask waits for it, and a research that failed makes the task unfinished', async () => {
+  let release; const gate = new Promise((_, rej) => { release = () => rej(new Error('No page could be read.')); });
+  gate.catch(() => {});
+  const t = await testDesk({ modules: ['chat', 'agents'], script: researchThenDoc });
+  try {
+    researchFake(t, { finish: gate }); docFake(t, []);
+    let done = false;
+    const p = t.core.modules.api('chat').ask({ chatId: 'dm-scout', agentId: 'scout', text: 'Research the history of the bicycle and save a short brief.', signal: new AbortController().signal, note: 'Background task: Bicycle' }).then(r => { done = true; return r; });
+    await new Promise(r => setTimeout(r, 1500));
+    assert.equal(done, false, 'still waiting for the research');
+    release();
+    const r = await p;
+    assert.match(r.unfinished || '', /research did not finish/i);
+  } finally { await t.close(); }
+});
+
+test('while a write waits for approval, a reply that says it is written shows what is true instead', async () => {
+  const { liveText } = await import('./ui-text.js');
+  const steps = [{ tool: 'file_write', status: 'running', args: { path: 'notes/ideas.md' }, waiting: 'Write notes/ideas.md' }];
+  const said = 'I have written the file notes/ideas.md with your ideas.';
+  assert.equal(liveText(said, steps), 'Waiting for your approval to write ideas.md.');
+  assert.equal(liveText('Here are some thoughts.', steps), 'Here are some thoughts.\n\nWaiting for your approval to write ideas.md.');
+  const done = [{ tool: 'file_write', status: 'done', args: { path: 'notes/ideas.md' }, wrote: ['notes/ideas.md'] }];
+  assert.equal(liveText(said, done), said);
+  assert.equal(liveText(said, []), said, 'nothing waits: the end-of-turn check decides');
+});
+
+test('a write in a plain chat turn records that it waits for approval on its step', async () => {
+  const t = await testDesk({ modules: ['chat', 'agents'], script: (b) => b.messages.some(m => m.role === 'tool') ? 'Saved.' : { toolCalls: [{ name: 'fx_write', args: { path: 'notes/a.md' } }] } });
+  try {
+    let seen = null; let go;
+    t.core.modules.tools.set('fx_write', { module: 'files', name: 'fx_write', description: 'w', parameters: { type: 'object', properties: { path: { type: 'string' } } }, async run(a, call) {
+      t.core.events.emit('approval', { id: 'ap_1', chatId: call.chatId, status: 'pending', title: 'Write notes/a.md' });
+      await new Promise(r => { go = r; setTimeout(r, 400); });
+      seen = (await t.call('/api/m/chat/chats/dm-coder/messages')).json.messages.at(-1).meta.steps.at(-1).waiting;
+      t.core.events.emit('approval', { id: 'ap_1', chatId: call.chatId, status: 'approved', title: 'Write notes/a.md' });
+      return { ok: true };
+    } });
+    await t.call('/api/m/chat/chats/dm-coder/send', { body: { text: 'run fx_write for notes/a.md' } });
+    const { last } = await waitReply(t, 'dm-coder');
+    assert.equal(seen, 'Write notes/a.md'); assert.ok(!last.meta.steps.at(-1).waiting);
+  } finally { await t.close(); }
+});
+
+test('previews and titles end at a word with "…"; the rail shows the role for a preview with under three letters', async () => {
+  const { cutAtWord, railLine } = await import('./ui-text.js');
+  assert.equal(cutAtWord('Day 2 Amber Fort Elephant Ride · City Palace', 36), 'Day 2 Amber Fort Elephant Ride…');
+  assert.equal(cutAtWord('short', 36), 'short');
+  assert.equal(cutAtWord('what changed since their initial release', 30), 'what changed since their…');
+  assert.equal(railLine('42', 'Files, tables and code'), 'Files, tables and code');
+  assert.equal(railLine('', 'Files, tables and code'), 'Files, tables and code');
+  assert.equal(railLine('**Done**: the table is ready', 'x'), 'Done: the table is ready');
+  const { deliverableFor, timedAsk } = await import('./coordinator.js');
+  const d = deliverableFor('In the background, check which of these products changed since their initial release and what their prices are now.', [{ name: 'task_create' }]);
+  assert.equal(d.args.title, 'Check which of these products changed since their initial release and…');
+  const tm = timedAsk('In one minute, check which of these products changed since their initial release and list them.');
+  assert.ok(tm.title.endsWith('…') && /\s\w+…$/.test(tm.title), tm.title); assert.ok('Check which of these products changed since their initial release and list them.'.startsWith(tm.title.slice(0, -1)));
+  assert.ok(/[\s]/.test('Check which of these products changed since their initial release and list them.'[tm.title.length - 1]), tm.title);
+  const t = await testDesk({ modules: ['chat', 'agents'], script: () => 'ok' });
+  try {
+    const long = 'Here is a two-day itinerary for Jaipur with an Elephant Ride at Amber Fort and a walk through the City Palace and the old bazaars near Hawa Mahal in the evening light.';
+    t.core.modules.api('chat').postMessage('everyone', { text: long });
+    const r = t.core.modules.api('chat').recent(6).find(c => c.id === 'everyone');
+    assert.ok(r.last.endsWith('…')); assert.ok(long.startsWith(r.last.slice(0, -1)) && long[r.last.length - 1] === ' ', r.last);
+  } finally { await t.close(); }
 });

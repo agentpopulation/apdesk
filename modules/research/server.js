@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { runDeep } from './deep.js';
 import { runSwarm } from './swarm.js';
-import { stopped } from './util.js';
+import { stopped, shortTitle } from './util.js';
 
 const now = () => new Date().toISOString();
 const rid = (p) => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -39,8 +39,8 @@ export async function activate(ctx) {
     if (!question) throw new Error('Say what to research.');
     if (!ctx.agents.get(agentId)) agentId = 'scout';
     const id = rid('rep_');
-    ctx.db.run('INSERT INTO m_research_reports (id, question, title, status, step, progress, chat_id, agent_id, created, updated) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)', id, question, question.slice(0, 120), 'running', 'Starting', chatId, agentId, now(), now());
-    const job = await ctx.jobs.start({ kind: 'research.deep', title: 'Research: ' + question.slice(0, 80), agentId, chatId, input: { question, reportId: id },
+    ctx.db.run('INSERT INTO m_research_reports (id, question, title, status, step, progress, chat_id, agent_id, created, updated) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)', id, question, shortTitle(question, 120), 'running', 'Starting', chatId, agentId, now(), now());
+    const job = await ctx.jobs.start({ kind: 'research.deep', title: 'Research: ' + shortTitle(question, 80), agentId, chatId, input: { question, reportId: id },
       async run(j) {
         try { return await runDeep(ctx, j, { rid: id, question, agentId, chatId, store: reports }); }
         catch (e) {
@@ -65,7 +65,7 @@ export async function activate(ctx) {
     const id = rid('swm_');
     ctx.db.run('INSERT INTO m_research_swarms (id, task, size, status, chat_id, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?)', id, task, agents, 'running', chatId, now(), now());
     const concurrency = Math.max(1, Math.min(10, Number(ctx.kv.get('swarmConcurrency', 4)) || 4));
-    const job = await ctx.jobs.start({ kind: 'research.swarm', title: `Swarm of ${agents}: ${task.slice(0, 70)}`, agentId, chatId, input: { task, agents, swarmId: id },
+    const job = await ctx.jobs.start({ kind: 'research.swarm', title: `Swarm of ${agents}: ${shortTitle(task, 70)}`, agentId, chatId, input: { task, agents, swarmId: id },
       async run(j) {
         try { return await runSwarm(ctx, j, { sid: id, task, agents, agentId, chatId, store: swarms, concurrency }); }
         catch (e) {

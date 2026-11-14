@@ -2,7 +2,7 @@
 // show "waiting", rate limits back off instead of failing), each scout on a different live model where more than one
 // answers. Scouts return structured findings, each with its source. The merge is code: no finding with a source is
 // dropped unless it is a duplicate, URLs are kept whole, and the count printed is the count listed.
-import { askModel, asSource, DATA_RULE, passages, pool, stopped, sleep, host, words, norm } from './util.js';
+import { askModel, asSource, DATA_RULE, passages, pool, stopped, sleep, host, words, norm, shortTitle } from './util.js';
 
 const GENERIC = new Set('compare comparison find list best most popular main three four five several each their about what which explain describe overview guide typical strengths weaknesses pros cons give show tell research report sources latest current work works working main drawback using used'.split(' '));
 /** The words a page must mention to count as on topic: names (capitals, digits, dots) when the task has any, else its content words. */
@@ -66,18 +66,18 @@ export async function runSwarm(ctx, job, { sid, task, agents, agentId, chatId, s
   const signal = job.signal; const meter = { calls: 0 }; const cache = new Map();
   const cardId = 'swarm-' + sid;
   const save = (patch) => { store.update(sid, patch); };
-  const tick = (p, detail) => { job.throwIfStopped(); job.progress(p, detail); job.card({ kind: 'progress', id: cardId, title: 'Swarm: ' + task.slice(0, 70), detail, progress: p, status: 'running' }); };
+  const tick = (p, detail) => { job.throwIfStopped(); job.progress(p, detail); job.card({ kind: 'progress', id: cardId, title: 'Swarm: ' + shortTitle(task, 70), detail, progress: p, status: 'running' }); };
   const topic = distinctiveWords(task);
 
   // 1. split
   tick(0.03, `Splitting the job for ${agents} agents`);
-  let parts = [{ title: task.slice(0, 80), query: task }];
+  let parts = [{ title: shortTitle(task, 80), query: task }];
   for (let attempt = 0; agents > 1 && parts.length < 2 && attempt < 2; attempt++) {     // an unusable split gets one more try
     try {
       const r = await askModel(ctx, { agentId, purpose: 'plan', json: true, signal, maxTokens: 300 + agents * 60, messages: [
         { role: 'system', content: 'You split a job into independent parts for parallel web research agents. Reply with JSON only.' },
         { role: 'user', content: `Job: "${task}"\nSplit it into exactly ${agents} distinct parts that together cover the job, with no overlap. Every search query must keep the job's own names and key words. JSON: {"parts": [{"title": "a few words", "query": "a short web search query for this part"}]}` }] }, { meter });
-      const got = (r.json?.parts || []).filter((p) => p?.query).slice(0, agents).map((p) => ({ title: String(p.title || p.query).slice(0, 80), query: String(p.query).slice(0, 200) }));
+      const got = (r.json?.parts || []).filter((p) => p?.query).slice(0, agents).map((p) => ({ title: shortTitle(p.title || p.query, 80), query: String(p.query).slice(0, 200) }));
       if (got.length) parts = got; else ctx.log('split gave no parts', r.label);
     } catch (e) { if (stopped(e, signal)) throw e; ctx.log('split failed', e.message); }
   }
@@ -142,7 +142,7 @@ export async function runSwarm(ctx, job, { sid, task, agents, agentId, chatId, s
   const failed = tiles.filter((t) => t.status === 'failed').length;
   save({ status: 'done', answer: m.text, sources: m.sources, label, tiles, data: { modelCalls: meter.calls, labels: [...(meter.labels || [])], scoutModels: m.labels, oneModel: m.oneModel, findings: m.count, scouts: m.scouts, failed } });
   ctx.events.emit('research', { kind: 'swarm', id: sid, tiles, done: true });
-  job.card({ kind: 'progress', id: cardId, title: 'Swarm: ' + task.slice(0, 70), detail: `Done: ${m.count} findings from ${m.scouts} scouts, ${m.sources.length} sources`, progress: 1, status: 'done' });
+  job.card({ kind: 'progress', id: cardId, title: 'Swarm: ' + shortTitle(task, 70), detail: `Done: ${m.count} findings from ${m.scouts} scouts, ${m.sources.length} sources`, progress: 1, status: 'done' });
   job.card({ kind: 'text', text: `**Swarm answer**\n\n${m.text}` });
   if (m.sources.length) job.card({ kind: 'sources', items: m.sources });
   return { swarmId: sid, parts: tiles.length, done: done.length, failed, findings: m.count, scouts: m.scouts, sources: m.sources.length, oneModel: m.oneModel, scoutModels: m.labels, label, go: '#/research/swarm/' + sid };

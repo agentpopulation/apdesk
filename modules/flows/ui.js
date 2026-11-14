@@ -11,7 +11,7 @@ function style() {
   document.head.append(s);
 }
 
-const statusWord = { running: ['Running', 'run'], waiting: ['Waiting for you', 'wait'], done: ['Done', 'ok'], failed: ['Failed', 'stop'], stopped: ['Stopped', 'stop'], interrupted: ['Interrupted', 'stop'], missed: ['Missed', 'wait'], skipped: ['Skipped', 'wait'] };
+const statusWord = { running: ['Running', 'run'], waiting: ['Waiting for you', 'wait'], done: ['Done', 'ok'], failed: ['Did not finish', 'stop'], stopped: ['Stopped', 'stop'], interrupted: ['Interrupted', 'stop'], missed: ['Missed', 'wait'], skipped: ['Skipped', 'wait'] };
 
 export const pages = {
   flows: {

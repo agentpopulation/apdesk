@@ -3,9 +3,12 @@
 // Rules: never invent a company, contact, email or number; a news site, directory or shop is not itself a lead;
 // anything a page did not say stays empty.
 import { hostKind, hostOf, skipSource, notACompany, isPublisher, looksLikeSeller, buyerAsk, textNames, textHas, emailIn, normName, coreName, companyKey, siteMatches, emailsOn, sentenceNaming, strictEmail, topicWords, sameBusiness, sameCompany, namesCompany, sameSeller, askCountry, siteCountry, wrongCountrySite, needOnPage, emailCountry, aboutSameBusiness, siteRoot, segmentClash, placedElsewhere, placedIn, listPlaces, siteFits, sellsIn, otherKindIn, askKind, registrableDomain } from './rules.js';
+import { wordClip } from './parse.js';
 
 const clip = (v, n) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 const PAGE_CHARS = 4000;
+/** At most n characters, cut at a word and ended with "…" when anything was cut. */
+export function cutWords(v, n) { const s = String(v ?? '').replace(/\s+/g, ' ').trim(); if (s.length <= n) return s; return wordClip(s, n - 1).replace(/[\s.,;:–-]+$/, '') + '…'; }
 
 /** Search queries for an ask: the model's plan plus plain variants (never fewer than three). */
 export async function planQueries({ query, model, agentId, signal }) {
@@ -71,7 +74,7 @@ export function checkRow(row, page, { query, buyerProduct }) {
   const country = askCountry(query);
   if (placedElsewhere(about, company, country)) return { reject: 'does not fit' };
   const hk = hostKind(page.url);
-  const findings = [need, quoteOk ? `The page says: "${clip(row.quote, 240)}"` : '', `From ${page.title || hostOf(page.url)}${hk ? ` (${hk} page)` : ''}.`].filter(Boolean).join(' ');
+  const findings = [need, quoteOk ? `The page says: "${cutWords(row.quote, 240)}"` : '', `From ${page.title || hostOf(page.url)}${hk ? ` (${hk} page)` : ''}.`].filter(Boolean).join(' ');
   const lead = { company, contactName, contactRole, email, website, need, findings, sources: [{ title: clip(page.title || hostOf(page.url), 200), url: page.url }], query };
   // the ask names a country: what on this page places the company there (its sentences, or the page being a list of that country's companies)
   const placed = country ? placedIn(page.text, company, country) || listPlaces(page, country) : '';
@@ -136,6 +139,8 @@ export async function findLeads({ query, count = 20, search, model, agentId = 'c
   if (budget.siteMinutes === 0) B.noSites = true;
   const left = () => B.totalMs - (Date.now() - t0);
   const buyerProduct = buyerAsk(query); const country = askCountry(query); const kindAsk = !!askKind(query);
+  // what no page read has said yet about a candidate: the labels a not-checked lead carries
+  const openChecks = (l) => [country && !l.placed && 'Country: not checked', kindAsk && !l.sells && 'What it sells: not checked'].filter(Boolean);
   const used = []; const usedSet = new Set(skipQueries.map(q => q.toLowerCase()));
   const queue = []; const seenUrl = new Set(skipUrls); const readUrls = [];
   let searches = 0;
@@ -151,7 +156,7 @@ export async function findLeads({ query, count = 20, search, model, agentId = 'c
   };
   const perPage = Math.max(4, Math.ceil(count / 4));
   const pool = []; const held = []; const seenNames = []; const rejected = {}; const askWords = topicWords(query);
-  const final = []; let pagesRead = 0; let label = '';
+  const final = []; const unchecked = []; let pagesRead = 0; let label = '';
   const bump = (k, n = 1) => { rejected[k] = (rejected[k] || 0) + n; };
   const batch = [];
   // two extraction calls in flight at once: slow free models answer in about a minute each
@@ -175,7 +180,7 @@ export async function findLeads({ query, count = 20, search, model, agentId = 'c
       const lead = checkRow(row, page, { query, buyerProduct });
       if (lead.reject) { bump(lead.reject); continue; }
       const key = companyKey(lead.company) || normName(lead.company);
-      const twin = [...final, ...pool, ...held].find(x => sameCompany(x.company, lead.company, askWords));
+      const twin = [...final, ...unchecked, ...pool, ...held].find(x => sameCompany(x.company, lead.company, askWords));
       if (twin || seenNames.some(n => sameCompany(n, lead.company, askWords))) { bump('merged as the same company'); if (twin && !twin.sources.some(s => s.url === page.url) && twin.sources.length < 4) twin.sources.push(lead.sources[0]); if (twin && !twin.placed && lead.placed) twin.placed = lead.placed; if (twin && !twin.sells && lead.sells) twin.sells = lead.sells; continue; }
       if (known(lead.company, key, askWords)) { bump('already in your pipeline'); seenNames.push(lead.company); continue; }
       seenNames.push(lead.company);
@@ -224,7 +229,8 @@ export async function findLeads({ query, count = 20, search, model, agentId = 'c
   while (final.length < count && !signal?.aborted) {
     let cand = pull();
     if (!cand) {
-      if (left() < 60000 || pagesRead >= B.pages) break;
+      // the pool is spent and checked plus not-checked leads fill the count: no refill rounds only to raise the checked share
+      if (final.length + unchecked.length >= count || left() < 60000 || pagesRead >= B.pages) break;
       if (!queue.length) { if (extra >= B.extraRounds || searches >= B.searches) break; extra++; await newRound(); }
       const short = count - final.length;
       await readUntil(final.length + short + Math.ceil(short * 0.3), t0 + B.totalMs - 60000);
@@ -242,23 +248,28 @@ export async function findLeads({ query, count = 20, search, model, agentId = 'c
     if (cand.siteSaid && segmentClash(query, `${cand.need} ${cand.siteSaid}`)) { bump('does not fit'); continue; }
     delete cand.siteSaid;
     if (cand.elsewhere) { bump('does not fit'); continue; }
-    // the ask names a kind of product and no page that was read says this company sells it: left out, never shown as a fit
-    if (kindAsk && !cand.sells) { bump(cand.otherKind ? 'another kind of business' : 'what it sells not checked'); continue; }
-    // the ask names a country and no page that was read places this company there: left out, never shown as checked
-    if (country && !cand.placed) { bump('not placed in the country'); continue; }
+    // a page names another kind of business for it: left out. No page said what it sells, or where it is: kept in the
+    // not-checked group, labelled, after every checked lead, never shown as checked
+    if (kindAsk && !cand.sells && cand.otherKind) { bump('another kind of business'); continue; }
     // a seller already in the pipeline (same company, or the same own site) is skipped and does not count
     if (pipeline.some(x => sameCompany(x.company, cand.company, askWords) || (cand.ownSite && sameSeller(x, cand)))) { bump('already in your pipeline'); continue; }
-    const twin = final.find(x => sameSeller(x, cand, askWords) || sameCompany(x.company, cand.company, askWords));
-    if (twin) { mergePair(final, final.indexOf(twin), cand, askWords); bump('merged as the same company'); continue; }
-    final.push(cand);
+    const twinOf = (arr) => arr.find(x => sameSeller(x, cand, askWords) || sameCompany(x.company, cand.company, askWords));
+    const arr = twinOf(final) ? final : unchecked; const twin = twinOf(arr);
+    if (twin) {
+      mergePair(arr, arr.indexOf(twin), cand, askWords); bump('merged as the same company'); continue;
+    }
+    (openChecks(cand).length ? unchecked : final).push(cand);
   }
-  // what placed each lead in the ask's country is said in its findings
-  for (const l of final) {
+  // what placed each lead in the ask's country is said in its findings; a not-checked lead carries its labels in its own field
+  // a not-checked lead whose twin's page has since checked it moves up into the checked group
+  for (const l of unchecked.filter(x => !openChecks(x).length)) if (final.length < count) { final.push(l); unchecked.splice(unchecked.indexOf(l), 1); }
+  for (const l of [...final, ...unchecked]) {
+    l.unchecked = openChecks(l);
     if (country && l.placed) l.findings = `${l.findings} Placed in ${country.label} by "${l.placed.words}" (${l.placed.url}).`.trim();
     if (kindAsk && l.sells) l.findings = `${l.findings} What it sells, from ${l.sells.url}: "${l.sells.words}".`.trim();
     delete l.placed; delete l.sells; delete l.otherKind;
   }
-  const leads = final;
+  const leads = [...final, ...unchecked.slice(0, Math.max(0, count - final.length))];   // checked first, then not checked up to the count
   // what the site step found, counted over the leads kept (a candidate checked and then merged or left out is not one of them)
   Object.assign(sites, leadCounts(leads));
   onProgress({ pages: pagesRead, leads: leads.length, p: 0.97, detail: `read ${pagesRead} pages, ${leads.length} leads` });
@@ -268,7 +279,7 @@ export async function findLeads({ query, count = 20, search, model, agentId = 'c
     const stop = signal?.aborted ? 'stopped' : pagesRead >= B.pages ? `the page budget (${B.pages}) was spent` : searches >= B.searches ? `the search budget (${B.searches}) was spent` : left() < 60000 ? `the time limit (${Math.round(B.totalMs / 60000)} minutes) was reached` : `${extra} extra search round${extra === 1 ? '' : 's'} found no more new companies`;
     reason = `${pagesRead} pages read from ${searches} searches; ${why.length ? why.join(', ') + '; ' : ''}${stop}`;
   }
-  return { leads, pagesRead, searches, queries: used, readUrls, rejected, label, reason, buyerProduct, country, sites, ms: Date.now() - t0, rounds: round, extraRounds: extra };
+  return { leads, pagesRead, searches, queries: used, readUrls, rejected, label, reason, buyerProduct, country, sites, ms: Date.now() - t0, rounds: round, extraRounds: extra, kindAsk, checked: final.length };
 }
 
 const SITE_PATHS = ['/contact-us', '/contact', '/about-us'];
@@ -316,7 +327,7 @@ export async function checkSites({ leads, search, query = '', fetchHtml = null, 
       const said = sentenceNaming(home.text, lead.company);
       lead.website = origin;
       lead.sources = [{ title: clip(home.title || `${lead.company} website`, 200), url: home.url }, ...lead.sources.filter(x => x.url !== home.url)].slice(0, 4);
-      if (said) { lead.findings = `Their own site says: "${clip(said, 260)}" ${lead.findings}`; lead.siteSaid = said; }
+      if (said) { lead.findings = `Their own site says: "${cutWords(said, 260)}" ${lead.findings}`; lead.siteSaid = said; }
       let text = home.text; let contactUrl = '';
       for (const path of SITE_PATHS) {
         if (signal?.aborted) break;
@@ -334,6 +345,15 @@ export async function checkSites({ leads, search, query = '', fetchHtml = null, 
       if (siteCountry(origin) !== country?.tld && placedElsewhere(text, lead.company, country)) lead.elsewhere = true;
       // what on its own site places it in the ask's country: a site of that country (acme.co.in), or its own words or phone code
       if (country && !lead.placed) { const words = siteCountry(origin) === country.tld ? `its own site ${host}` : placedIn(text, lead.company, country, { own: true }); if (words) lead.placed = { words: clip(words, 120), url: home.url }; }
+      // still no place and no about page read yet: its about page, once (inside the per-lead limit of four reads)
+      if (country && !lead.placed && !lead.elsewhere && !/about/i.test(contactUrl) && !signal?.aborted && Date.now() < deadline) {
+        const pg = await search.read(origin + '/about-us', { signal }).catch(() => null);
+        const about = String(pg?.text || '');
+        if (about.length > 80) {
+          if (placedElsewhere(about, lead.company, country)) lead.elsewhere = true;
+          else { const words = placedIn(about, lead.company, country, { own: true }); if (words) lead.placed = { words: clip(words, 120), url: pg.url || origin + '/about-us' }; }
+        }
+      }
     } catch (e) { if (signal?.aborted) break; }
   }
   onProgress(leads.length, leads.length);
@@ -378,4 +398,12 @@ export function closingLine(leads = []) {
   const c = leadCounts(leads);
   const parts = [countClause(c.own, total, 'have their own site as the main source'), countClause(c.emails, total, 'carry a mail address'), countClause(c.contacts, total, 'name a contact person')].filter(Boolean);
   return `${parts.length ? parts.join('; ') + '. ' : ''}Contacts a page did not give are marked not checked.`;
+}
+/** Both groups in one line, counted over the leads shown: "8 of 20 are placed in India and sell what you asked for; 9 more
+ *  are listed as not checked." '' when the ask names neither a country nor a kind of product (then there is one group). */
+export function groupLine(leads = [], { country = null, kindAsk = false, asked = 0 } = {}) {
+  if (!country && !kindAsk) return '';
+  const open = leads.filter(l => l?.unchecked?.length).length; const n = leads.length - open;
+  const what = [country && `are placed in ${country.label}`, kindAsk && 'sell what you asked for'].filter(Boolean).join(' and ');
+  return `${n} of ${Math.max(Number(asked) || 0, leads.length)} ${what}${open ? `; ${open} more ${open === 1 ? 'is' : 'are'} listed as not checked` : ''}.`;
 }

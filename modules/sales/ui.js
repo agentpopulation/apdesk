@@ -14,6 +14,7 @@ const STYLE = `
 .salesv .lane.over{border-color:var(--accent);background:var(--accent-soft)}
 .salesv .lead{cursor:grab;color:inherit;font:inherit}
 .salesv .lead.dragging{opacity:.45}
+.salesv .grp{flex:none;font-size:12px;color:var(--dim);border-top:1px dashed var(--line);padding:6px 2px 0;margin-top:2px}
 .salesv .lead .ft{width:auto;display:flex;font-size:11.5px;font-weight:400;background:none;padding:0;margin:0;text-align:left;border-radius:0}
 .salesv .lead .nw{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}.salesv .lead .grow{flex:1}
 .salesv .s-det{min-height:0;overflow-y:auto}
@@ -65,6 +66,10 @@ export const pages = {
       const contactUrl = (l) => (String(l.contactOther || '').match(/https?:\/\/\S+/) || [])[0] || '';
       const contact = (l) => l.contactName ? `${l.contactName}${l.contactRole ? ' · ' + l.contactRole : ''}` : (l.email || (contactUrl(l) ? h('a', { href: contactUrl(l), target: '_blank', rel: 'noopener noreferrer', onclick: (e) => e.stopPropagation() }, 'Contact page') : 'Contact not checked'));
       const ini = (s) => String(s || '?').split(/\s+/).filter(Boolean).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+      const open = (l) => (l.unchecked || []).length > 0;          // a found lead no page placed or showed selling what was asked
+      const openText = (l) => (l.unchecked || []).join(' · ');
+      const OPEN_GROUP = 'Not checked: no page read said where these are or what they sell';
+      const checkedFirst = (ls) => [...ls].sort((a, b) => open(a) - open(b));
       const dot = (stage) => h('i', { class: `dot s${S_IDX[stage] ?? 0}`, style: { display: 'inline-block', marginRight: '5px' } });
 
       const seg = ui.seg(['Pipeline', 'Leads', 'Outreach'], st.mode, (o, i) => { st.mode = i; paint(); });
@@ -101,6 +106,7 @@ export const pages = {
           h('span', { class: 'top' }, h('b', null, l.company), h('span', { class: 'amt' }, l.value == null ? '' : fmt.money(l.value, l.currency))),
           h('span', { class: 'sub' }, contact(l)),
           l.nextStep || l.need ? h('span', { class: 'sub' }, l.nextStep ? 'Next: ' + l.nextStep : l.need) : null,
+          open(l) ? h('span', { class: 'sub' }, openText(l)) : null,
           h('span', { class: 'ft' }, h('span', { class: 'av' }, ini(l.foundBy || 'You')), h('span', { class: 'nw' }, `${l.foundBy || 'You'} · ${n ? n + (n > 1 ? ' sources' : ' source') : 'no source'}`), h('span', { class: 'grow' }), h('span', { class: 'nw' }, fmt.ago(l.updated))));
         c.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', l.id); e.dataTransfer.effectAllowed = 'move'; c.classList.add('dragging'); });
         c.addEventListener('dragend', () => c.classList.remove('dragging'));
@@ -108,11 +114,12 @@ export const pages = {
       }
       function paintBoard() {
         main.replaceChildren(h('div', { class: 'board' }, STAGES.map(([id, label], k) => {
-          const ls = st.data.leads.filter(l => l.stage === id);
+          const ls = checkedFirst(st.data.leads.filter(l => l.stage === id));
+          const items = ls.flatMap((l, i) => open(l) && (i === 0 || !open(ls[i - 1])) ? [h('div', { class: 'grp' }, OPEN_GROUP), leadCard(l)] : [leadCard(l)]);
           const sum = ls.reduce((a, l) => a + (l.value || 0), 0);
           const lane = h('div', { class: 'lane', dataset: { stage: id } },
             h('header', null, h('i', { class: `dot s${k}` }), label, h('span', null, `${ls.length}${sum ? ' · ' + fmt.money(sum, st.data.totals.currency) : ''}`)),
-            h('div', { class: 'cards' }, ls.length ? ls.map(leadCard) : h('div', { class: 'empty', style: { padding: '14px 6px' } }, k === 0 ? 'No new leads yet' : 'Drop a lead here')));
+            h('div', { class: 'cards' }, ls.length ? items : h('div', { class: 'empty', style: { padding: '14px 6px' } }, k === 0 ? 'No new leads yet' : 'Drop a lead here')));
           lane.addEventListener('dragover', (e) => { e.preventDefault(); lane.classList.add('over'); });
           lane.addEventListener('dragleave', () => lane.classList.remove('over'));
           lane.addEventListener('drop', (e) => { e.preventDefault(); lane.classList.remove('over'); const lid = e.dataTransfer.getData('text/plain'); if (lid) move(lid, id); });
@@ -124,8 +131,9 @@ export const pages = {
           { label: 'Company', render: (l) => h('b', null, l.company) }, { label: 'Contact', render: contact },
           { label: 'Stage', render: (l) => pill([dot(l.stage), l.stageLabel]) }, { label: 'Value', render: (l) => money(l.value, l.currency) },
           { label: 'Next', render: (l) => l.nextStep || l.need || '' },
+          { label: 'Not checked', render: (l) => openText(l) },
           { label: 'Source', render: (l) => l.sources[0] ? h('a', { href: l.sources[0].url, target: '_blank', rel: 'noopener noreferrer', onclick: (e) => e.stopPropagation() }, l.sources[0].title) : 'none' },
-        ], st.data.leads, { onRow: (l) => { st.pick = l.id; paint(); }, empty: 'No leads yet.' })));
+        ], checkedFirst(st.data.leads), { onRow: (l) => { st.pick = l.id; paint(); }, empty: 'No leads yet.' })));
       }
       function paintOutreach() {
         const ds = st.data.drafts;
@@ -141,6 +149,7 @@ export const pages = {
         det.replaceChildren(...[
           h('div', { class: 'row' }, h('span', { class: 'av big g' }, ini(l.company)), h('div', { style: { minWidth: 0, flex: 1 } }, h('h3', null, l.company), h('div', { class: 'sub' }, contact(l)))),
           h('div', { class: 'row' }, pill([dot(l.stage), l.stageLabel]), pill(money(l.value, l.currency)), pill(`${l.sources.length} source${l.sources.length === 1 ? '' : 's'}`)),
+          open(l) ? h('div', { class: 'sub' }, `${openText(l)}: no page read said it.`) : null,
           h('div', null, h('h6', null, 'What Closer found'), h('p', { class: 'sub', style: { margin: 0 } }, l.findings || l.need || 'Nothing yet.')),
           l.email || l.website || l.contactOther ? h('div', { class: 'sub' }, l.email ? 'Mail: ' + l.email + ' · ' : '', l.website ? h('a', { href: l.website, target: '_blank', rel: 'noopener noreferrer' }, l.website.replace(/^https?:\/\//, '')) : '', (() => { const u = (l.contactOther.match(/https?:\/\/\S+/) || [])[0]; return u ? [' · ', h('a', { href: u, target: '_blank', rel: 'noopener noreferrer' }, 'contact page')] : ''; })()) : null,
           l.sources.length ? h('div', { class: 'srcs' }, h('h6', null, 'Sources'), l.sources.map((s, i) => h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer', title: s.url }, `${i + 1} · ${s.title}`))) : null,

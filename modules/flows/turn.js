@@ -5,7 +5,7 @@ export async function turn(ctx, { chatId = null, agentId = 'coordinator', text, 
   if (chat && typeof chat.ask === 'function') {
     try {
       const r = await chat.ask({ chatId: chatId || undefined, agentId, text, signal, note, quiet: !!note });
-      if (r && typeof r.text === 'string') return { text: r.text, label: r.label || null, chatId: r.chatId || chatId, cards: r.cards || [], via: 'chat', posted: r.posted !== false && !!(r.chatId || chatId) };
+      if (r && typeof r.text === 'string') return { text: r.text, label: r.label || null, chatId: r.chatId || chatId, cards: r.cards || [], via: 'chat', posted: r.posted !== false && !!(r.chatId || chatId), unfinished: r.unfinished || null };
     } catch (e) {
       if (signal?.aborted || e?.code === 'halted' || e?.code === 'aborted') throw e;
       if (e?.code !== 'not_ready') ctx.log('chat.ask failed, answering with one model call:', e?.message);

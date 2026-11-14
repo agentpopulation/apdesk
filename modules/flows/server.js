@@ -109,7 +109,7 @@ export async function activate(ctx) {
     const agentId = r.agent_id || 'coordinator';
     const job = await ctx.jobs.start({
       kind: 'flows.schedule', title: `${manual ? 'Run now' : 'Scheduled'}: ${title}`, agentId, chatId: r.chat_id || (r.kind === 'brief' && ctx.modules.api('chat') ? `dm-${agentId}` : null),
-      input: { scheduleId: r.id, title, prompt: r.prompt, agentId, chatId: r.chat_id, scheduledFor: manual ? null : r.next_run, firedAt, manual },
+      input: { scheduleId: r.id, kind: r.kind, title, prompt: r.prompt, agentId, chatId: r.chat_id, scheduledFor: manual ? null : r.next_run, firedAt, manual },
       async run(job) {
         if (r.kind === 'chain' && r.chain_id) {
           const chain = chainRow(r.chain_id); if (!chain) throw new Error('The chain this schedule runs was deleted.');
@@ -124,6 +124,8 @@ export async function activate(ctx) {
         finally { if (r.chat_id) runningChats.delete(r.chat_id); }
         job.throwIfStopped();
         if (out.chatId && out.chatId !== r.chat_id) ctx.db.run('UPDATE m_flows_schedules SET chat_id = ? WHERE id = ?', out.chatId, r.id);
+        // a run that did not do what it was asked ends as failed, with its plain-words reason
+        if (out.unfinished) throw Object.assign(new Error(out.unfinished), { code: 'unfinished' });
         return result(out, `Scheduled: ${title}`, { sources: [], firedAt });
       },
     });

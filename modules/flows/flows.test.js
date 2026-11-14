@@ -115,7 +115,7 @@ test('a brief is written by code only: no model call, the opening from the true 
     assert.match(text, /^1 finished, 1 did not finish, nothing waits for you\.\n/);
     assert.ok(text.includes(`"${SUMMARY}"`), 'the stored summary is quoted as it is');
     assert.match(text, /Research: perovskite records: done \(Scout\), finished /);
-    assert.match(text, /Price check: failed, /);
+    assert.match(text, /Price check: did not finish: site down, /);
     assert.ok(!/three jobs|8 leads|nothing failed/.test(text), 'a model sentence with false counts can never reach the brief');
     assert.ok(!text.includes('A long answer'));
   } finally { await t.close(); }
@@ -148,7 +148,7 @@ test('brief: the desk\'s own upkeep is left out of what was done; a failed upkee
     const text = composeBrief({ facts });
     assert.match(text, /Compare suppliers: done/);
     assert.doesNotMatch(text, /tidy memories/);
-    assert.match(text, /Dream: broke: failed/);
+    assert.match(text, /Dream: broke: did not finish: no model/);
     assert.equal(facts.counts.done, 1);
   } finally { await t.close(); }
 });
@@ -175,5 +175,26 @@ test('a brief is named for what it is: "Morning brief" only when it runs in the 
     const m = await flows.schedule({ when: 'every morning at 8', prompt: 'brief me' });
     const e = await t.call(`/api/m/flows/schedules/${m.id}`, { method: 'PATCH', body: { when: 'every day at 9pm' } });
     assert.equal(e.json.title, 'Brief', 'moved to the evening, it is no longer a morning brief');
+  } finally { await t.close(); }
+});
+
+test('a scheduled run whose turn did not do its work ends failed with its reason, and the next brief lists it under Did not finish', async () => {
+  const t = await testDesk({ modules: ['tasks', 'flows'], script: () => 'x' });
+  try {
+    let reason = 'The document was not saved';
+    const api = t.core.modules.api.bind(t.core.modules);
+    t.core.modules.api = (name) => name === 'chat' ? { ask: async () => ({ text: 'Here is the report.', chatId: null, posted: false, unfinished: reason }) } : api(name);
+    const flows = t.core.modules.api('flows');
+    const s = await flows.schedule({ when: 'in 30 minutes', prompt: 'Write the weekly sales report' });
+    assert.notEqual(s.kind, 'brief');
+    const bad = await t.core.jobs.wait((await flows.runNow(s.id)).id, 10000);
+    assert.equal(bad.status, 'failed'); assert.equal(bad.error, 'The document was not saved');
+    reason = null;
+    const ok = await t.core.jobs.wait((await flows.runNow(s.id)).id, 10000);
+    assert.equal(ok.status, 'done');
+    const ctx = { settings: t.core.settings, jobs: t.core.jobs, approval: { listPending: () => [] }, agents: t.core.agents, modules: { api: () => null } };
+    const facts = await gatherBrief(ctx, {});
+    const text = composeBrief({ facts });
+    assert.match(text, /\*\*Did not finish since yesterday \(1\)\*\*\n- Run now: .*: did not finish: The document was not saved, /);
   } finally { await t.close(); }
 });

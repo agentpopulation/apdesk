@@ -2,8 +2,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { makeStore } from './store.js';
-import { makeCoordinator, cardKey } from './coordinator.js';
-import { dropFileClaims, previewText } from './ui-text.js';
+import { makeCoordinator, cardKey, RESEARCH_JOBS } from './coordinator.js';
+import { dropFileClaims, previewText, cutAtWord } from './ui-text.js';
 
 const TEXT_EXT = /\.(txt|md|markdown|csv|tsv|json|js|mjs|ts|py|html?|css|xml|ya?ml|ini|log|sql|sh|bat|ps1|rtf)$/i;
 
@@ -54,7 +54,10 @@ export async function activate(ctx) {
     if (type !== 'job' || !job?.chatId || !job.id) return;
     try {
       const chat = resolveChat(job.chatId); if (!chat) return;
-      const status = job.status === 'interrupted' ? 'stopped' : job.status;
+      let status = job.status === 'interrupted' ? 'stopped' : job.status;
+      // a task whose own turn did not do what it was asked did not finish, whatever its job's runner recorded
+      const unfinished = status === 'done' && job.kind === 'tasks.run' ? store.messages(chat.id, { limit: 60 }).find(m => m.meta?.jobOf === job.id && m.meta?.unfinished)?.meta.unfinished : null;
+      if (unfinished) { status = 'failed'; job = { ...job, status: 'failed', error: unfinished }; }
       const hit = store.findProgress(chat.id, { jobId: job.id });
       if (!hit && !['running', 'waiting'].includes(status)) return finish(chat, job, null);
       bus.postCard(chat.id, { kind: 'progress', jobId: job.id, title: hit?.message.cards[hit.index].title || job.title, agentId: job.agentId, progress: job.progress ?? 0, detail: status === 'failed' ? (job.error || 'Failed') : job.detail || '', status }, { into: hit ? null : co.running.get(chat.id)?.replyId });
@@ -201,15 +204,26 @@ export async function activate(ctx) {
     },
     createChat({ title, members } = {}) { const c = store.create({ title, members }); emit({ type: 'chats' }); return c; },
     // what Home shows under "Pick up where you left off": plain words (a value stored before the preview was cleaned is cleaned here)
-    recent(n = 6) { return store.list().filter(c => c.last).slice(0, n).map(c => ({ id: c.id, title: c.title || ctx.agents.get(c.members[0])?.name || 'Chat', last: previewText(c.last), updated: c.updated })); },
+    recent(n = 6) { return store.list().filter(c => c.last).slice(0, n).map(c => ({ id: c.id, title: c.title || ctx.agents.get(c.members[0])?.name || 'Chat', last: cutAtWord(previewText(c.last), 140), updated: c.updated })); },
     /** A full Coordinator turn, for schedules and channels. */
     async ask({ chatId, agentId, text, signal, jobId, quiet = false, note = null } = {}) {
       const c = chatId ? resolveChat(chatId) : agentId ? store.direct(agentId) : store.chat('everyone');
       if (!c) throw new Error('That chat is gone.');
       // a job asking in a chat whose own reply is still finishing (it started that job) waits for it, up to two minutes
       if (co.running.has(c.id) && (jobId || signal)) { const t0 = Date.now(); while (co.running.has(c.id) && Date.now() - t0 < 120000 && !signal?.aborted) await new Promise(r => setTimeout(r, 250)); }
-      const m = await co.turn(c.id, String(text || ''), { speaker: agentId, signal, jobId, quiet: !!quiet, note: note ? String(note).slice(0, 120) : null, inJob: !!(jobId || signal) });
-      return { chatId: c.id, messageId: m.id, text: m.text, label: m.label, cards: m.cards, status: m.status, posted: true };
+      const inJob = !!(jobId || signal);
+      let m = await co.turn(c.id, String(text || ''), { speaker: agentId, signal, jobId, quiet: !!quiet, note: note ? String(note).slice(0, 120) : null, inJob });
+      // A job's turn that started research is not over until the research is: it waits here (the chat stays free), and the
+      // research that did not finish makes the turn unfinished.
+      const started = inJob ? (m.meta?.steps || []).filter(st => st.status === 'done' && RESEARCH_JOBS.test(st.tool) && st.result?.jobId).map(st => st.result.jobId) : [];
+      if (started.length && !m.meta?.unfinished) {
+        if (m.meta?.jobOf) bus.postCard(c.id, { kind: 'progress', jobId: m.meta.jobOf, status: 'running', detail: 'Waiting for the research to finish' });
+        const open = (id) => ['running', 'waiting'].includes(ctx.jobs.get(id)?.status);
+        while (started.some(open) && !signal?.aborted) await new Promise(r => setTimeout(r, 500));
+        const bad = started.map(id => ctx.jobs.get(id)).find(j => j && j.status !== 'done');
+        if (bad && !signal?.aborted) m = store.update(m.id, { meta: { ...m.meta, unfinished: `The research did not finish${bad.status === 'failed' && bad.error ? ': ' + String(bad.error).replace(/\s+/g, ' ').trim().slice(0, 200) : ` (${bad.status === 'failed' ? 'it failed' : 'it was stopped'})`}` } });
+      }
+      return { chatId: c.id, messageId: m.id, text: m.text, label: m.label, cards: m.cards, status: m.status, posted: true, unfinished: m.meta?.unfinished || null };
     },
     isRunning: (chatId) => co.running.has(chatId),
     stop: (chatId) => co.stop(chatId),

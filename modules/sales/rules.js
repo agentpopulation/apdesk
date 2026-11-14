@@ -388,8 +388,15 @@ export function placedIn(text, company, country, { own = false } = {}) {
     for (const m of x.matchAll(PLACED)) if (aboutItself(x, m.index, company) && placeOf(m[1]) === country.tld) return m[0].trim();
     const d = x.match(described); if (d) return d[0].trim();
   }
-  if (own && phone) { const p = String(text || '').match(phone); if (p) return p[0].trim(); }
+  if (own && phone) { const p = String(text || '').match(phone); if (p) return balanceBrackets(p[0].trim()); }
   return '';
+}
+/** Brackets that do not pair up are dropped ("+91) 93117 76363" -> "+91 93117 76363"); paired ones stay. */
+export function balanceBrackets(s) {
+  const t = String(s || ''); const drop = new Set(); const open = [];
+  for (let i = 0; i < t.length; i++) { if (t[i] === '(') open.push(i); else if (t[i] === ')') { if (open.length) open.pop(); else drop.add(i); } }
+  for (const i of open) drop.add(i);
+  return [...t].filter((_, i) => !drop.has(i)).join('').replace(/\s{2,}/g, ' ').trim();
 }
 /** The page itself is a list of companies of the ask's country: its title says so ("Top 10 Indian HR software companies"),
  *  or its title or opening lines say "companies based in India". Not a list of what is sold or used there ("HR software

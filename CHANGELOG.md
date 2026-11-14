@@ -68,12 +68,20 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Notices appear in the top bar, so they no longer cover page titles or the chat header. A long Council Verdict line wraps instead of being cut off.
 - Home and Tasks also show what Panic cancelled, under Waiting for you.
 - Acceptance runner: file names with several dots are read whole, judge answers are read from a strict last-line YES or NO (unclear means "not checked", never a pass), Council answers that end on their Recommendation line count as complete, Panic is tested on a running research job, and `npm run acceptance` points at the real runner.
+- Lead search fills the asked count: checked leads first, then leads marked "Country: not checked" or "What it sells: not checked" in a separate labelled group. Leads a page places elsewhere or names as another kind of business are still left out. Drafts for not-checked leads do not state their country or product.
+- A background task or scheduled run that did not do what it was asked shows "Did not finish" with the reason in plain words, in the chat, on the Tasks page and in the morning brief. A task that started research waits for the research before it counts as finished.
+- Research asks go to Scout, and the research report is the brief. While a write waits for your approval, the reply says so instead of claiming the file is written.
+- Previews and titles end at a whole word with "…". The rail shows an agent's role when its last message is not a useful preview. On narrow screens the chat panel starts closed.
+- Notices sit in free space in the top bar, or as one slim line under it that the page makes room for; they are always opaque and never cover the menu or the page.
+- A research report calls two figures a conflict only when they are for the same thing in the same year.
+- Acceptance runner: the Panic check counts only jobs created after the desk registered Panic, and an unclear judge answer is reported as "judge unclear", not as unsupported.
 
 ### Known weak points
 - No run of the 17 acceptance asks has passed every ask. Results vary with the free model that answers.
 - In the last full run (14 Nov 2026) two asks failed: the compare-table reply stated values the file marks "not checked", and the lead search returned some companies from the wrong country.
 - PDF documents made by the Office module leave out Hindi and other Indian-script text: the built-in PDF font has no such letters (seen 15 Nov 2026).
-- A lead search may return fewer leads than asked when its page budget runs out; it says how many it found and why.
+- A lead search lists some leads as "not checked" when no page it read said where the company is or what it sells; some of those will be real fits.
+- Research reports on free models can still carry weak or unsupported sentences: in the last full run 3 of 5 sampled claims were supported.
 - Code you approve in the Code module runs without isolation unless Docker is installed: it can read files on this PC, including the desk's own database.
 - Ask 2 (offline with a local model) has never been checked: no test run so far had Ollama installed.
 - Small local models (4B, 8B): not checked.

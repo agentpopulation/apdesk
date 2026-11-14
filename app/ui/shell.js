@@ -196,8 +196,28 @@ function fitMenu() {
   const over = menu.scrollWidth > menu.clientWidth + 1;
   menu.classList.toggle('over', over);
   if (over) menu.querySelector('[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  placeNotice();
   if (!menu._wheel) { menu._wheel = true; menu.addEventListener('wheel', (e) => { if (menu.scrollWidth > menu.clientWidth && Math.abs(e.deltaY) > Math.abs(e.deltaX)) { menu.scrollLeft += e.deltaY; e.preventDefault(); } }, { passive: false }); window.addEventListener('resize', fitMenu); }
 }
+// ---------- notices: in the top bar's free room right of the menu, else one slim line under the bar (the page moves down for it)
+function placeNotice() {
+  const box = $('#toasts'), t = box.lastElementChild, win = $('#win');
+  if (!t) { win.classList.remove('noting'); return; }
+  for (const x of box.children) if (!x.title) x.title = x.textContent;
+  const bar = $('.bar').getBoundingClientRect(), menu = $('#menu').getBoundingClientRect();
+  const menuRight = Math.min(menu.right, Math.max(menu.left, ...$$('#menu .nav').map(n => n.getBoundingClientRect().right)));
+  const ctl = [...$('.bar>div:last-child').children].find(e => e.offsetWidth);
+  const ctlLeft = ctl ? ctl.getBoundingClientRect().left : bar.right - 12;
+  const room = Math.min(360, ctlLeft - menuRight - 20);
+  const ctx = placeNotice.ctx || (placeNotice.ctx = document.createElement('canvas').getContext('2d'));
+  ctx.font = '12.5px ' + getComputedStyle(t).fontFamily;
+  const side = room >= Math.min(ctx.measureText(t.textContent).width + 26, 220);
+  box.classList.toggle('under', !side); win.classList.toggle('noting', !side);
+  Object.assign(box.style, side ? { top: bar.top + 'px', height: bar.height + 'px', left: (ctlLeft - 10 - room) + 'px', width: room + 'px' }
+    : { top: (bar.bottom - 1) + 'px', height: '', left: bar.left + 'px', width: bar.width + 'px' });
+}
+new MutationObserver(placeNotice).observe($('#toasts'), { childList: true });
+window.addEventListener('resize', placeNotice);
 window.addEventListener('hashchange', () => {
   // a pop-up opened on one page must not sit over the next one (it blocked the whole desk)
   const m = document.getElementById('modal');

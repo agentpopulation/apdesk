@@ -16,7 +16,7 @@ function style() {
   document.head.append(s);
 }
 const ACTIVE = ['running', 'waiting'];
-const PILL = { running: ['Running', 'run'], waiting: ['Waiting for you', 'wait'], done: ['Done', 'ok'], failed: ['Failed', 'stop'], stopped: ['Stopped', 'stop'], interrupted: ['Interrupted', 'stop'] };
+const PILL = { running: ['Running', 'run'], waiting: ['Waiting for you', 'wait'], done: ['Done', 'ok'], failed: ['Did not finish', 'stop'], stopped: ['Stopped', 'stop'], interrupted: ['Interrupted', 'stop'] };
 
 export const pages = {
   tasks: {
