@@ -78,10 +78,11 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 
 ### Known weak points
 - No run of the 17 acceptance asks has passed every ask. Results vary with the free model that answers.
-- In the last full run (14 Nov 2026) two asks failed: the compare-table reply stated values the file marks "not checked", and the lead search returned some companies from the wrong country.
+- In the run on this code (15 Nov 2026) 13 asks passed, 3 failed and 1 was not checked. The three: the research report quoted one sentence about a different technology as on-topic; the compare table got no model answer within 150 seconds on its first run, and on its second run confirmed 5 of 12 cells; the lead search listed 20 leads (13 checked, 7 labelled "not checked") and the runner counted only one of its two tables.
+- An ask to research something "in the background" can start two jobs for the same work (seen 15 Nov 2026).
+- A research report's quotes are checked word for word against their pages, but not for being about the topic.
 - PDF documents made by the Office module leave out Hindi and other Indian-script text: the built-in PDF font has no such letters (seen 15 Nov 2026).
 - A lead search lists some leads as "not checked" when no page it read said where the company is or what it sells; some of those will be real fits.
-- Research reports on free models can still carry weak or unsupported sentences: in the last full run 3 of 5 sampled claims were supported.
 - Code you approve in the Code module runs without isolation unless Docker is installed: it can read files on this PC, including the desk's own database.
 - Ask 2 (offline with a local model) has never been checked: no test run so far had Ollama installed.
 - Small local models (4B, 8B): not checked.

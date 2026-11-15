@@ -200,14 +200,22 @@ This is version **0.1.0**, a first public release. We only state what was measur
 |---|---|---|
 | Automated tests (`npm test`), Linux x64, Node 22 | 256 of 256 pass | 15 Nov 2026 |
 | Start-up check (`node tools/smoke.mjs --quick`): every module loads and every page opens in a real browser | 30 modules found, 16 on, 13 switch on and off, 0 pages with problems | 15 Nov 2026 |
-| 17 acceptance asks, answered by real free models, one full run, judged by an independent tester | 13 passed, 2 failed, 2 not checked | 15 Nov 2026, on the build before the last round of changes |
+| 17 acceptance asks, answered by real free models, on this code | 13 passed, 3 failed, 1 not checked | 15 Nov 2026 |
 | Safety probes in `tools/safety` | All hold, with one accepted limit listed below | 15 Nov 2026 |
 
-This exact code has not yet had its own full run of the 17 asks. When it has, this table will be updated.
+The three that failed, and why:
+
+- **Research report.** The report cited 15 sources and its sampled claims matched their pages, but a reader found one sentence about a different kind of solar cell quoted as if it were about the topic.
+- **Compare table.** First run: no free model answered within 150 seconds. Second run: the file was made with 5 of 12 cells confirmed and 7 marked "not checked", and one of the runner's passage checks failed.
+- **Lead search.** The desk listed 20 leads: 13 checked and 7 labelled "not checked". The test runner counted only one of the two tables, so it marked the ask as failed.
+
+The ask that was not checked needs a local model through Ollama, which the test computer did not have.
 
 **Known limits today**
 
-- **No run has passed all 17 asks yet.** The two that failed in the last full run: the research ask (3 of 5 sampled claims in the report were supported by their sources) and the find-leads ask (3 of the 20 leads asked for, which also left the outreach-drafts ask without enough leads to run). The lead search has been changed since.
+- **No run has passed all 17 asks yet.** See the three above.
+- **Research reports on free models can carry a wrong or off-topic sentence.** Every kept quote is found word for word on its page, but the desk does not yet check that the sentence is about your topic. Read the sources for anything that matters.
+- **An ask to research something "in the background" can start two jobs for the same work.**
 - **Local models through Ollama are wired but not checked.** No test run so far had Ollama installed.
 - **Free models can be slow or busy.** The chat shows what it is waiting for, and a turn ends with a plain message if no model answers within 150 seconds.
 - **PDF documents made by the desk leave out Hindi and other Indian-script text.** The built-in PDF font has no such letters. Seen on 15 Nov 2026.
