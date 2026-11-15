@@ -1,5 +1,6 @@
 // The 17 acceptance asks. Each returns { state, evidence, how, ... } or throws NotChecked / Fail.
 import fs from 'node:fs'; import path from 'node:path';
+import { readLeadTables } from './leads.mjs';
 import { chatIdle, chatBusy, browserText, SEL, sleep, go, shot, openDesk, chatOpen, chatAsk, chatWithAgent, readTheirs, viewText, offNote, clickText, firstVisible, probe, arrayIn, newFiles, walk, fetchText, LABEL_RE, hash, appRequire, askJudge, jobsStartedWhileHalted } from './lib.mjs';
 
 export class NotChecked extends Error {}
@@ -446,13 +447,35 @@ export async function readTableCard(page, skip = 0, match = '') {
     return { head, rows, actions, note };
   }, [String(tableCards), skip, match]);
 }
+/** Every lead table of the newest leads reply, in screen order: the checked table, then the "Not checked: …" table(s).
+ *  The last card matching `match` (or titled "Not checked:") ends the group; a "Not checked:" card pulls in the card before it. */
+export async function readLeadCards(page, skip = 0, match = '') {
+  return page.evaluate(([src, skip, match]) => {
+    const all = (0, eval)(src)().slice(skip);
+    const title = (c) => (c.innerText.trim().split('\n')[0] || '').trim();
+    const cont = (c) => /^not checked:/i.test(title(c));
+    let end = -1; all.forEach((c, i) => { if (!match || new RegExp(match, 'i').test(c.innerText.slice(0, 400)) || cont(c)) end = i; });
+    if (end < 0) return [];
+    let start = end; while (start > 0 && cont(all[start])) start--;
+    return all.slice(start, end + 1).map(c => ({
+      title: title(c),
+      head: [...c.querySelectorAll('thead th')].map(x => x.innerText.trim()),
+      rows: [...c.querySelectorAll('tbody tr')].map(tr => [...tr.querySelectorAll('td')].map(td => ({ text: td.innerText.trim(), href: td.querySelector('a')?.href || '' }))),
+      actions: [...c.querySelectorAll('button')].map(b => b.innerText.trim()).filter(Boolean),
+      note: c.innerText.replace(/\s+/g, ' ').slice(0, 400),
+    }));
+  }, [String(tableCards), skip, match]);
+}
 export async function ask8(t) {
   await need(t, ['chat', 'sales', 'search']);
   const page = await chatPage(t); t.how = 'browser: typed into Chat, table card read from the page, sources fetched by the runner';
   const q = 'Find 20 leads with sources: Indian companies that sell HR or payroll software to small businesses.';
   // a leads job may post its card later; stop waiting when no job is running after 90 s
   const skip = await countTableCards(page);   // table cards already in this chat (ask 5's "Where each value came from") are not the leads
-  const waitCard = async (since) => { let c = null; const t0 = Date.now(); while (Date.now() - t0 < 20 * 60000) { c = await readTableCard(page, skip, 'HR|payroll'); if (c?.rows?.length) break; if (Date.now() - t0 > 90000) { const js = await jobsSince(t, since); if (!js.some(j => ['running', 'waiting'].includes(j.status))) { c = await readTableCard(page, skip, 'HR|payroll'); break; } } await sleep(5000); } return c; };
+  // every lead table of the reply, merged: rows in screen order (checked first), each row keeps its own table's columns
+  const merge = (cs) => cs.length ? { tables: cs, rows: cs.flatMap(c => c.rows), actions: cs.flatMap(c => c.actions), note: cs.map(c => c.note).join(' '), head: [...new Set(cs.flatMap(c => c.head))] } : null;
+  const waitCard = async (since) => { let c = null; const t0 = Date.now(); while (Date.now() - t0 < 20 * 60000) { c = merge(await readLeadCards(page, skip, 'HR|payroll')); if (c?.rows?.length) break; if (Date.now() - t0 > 90000) { const js = await jobsSince(t, since); if (!js.some(j => ['running', 'waiting'].includes(j.status))) { c = merge(await readLeadCards(page, skip, 'HR|payroll')); break; } } await sleep(5000); } return c; };
+  const before8 = (await readTheirs(page)).length;
   let since8 = Date.now(); let r = await chatAsk(page, q, { timeout: 20 * 60000, settle: 5000, until: async () => true });
   let card = await waitCard(since8); let first = '';
   if (!card?.rows?.length) {
@@ -467,8 +490,11 @@ export async function ask8(t) {
   t.shot = await shot(page, t.shots, 'ask08_leads');
   t.did = 'typed "' + q + '" and read the table card'; t.repro = 'Chat › ' + q; t.expected = '20 rows, Company and Source columns, action buttons, every source a URL naming its company, no duplicates, no news site or directory as a lead';
   if (!card?.rows?.length) { const js = (await jobsSince(t, since8)).map(j => `${j.kind} ${j.status}${j.error ? ' (' + String(j.error).slice(0, 80) + ')' : ''}`); t.saw = `${first ? first + '; then ' : ''}no table card; jobs started: ${js.join(', ') || 'none'}; transcript: ${await lastTurn(t, page)}`; return { ok: false, evidence: `${first ? first + '; ' : ''}no table card in chat; jobs: ${js.join(', ') || 'NONE'}; reply "${r.text.slice(0, 90)}"` }; }
-  const ci = card.head.findIndex(h => /company|name|lead/i.test(h)), si = card.head.findIndex(h => /source/i.test(h));
-  const leads = card.rows.map(rw => ({ company: rw[ci]?.text || '', url: (si >= 0 ? (rw[si]?.href || (rw[si]?.text.match(/https?:\S+/) || [''])[0]) : '') || rw.map(c => c.href).find(Boolean) || '' }));
+  // the closing line can land a moment after the cards; wait up to 60 s for it, then read only this ask's messages
+  let said = ''; for (let w = Date.now(); Date.now() - w < 60000; await sleep(3000)) { said = (await readTheirs(page)).slice(before8).map(x => x.text).join(' ') + ' ' + r.text; if (/\d+ of \d+ (?:is |are )?(?:placed|sells?)\b|\d+ of \d+ found|found \d+ leads/i.test(said)) break; }
+  const lt = readLeadTables(card.tables, card.note + ' ' + said, 20);
+  const ci = card.tables.every(tb => tb.head.some(h => /company|name|lead/i.test(h))) ? 0 : -1, si = card.tables.every(tb => tb.head.some(h => /source/i.test(h))) ? 0 : -1;
+  const leads = lt.rows;
   const norm = (s) => s.toLowerCase().replace(/\b(pvt|private|ltd|limited|inc|technologies|technology|software|solutions)\b|[^a-z0-9]/g, '');
   const dups = leads.filter((l, i) => leads.findIndex(m => norm(m.company) === norm(l.company)) !== i).map(l => l.company);
   // near-duplicates: one name is the other plus a word ("Keka" and "Keka HR")
@@ -485,12 +511,14 @@ export async function ask8(t) {
     checks.push({ c: l.company, ok: p.status === 200 && names && onTopic, status: p.status, why: !names ? 'company not named' : !onTopic ? 'page is not about HR or payroll (namesake?)' : '' });
   }
   const named = checks.filter(c => c.ok).length;
-  const honest = card.rows.length < 20 && /\d+ of \d+ found|found (only )?\d+|could (only|not)|fewer|only \d+/i.test(card.note + ' ' + r.text);
-  const appSaid = card.rows.length < 20 ? ` App's words: "${(card.note + ' ' + r.text).replace(/\s+/g, ' ').slice(0, 220)}"` : '';
-  t.saw = `${card.rows.length} rows; columns [${card.head.join(', ')}]; actions [${card.actions.join(', ')}]; no URL: ${noUrl.length}; duplicates: ${dups.join(', ') || 'none'}; not leads: ${notLead.join(', ') || 'none'}; sources naming the company and on topic ${named}/${checks.length} (${checks.filter(c => !c.ok).map(c => `${c.c} ${c.status} ${c.why}`).join(', ')}); garbled contacts: ${card.rows.map(rw => rw.map(c => c.text).join(' ')).filter(x => /\.(com|in|io)[a-z]{3,}\b/i.test(x)).map(x => (x.match(/\S+\.(com|in|io)[a-z]{3,}\b/i) || [''])[0]).join(', ') || 'none'}`;
-  const ok = card.rows.length >= 20 && ci >= 0 && si >= 0 && card.actions.length > 0 && noUrl.length === 0 && dups.length === 0 && notLead.length === 0 && checks.length >= 8 && named === checks.length;
+  const honest = lt.honest;
+  const appSaid = card.rows.length < 20 ? ` App's words: "${(card.note + ' ' + said).replace(/\s+/g, ' ').slice(0, 220)}"` : '';
+  t.saw = `${lt.verdict} in ${card.tables.length} table(s)${lt.problems.length ? ' (' + lt.problems.join('; ') + ')' : ''}; columns [${card.head.join(', ')}]; actions [${card.actions.join(', ')}]; no URL: ${noUrl.length}; duplicates: ${dups.join(', ') || 'none'}; not leads: ${notLead.join(', ') || 'none'}; sources naming the company and on topic ${named}/${checks.length} (${checks.filter(c => !c.ok).map(c => `${c.c} ${c.status} ${c.why}`).join(', ')}); garbled contacts: ${card.rows.map(rw => rw.map(c => c.text).join(' ')).filter(x => /\.(com|in|io)[a-z]{3,}\b/i.test(x)).map(x => (x.match(/\S+\.(com|in|io)[a-z]{3,}\b/i) || [''])[0]).join(', ') || 'none'}`;
+  // pass on count only with lt.count 'full': 20 rows across the tables, every not-checked row labelled, no label in the
+  // checked table, the closing line's numbers equal the tables' counts, and at least half the rows checked (readLeadTables)
+  const ok = lt.count === 'full' && ci >= 0 && si >= 0 && card.actions.length > 0 && noUrl.length === 0 && dups.length === 0 && notLead.length === 0 && checks.length >= 8 && named === checks.length;
   if (first) t.saw = first + '; second attempt: ' + t.saw;
-  return { ok: ok && !first, evidence: `${first ? first + '; second attempt: ' : ''}${card.rows.length} rows${card.rows.length < 20 ? (honest ? ' (PARTIAL: the app said why)' : ' (fewer than 20, no explanation)') : ''}; company col ${ci >= 0}, source col ${si >= 0}; ${card.actions.length} actions; no-URL ${noUrl.length}; dups ${dups.length}; non-leads ${notLead.length}; sources name the company and are on topic ${named}/${checks.length}${checks.some(c => !c.ok) ? ' (' + checks.filter(c => !c.ok).map(c => c.c + ': ' + (c.why || c.status)).join('; ') + ')' : ''}; dups ${dups.length ? dups.join(', ') : 0}.${appSaid}` };
+  return { ok: ok && !first, evidence: `${first ? first + '; second attempt: ' : ''}${lt.verdict}${card.rows.length < 20 ? (honest ? ' (PARTIAL: the app said why)' : ' (fewer than 20, no explanation)') : ''}${lt.problems.length ? ' (FAIL: ' + lt.problems.join('; ') + ')' : ''}; company col ${ci >= 0}, source col ${si >= 0}; ${card.actions.length} actions; no-URL ${noUrl.length}; dups ${dups.length}; non-leads ${notLead.length}; sources name the company and are on topic ${named}/${checks.length}${checks.some(c => !c.ok) ? ' (' + checks.filter(c => !c.ok).map(c => c.c + ': ' + (c.why || c.status)).join('; ') + ')' : ''}; dups ${dups.length ? dups.join(', ') : 0}.${appSaid}` };
 }
 
 // ---------------------------------------------------------------- 9

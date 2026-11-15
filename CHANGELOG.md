@@ -75,6 +75,7 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Notices sit in free space in the top bar, or as one slim line under it that the page makes room for; they are always opaque and never cover the menu or the page.
 - A research report calls two figures a conflict only when they are for the same thing in the same year.
 - Acceptance runner: the Panic check counts only jobs created after the desk registered Panic, and an unclear judge answer is reported as "judge unclear", not as unsupported.
+- Acceptance runner: the lead-search ask reads both lead tables (checked, then "Not checked"), counts their rows together, and fails on unlabelled not-checked rows, a closing line that disagrees with the tables, or a list that is mostly unchecked. An honest shortfall still counts as a fail.
 
 ### Known weak points
 - No run of the 17 acceptance asks has passed every ask. Results vary with the free model that answers.
