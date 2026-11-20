@@ -1,0 +1,6 @@
+# Windows scripts are stored with Windows line endings, exactly as they must arrive in a ZIP download.
+*.bat -text
+*.cmd -text
+# Unix scripts keep Unix line endings on every system.
+*.sh text eol=lf
+*.command text eol=lf

@@ -80,27 +80,41 @@ Draft an email to the first lead. I will approve it before it goes.
 
 ## 🚀 Quick start
 
-**Step 1. Get it.** On this page press the green **Code** button and choose **Download ZIP**, then unzip it. Or clone it:
+**One line, copy and paste.** Press the copy button on the line for your computer, paste it into a terminal, and press Enter. It downloads AP Desk into a new `apdesk-main` folder and starts it.
+
+🪟 **Windows.** Open **Command Prompt** (press the Windows key, type `cmd`, press Enter) and paste:
+
+```bat
+curl -L -o apdesk.zip https://github.com/agentpopulation/apdesk/archive/refs/heads/main.zip && tar -xf apdesk.zip && cd apdesk-main && start.bat
+```
+
+🍎 **Mac** and 🐧 **Linux.** Open **Terminal** and paste:
+
+```bash
+curl -L https://github.com/agentpopulation/apdesk/archive/refs/heads/main.tar.gz | tar -xz && cd apdesk-main && ./start.sh
+```
+
+The first start installs the packages the desk needs, then opens it in your browser at `http://127.0.0.1:3960`. There is no build step.
+
+**Next time**, start it with one file from that folder:
+
+| Your computer | Start | Stop |
+|---|---|---|
+| 🪟 **Windows** | Double-click `start.bat` | Double-click `stop.bat` |
+| 🍎 **Mac** | Double-click `start.command` | Press Ctrl+C in its window |
+| 🐧 **Linux** | Run `./start.sh` | Press Ctrl+C in its window |
+
+- **Node.js 22.13 or newer** is the one thing the desk needs. On Windows, `start.bat` installs it for you with winget. On Mac and Linux, get it from [nodejs.org](https://nodejs.org) first; the start file tells you if it is missing.
+- **Prefer to click?** Press the green **Code** button on this page, choose **Download ZIP**, unzip it, and use the start file from the table.
+- **On a Mac**, the first double-click may be stopped by macOS because the file came from the internet. Right-click `start.command`, choose **Open**, and confirm once.
+- **If the window closes at once on Windows**, open Command Prompt in the folder, run `start.bat` there, and read the lines it prints.
+
+<details>
+<summary>For developers</summary>
 
 ```bash
 git clone https://github.com/agentpopulation/apdesk.git
 ```
-
-**Step 2. Start it with one file.**
-
-| Your computer | Do this | To stop |
-|---|---|---|
-| 🪟 **Windows** | Double-click `start.bat` | Double-click `stop.bat` |
-| 🍎 **Mac** | Double-click `start.command` | Press Ctrl+C in its window |
-| 🐧 **Linux** | Run `./start.sh` in a terminal | Press Ctrl+C in its window |
-
-That is all. The first start installs the packages the desk needs, then opens it in your browser at `http://127.0.0.1:3960`. There is no build step.
-
-- **Node.js 22.13 or newer** is the one thing the desk needs. On Windows, `start.bat` installs it for you with winget. On Mac and Linux, get it from [nodejs.org](https://nodejs.org) first; the start file tells you if it is missing.
-- **On a Mac**, the first double-click may be stopped by macOS because the file came from the internet. Right-click `start.command`, choose **Open**, and confirm once.
-
-<details>
-<summary>Prefer the command line?</summary>
 
 ```bash
 npm install
@@ -232,7 +246,7 @@ The full list is in [`CHANGELOG.md`](CHANGELOG.md) under "Known weak points". Fo
 | Platform | State |
 |---|---|
 | Linux x64, Node 22 and 24 | Developed and tested here, including `start.sh`. |
-| Windows 11 x64 | The main target. An earlier build of 0.1.0 was run and tested on Windows 11 on 14 Nov 2026. This exact code has not been re-run there yet. |
+| Windows 11 x64 | The main target. The zip with the packages inside was run and tested on Windows 11 on 14 Nov 2026. Starting from a GitHub download was broken until 20 Nov 2026 and has not been re-run on Windows since the repair. |
 | Windows on ARM64 | Not tested. The desk is plain JavaScript with no native add-ons, so it should work. |
 | macOS | Not tested yet. `start.command` uses the same script as Linux. |
 

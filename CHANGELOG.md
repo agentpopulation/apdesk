@@ -77,6 +77,12 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Acceptance runner: the Panic check counts only jobs created after the desk registered Panic, and an unclear judge answer is reported as "judge unclear", not as unsupported.
 - Acceptance runner: the lead-search ask reads both lead tables (checked, then "Not checked"), counts their rows together, and fails on unlabelled not-checked rows, a closing line that disagrees with the tables, or a list that is mostly unchecked. An honest shortfall still counts as a fail.
 
+### 20 Nov 2026
+- `start.bat` from a GitHub download did nothing on Windows. Two causes, both repaired: `setup\setup.bat` had lost the lines that close its install block and the label that block calls, and the `.bat` files were stored with Unix line endings. The zip with the packages inside was not affected, because it never runs the install step.
+- The Windows scripts are now stored with Windows line endings, and a test checks every `.bat` file for line endings, closed blocks and missing labels.
+- The README's Quick start now opens with one copy-and-paste line per system that downloads AP Desk and starts it.
+- Not yet re-run on Windows after this repair.
+
 ### Known weak points
 - No run of the 17 acceptance asks has passed every ask. Results vary with the free model that answers.
 - In the run on this code (15 Nov 2026) 13 asks passed, 3 failed and 1 was not checked. The three: the research report quoted one sentence about a different technology as on-topic; the compare table got no model answer within 150 seconds on its first run, and on its second run confirmed 5 of 12 cells; the lead search listed 20 leads (13 checked, 7 labelled "not checked") and the runner counted only one of its two tables.

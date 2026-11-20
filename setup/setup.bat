@@ -23,6 +23,20 @@ node "%~dp0check.mjs" packages >nul 2>nul
 if errorlevel 1 (
   echo Installing packages. This needs the internet once ...
   call :install
+  if errorlevel 1 (
+    echo The packages could not be installed. Check your internet connection and run start.bat again.
+    exit /b 1
+  )
+)
+node "%~dp0check.mjs" packages >nul 2>nul
+if errorlevel 1 (
+  echo The packages are still missing. Run setup\reinstall.bat, then start.bat again.
+  exit /b 1
+)
+echo Setup is complete.
+exit /b 0
+
+:install
 rem A repository checkout has package.json beside start.bat; the unzipped app keeps it in setup\.
 if not exist "%~dp0..\package.json" goto :install_zip
 pushd "%~dp0.."
