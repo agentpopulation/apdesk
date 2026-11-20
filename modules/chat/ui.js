@@ -1,6 +1,6 @@
 // Chat page: rail of chats, the conversation at full width, the folding panel. Matches the Chat section of the approved preview.
 import { chipsFor, chipText, chipNeedsBusiness } from '/ui/pages/home.js';
-import { cleanReply, uniqueOutputs, previewText, stepChips, footTag, waitLine, hasTable, shortCell, railLine, liveText } from '/modules/chat/ui-text.js';
+import { cleanReply, uniqueOutputs, previewText, stepChips, footTag, waitLine, hasTable, shortCell, railLine, liveText, PANEL_PREFIXES, BARE_LINES, bareStart, lastAsk, cutAtWord } from '/modules/chat/ui-text.js';
 
 const API = 'm/chat/';
 const PRESETS = [['everyone', 'Everyone'], ['sales-room', 'Sales room'], ['build-room', 'Build room']];
@@ -62,7 +62,9 @@ function css() {
 .chatv .compose .btn.stop{background:var(--stop)}
 .chatv .under .mini b{font-weight:500}
 .chatv .msg.me .md a{color:#fff}
-.chatv .msg .waiting{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.chatv .msg .wait{font-size:12px;color:var(--dim)}`;
+.chatv .msg .waiting{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.chatv .msg .wait{font-size:12px;color:var(--dim)}
+.chatv .chip.main{background:var(--accent);color:var(--on-accent);border-color:var(--accent);font-weight:500}
+.chatv .under a.mini{color:var(--accent);text-decoration:underline;text-underline-offset:2px}`;
   document.head.append(s);
 }
 
@@ -124,7 +126,11 @@ async function render(el, ui, route) {
       h('span', { class: 'grow' }),
       h('button', { class: 'who-t', type: 'button', onclick: () => ui.go('settings') }, h('span', { class: 'av g' }, 'S'), h('span', { class: 'nm' }, 'Settings'))].filter(Boolean));
   };
-  async function loadChats() { try { chats = (await api(API + 'chats')).chats; } catch (e) { toast(e.message, 'err'); } if (alive) paintRail(); }
+  let deskStarted = null;   // has one exchange finished on this desk (any chat)? Before it, the row above the box shows the two starters
+  async function loadChats() {
+    try { const r = await api(API + 'chats'); chats = r.chats; const was = deskStarted; deskStarted = r.started !== false; if (alive && was !== deskStarted) { paintChips(); if (was !== null) paintUnder(); } } catch (e) { toast(e.message, 'err'); }
+    if (alive) paintRail();
+  }
   async function newChat() {
     try { const c = await api(API + 'chats', { body: { title: 'New chat', members: ['coordinator'] } }); await loadChats(); open(c.id); input.focus(); } catch (e) { toast(e.message, 'err'); }
   }
@@ -152,7 +158,7 @@ async function render(el, ui, route) {
   const nearBottom = () => chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 120;
   const toBottom = () => { chatEl.scrollTop = chatEl.scrollHeight; };
   const paintMessages = () => {
-    msgEls.clear();
+    msgEls.clear(); offerEl = null;
     const els = messages.map(m => { const e = msgEl(m); msgEls.set(m.id, e); return e; });
     chatEl.replaceChildren(...(els.length ? els : [empty(chat?.members.length === 1 ? `Ask ${agentName(chat.members[0])} anything.` : 'Ask anything. The Coordinator answers and hands work to the right agent.')]), approvalsEl());
     if (queued) paintQueue();
@@ -284,7 +290,15 @@ async function render(el, ui, route) {
 
   // ---------- compose and controls
   // a chip press is told to the desk as such: a chip that means the owner's own business waits for what he sells
-  chips.replaceChildren(...chipsFor(ui.state.settings.role).map(c => h('button', { class: 'chip', type: 'button', onclick: () => send(chipText(c), { chip: true, needsBusiness: chipNeedsBusiness(c) }) }, chipText(c))));
+  // Before the desk's first exchange: "Say hello" (a first real answer) and "Select model / Add API" as the main button.
+  // From then on, the role's suggestions.
+  function paintChips() {
+    if (deskStarted === false) return chips.replaceChildren(
+      h('button', { class: 'chip', type: 'button', 'data-start': 'hello', onclick: () => send('Hello') }, 'Say hello'),
+      h('button', { class: 'chip main', type: 'button', 'data-start': 'models', onclick: () => ui.go('models') }, 'Select model / Add API'));
+    chips.replaceChildren(...chipsFor(ui.state.settings.role).map(c => h('button', { class: 'chip', type: 'button', onclick: () => send(chipText(c), { chip: true, needsBusiness: chipNeedsBusiness(c) }) }, chipText(c))));
+  }
+  paintChips();
   let prefillChip = null;   // a chip pressed on Home arrives as text in the box; sent unchanged, it is still that chip
   // Enter never stops a reply. While a reply is coming, Enter with text queues one message ("Waiting to send") that goes out by
   // itself the moment the turn ends, finished or stopped. Only a click on the visible Stop button stops a turn.
@@ -308,11 +322,13 @@ async function render(el, ui, route) {
     if (!queued || chat?.running || busy) return;
     const t = queued; queued = null; paintQueue(); await send(t);
   }
-  form.onsubmit = (e) => { e.preventDefault(); const t = input.value.trim(); if (!t) return; if (chat?.running) queue(t); else send(t); };
+  /** A side-panel prefix with nothing after it is never sent: it stays in the box with one line saying what is missing. */
+  const bare = (t) => { const b = bareStart(t); if (!b) return false; prefill(PANEL_PREFIXES[b]); toast(BARE_LINES[b]); return true; };
+  form.onsubmit = (e) => { e.preventDefault(); const t = input.value.trim(); if (!t || bare(t)) return; if (chat?.running) queue(t); else send(t); };
   sendBtn.type = 'button';
-  sendBtn.onclick = () => { const t = input.value.trim(); if (!t) { if (chat?.running) stop(); return; } if (chat?.running) queue(t); else send(t); };
+  sendBtn.onclick = () => { const t = input.value.trim(); if (!t) { if (chat?.running) stop(); return; } if (bare(t)) return; if (chat?.running) queue(t); else send(t); };
   async function send(text, chipOf = null) {
-    text = String(text || '').trim(); if (!text || !chat) return;
+    text = String(text || '').trim(); if (!text || !chat || bare(text)) return;
     if (!chipOf && prefillChip && prefillChip.text === text) chipOf = { chip: true, needsBusiness: !!prefillChip.needsBusiness };
     prefillChip = null;
     if (busy) { queue(text); return; }
@@ -337,13 +353,17 @@ async function render(el, ui, route) {
       try { await ui.setAutoApprove(next); paintUnder(); } catch (e) { toast(e.message, 'err'); }
     } }, until ? (mins > 60 ? 'Auto-approve · today' : `Auto-approve · ${mins} min`) : 'Auto-approve off');
     const attach = h('button', { class: 'mini', type: 'button', title: 'Add a file to this chat', onclick: () => fileIn.click() }, 'Attach');
-    under.replaceChildren(net, mdl, lvl, auto, attach);
+    const add = h('a', { class: 'mini', id: 'mdl-add', href: '#/models', hidden: true, title: 'Pick a model, or add an API key, in Models' }, 'Select model / Add API');
+    under.replaceChildren(net, mdl, add, lvl, auto, attach);
     try {
       const a = await api(`agents/${speaker()}`);
       const first = online ? (a.resolved?.chain || [])[0] : (a.resolved?.chain || []).find(c => c.provider === 'ollama' || String(c.provider).startsWith('lan:'));
       const pname = first ? (first.provider === 'router' ? first.name : PROVIDER_NAMES[first.provider]) || (String(first.provider).startsWith('lan:') ? 'LAN node' : first.provider) : null;
       const lastLabel = [...messages].reverse().find(m => m.role === 'assistant' && m.agentId === speaker() && m.label && m.status === 'done')?.label;
       mdl.textContent = !first ? 'No model set up' : first.model ? `${pname} · ${first.model}` : `${pname} · auto${lastLabel ? ' (last: ' + lastLabel.replace(/^.*? · /, '') + ')' : ''}`;
+      // no keyed or local model: the way to one stays in reach (before the first exchange it is the main button above the box)
+      const own = (a.resolved?.whenOnline || a.resolved?.chain || []).some(c => !['router', 'ollama'].includes(c.provider) || (c.provider === 'ollama' && c.model)) || !!ui.state.settings['ollama.model'];
+      add.hidden = own || deskStarted === false;
     } catch { mdl.textContent = 'Models'; }
   }
   fileIn.onchange = async () => {
@@ -377,8 +397,8 @@ async function render(el, ui, route) {
       h('div', { style: { textAlign: 'center', padding: '6px 0' } }, h('span', { class: 'av big', style: { margin: '0 auto 6px' } }, initials(name)), h('b', null, name)),
       h('div', { class: 'chips', style: { justifyContent: 'center', margin: '4px 0' } }, memberPills),
       h('h6', { style: { marginLeft: 0 } }, 'Suggested'),
-      line('Create a routine', 'Run this on a timetable', btn('Add', { kind: 'ghost sm', onClick: () => prefill('Every morning at 8, ') })),
-      line('Turn into a task', 'Keeps working after you leave', btn('Add', { kind: 'ghost sm', onClick: () => prefill('Make this a background task: ') })),
+      line('Create a routine', 'Run this on a timetable', btn('Add', { kind: 'ghost sm', onClick: () => panelPrefix('routine') })),
+      line('Turn into a task', 'Keeps working after you leave', btn('Add', { kind: 'ghost sm', onClick: panelTask })),
       line('Add an agent', 'Or change who is in this chat', btn('Add', { kind: 'ghost sm', onClick: editMembers })),
       h('h6', { style: { marginLeft: 0 } }, 'Background tasks'), tasks,
       h('h6', { style: { marginLeft: 0 } }, 'Outputs'), outputs,
@@ -395,7 +415,26 @@ async function render(el, ui, route) {
   }
   const m_name = (id) => agentName(id);
   async function saveSettings(p) { try { chat = { ...chat, ...(await api(API + `chats/${chat.id}`, { method: 'PATCH', body: { settings: p } })) }; } catch (e) { toast(e.message, 'err'); return false; } }
-  function prefill(t) { input.value = t; input.focus(); }
+  function prefill(t) { input.value = t; input.focus(); paintBtn(); }
+  // The side panel's prefixes: with text in the box the prefix goes in front of it; with an empty box the prefix waits there
+  // for him to type. Nothing is sent from here.
+  function panelPrefix(kind) {
+    const p = PANEL_PREFIXES[kind]; const typed = input.value.trim();
+    if (narrow()) setPanel(false);
+    prefill(!typed || bareStart(typed) ? p : typed.toLowerCase().startsWith(p.trim().toLowerCase()) ? typed : p + typed);
+  }
+  // "Turn into a task" with an empty box offers the chat's last ask, as it was, with Run and Cancel
+  let offerEl = null;
+  function panelTask() {
+    const ask = input.value.trim() && !bareStart(input.value) ? null : lastAsk(messages);
+    if (!ask) return panelPrefix('task');
+    if (narrow()) setPanel(false);
+    offerEl?.remove();
+    const close = () => { offerEl?.remove(); offerEl = null; };
+    offerEl = h('div', { class: 'msg it', 'data-role': 'offer' }, h('div', null, 'Run this again in the background: ' + cutAtWord(ask, 90)),
+      h('div', { class: 'act' }, btn('Run', { kind: 'sm', onClick: () => { close(); send(PANEL_PREFIXES.task + ask); } }), btn('Cancel', { kind: 'ghost sm', onClick: () => { close(); input.focus(); } })));
+    chatEl.insertBefore(offerEl, queueEl || chatEl.querySelector(':scope > .approvals')); toBottom();
+  }
   async function rename() { const t = await ui.ask('Name this chat', { value: chat.title || '' }); if (t == null || !t.trim()) return; try { chat = { ...chat, ...(await api(API + `chats/${chat.id}`, { method: 'PATCH', body: { title: t.trim() } })) }; paintHeader(); paintDrawer(); loadChats(); } catch (e) { toast(e.message, 'err'); } }
   async function remove() {
     if (!await ui.confirm(chat.seeded ? 'Clear every message in this chat?' : 'Delete this chat and its messages? Files it made stay in Files.', { ok: chat.seeded ? 'Clear' : 'Delete', kind: 'stop' })) return;

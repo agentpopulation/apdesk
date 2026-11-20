@@ -220,3 +220,23 @@ export function uniqueOutputs(messages) {
 export function hasTable(t) { return /(?:^|\n)[^\n]*\|[^\n]*\n[ \t]*\|?[ \t]*:?-{2,}/.test(String(t || '')); }
 /** A short table cell ("Day 1", "Amber Fort", a price): kept on one line. */
 export function shortCell(t) { const s = String(t || '').trim(); return s.length > 0 && s.length <= 14 && s.split(/\s+/).length <= 3 && !/https?:\/\//.test(s); }
+
+/** The side panel's buttons that put a prefix in the message box. A message that is only one of them asks for nothing. */
+export const PANEL_PREFIXES = { task: 'Make this a background task: ', routine: 'Every morning at 8, ' };
+export const BARE_LINES = { task: 'Tell me what to run in the background.', routine: 'Tell me what to run every morning at 8.' };
+const bareKey = (s) => String(s ?? '').trim().replace(/[\s:,.;-]+$/, '').toLowerCase();
+/** 'task' or 'routine' when the text is only that prefix (with or without its colon or comma); null otherwise. */
+export function bareStart(text) {
+  const k = bareKey(text); if (!k) return null;
+  return Object.keys(PANEL_PREFIXES).find(id => bareKey(PANEL_PREFIXES[id]) === k) || null;
+}
+/** The owner's last ask in these messages, without the task prefix: not a button press, a bare prefix or his answer about
+ *  his business. null when there is none. */
+export function lastAsk(messages = []) {
+  const m = [...messages].reverse().find(x => x.role === 'user' && String(x.text || '').trim() && !x.meta?.action && !x.meta?.aboutAnswer && !bareStart(x.text));
+  if (!m) return null;
+  const t = String(m.text).trim(); const p = PANEL_PREFIXES.task.trim();
+  return (t.toLowerCase().startsWith(p.toLowerCase()) ? t.slice(p.length) : t).trim() || null;
+}
+/** The one line under the reply that finished the desk's first exchange. */
+export const NEXT_LINE = 'Next, pick one of the suggestions above the message box, or type what you need.';

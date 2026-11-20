@@ -9,7 +9,8 @@ import { unsupportedClaims, removeSentences, senderNameProblems, stripSenderName
 const clip = (v, n) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 
 export async function activate(ctx) {
-  const currency = () => ctx.settings.get('currency') || 'INR';
+  const currency = () => ctx.settings.get('currency') || '';
+  const sysLocale = () => { try { return Intl.DateTimeFormat().resolvedOptions().locale; } catch { return undefined; } };
   const store = new SalesStore(ctx.db, { currency, emit: (d) => ctx.events.emit('sales', d) });
   const waiting = new Map();       // draftId -> AbortController of its pending send.person request
   const pendingId = new Map();     // draftId -> approval id still pending in this run
@@ -17,7 +18,8 @@ export async function activate(ctx) {
   const contactPage = (l) => (String(l.contactOther || '').match(/https?:\/\/\S+/) || [])[0] || '';
   const contactText = (l) => l.contactName ? `${l.contactName}${l.contactRole ? ' · ' + l.contactRole : ''}` : (l.email || (contactPage(l) ? `[Contact page](${contactPage(l)})` : 'not checked'));
   const CHANNEL_WORDS = { email: 'Email', linkedin: 'LinkedIn message', whatsapp: 'WhatsApp message', text: 'Text' };
-  const money = (minor, cur) => { if (minor == null) return 'not checked'; try { return new Intl.NumberFormat(ctx.settings.get('locale') || 'en-IN', { style: 'currency', currency: cur || currency(), maximumFractionDigits: 0 }).format(minor / 100); } catch { return `${cur} ${minor / 100}`; } };
+  // no currency set: the plain number, with no symbol
+  const money = (minor, cur) => { if (minor == null) return 'not checked'; const loc = ctx.settings.get('locale') || sysLocale(); const c = cur || currency(); try { return new Intl.NumberFormat(loc, c ? { style: 'currency', currency: c, maximumFractionDigits: 0 } : { maximumFractionDigits: 0 }).format(minor / 100); } catch { return String(minor / 100); } };
   const mdLink = (s) => s ? `[${String(s.title || s.url).replace(/[[\]]/g, '')}](${s.url})` : 'not checked';
 
   const OPEN_GROUP = 'Not checked: no page read said where these are or what they sell';

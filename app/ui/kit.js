@@ -98,7 +98,7 @@ export const fmt = {
   date: (iso) => { if (!iso) return ''; return new Date(iso).toLocaleDateString(prefs.locale, { day: 'numeric', month: 'short', year: 'numeric', timeZone: prefs.timeZone }); },
   when: (iso) => { if (!iso) return ''; const d = new Date(iso); const same = d.toDateString() === new Date().toDateString(); return same ? fmt.time(iso) : d.toLocaleDateString(prefs.locale, { day: 'numeric', month: 'short', timeZone: prefs.timeZone }) + ', ' + fmt.time(iso); },
   ago: (iso) => { if (!iso) return ''; const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000); if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s / 60) + ' min ago'; if (s < 86400) return Math.floor(s / 3600) + ' h ago'; return Math.floor(s / 86400) + ' d ago'; },
-  money: (minor, currency = prefs.currency) => { try { return new Intl.NumberFormat(prefs.locale, { style: 'currency', currency, maximumFractionDigits: 0 }).format((Number(minor) || 0) / 100); } catch { return `${currency} ${(Number(minor) || 0) / 100}`; } },
+  money: (minor, currency = prefs.currency) => { const n = (Number(minor) || 0) / 100; try { return new Intl.NumberFormat(prefs.locale, currency ? { style: 'currency', currency, maximumFractionDigits: 0 } : { maximumFractionDigits: 0 }).format(n); } catch { return currency ? `${currency} ${n}` : String(n); } },
   bytes: (n) => { n = Number(n) || 0; const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return (i ? n.toFixed(1) : n) + ' ' + u[i]; },
   pct: (p) => Math.round((Number(p) || 0) * 100) + '%',
 };

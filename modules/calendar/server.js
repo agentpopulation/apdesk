@@ -54,7 +54,8 @@ export async function activate(ctx) {
     const f = from ? wallToUtc(from, tz()) : '0000'; const t = to ? wallToUtc(to, tz()) : '9999';
     return ctx.db.all('SELECT * FROM m_calendar_events WHERE end_ >= ? AND start <= ? ORDER BY start', f, t).map(out);
   }
-  const when = (ev) => { try { return ev.allDay ? new Date(ev.start).toLocaleDateString(ctx.settings.get('locale') || 'en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: tz() }) : new Date(ev.start).toLocaleString(ctx.settings.get('locale') || 'en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: tz() }); } catch { return ev.start; } };
+  const locale = () => { try { return ctx.settings.get('locale') || Intl.DateTimeFormat().resolvedOptions().locale; } catch { return undefined; } };
+  const when = (ev) => { try { return ev.allDay ? new Date(ev.start).toLocaleDateString(locale(), { day: 'numeric', month: 'short', year: 'numeric', timeZone: tz() }) : new Date(ev.start).toLocaleString(locale(), { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: tz() }); } catch { return ev.start; } };
 
   /** An agent's add: asks the owner ('calendar.write'), then invites each attendee only with its own send.person approval. */
   async function agentAdd(e, { agentId = null, chatId = null, signal } = {}) {

@@ -17,6 +17,8 @@ const isFreeOpenRouter = (m) => /:free$/.test(String(m || '')) || m === 'openrou
 export const BACKOFF = Object.freeze({ busyMs: 35000, unavailableMs: 30 * 60000, timeoutMs: 2 * 60000, otherMs: 20000, maxMs: 2 * 3600000 });
 /** A local model's first call loads it into memory, which on a laptop can take minutes: its first-byte wait. */
 export const LOCAL_FIRST_MS = 150000;
+// A free host that has not started answering by now is skipped, so several can be tried inside one chat turn's wait.
+export const FREE_FIRST_MS = 25000;
 /** A model list is read again after this long (the provider's /models; OpenRouter's is public). */
 const CATALOG_TTL_MS = 5 * 60000;
 // Attempts per call. The built-in router alone gives up to 4 targets, so 6 lets a call that the free router cannot answer
@@ -318,7 +320,7 @@ export class ModelDoor {
     const headers = { 'content-type': 'application/json', ...t.headers };
     if (t.key) headers.authorization = 'Bearer ' + t.key;
     if (t.provider === 'openrouter') { headers['http-referer'] = 'http://127.0.0.1:3960'; headers['x-title'] = 'AP Desk'; }
-    const r = await this.http(t.baseUrl + (t.chatPath ?? '/chat/completions'), { method: 'POST', headers, body: JSON.stringify(body), signal }, Math.max(1, Math.min(opts.timeoutMs || (t.via ? 60000 : t.local ? LOCAL_FIRST_MS : 180000), leftMs)));
+    const r = await this.http(t.baseUrl + (t.chatPath ?? '/chat/completions'), { method: 'POST', headers, body: JSON.stringify(body), signal }, Math.max(1, Math.min(opts.timeoutMs || (t.via ? FREE_FIRST_MS : t.local ? LOCAL_FIRST_MS : 180000), leftMs)));
     if (!r.ok) throw await httpError(r);
     let text = ''; let toolCalls = []; let usage = null;
     let finish = null;

@@ -89,10 +89,16 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - A failed Test says why, local models get a fair first-call wait, and the Default model box lists every model: OpenRouter's whole list even before a key, each marked Free or Paid.
 - Paid OpenRouter models are switched beside the keys or in Payments, by the owner only, from the desk's own window. A new safety probe checks that nothing else can switch them on.
 - Free hosts that say no are skipped for a while instead of being retried, and when all of them are busy the desk says so at once with when to try again.
+- A free host that has not started answering within 25 seconds is skipped (it was 60), so more of them get a try inside one chat turn.
+- A new desk opens the chat with two buttons, "Say hello" and a highlighted "Select model / Add API"; the role's suggestions appear once the first reply has finished, and a small "Select model / Add API" link stays beside the model name.
+- The side panel never sends an empty request: "Turn into a task" offers to run the chat's last ask again in the background, and a message that is only a prefix is refused.
+- Work the chat finished in the last hour for the same ask is not restarted by itself; lead tasks go to the agent whose role is leads; times and money follow your settings everywhere.
 - A built-in agent left out at first start or retired later shows under "Not on your team" on the Agents page, and one click hires it back as it was, with its chats and rooms.
 - Briefs, schedules, calendar dates, lead values and spend amounts follow your own zone, locale and currency; nothing falls back to India any more.
 
 ### Known weak points
+- With no key and no local model, the free hosts are often busy: on 20 Nov 2026 a first "Hello" got no answer within 150 seconds in one test run. A free key or a local model in Models avoids this.
+- A real local Ollama model has still not been run through the full set of checks.
 - No run of the 17 acceptance asks has passed every ask. Results vary with the free model that answers.
 - In the run on this code (15 Nov 2026) 13 asks passed, 3 failed and 1 was not checked. The three: the research report quoted one sentence about a different technology as on-topic; the compare table got no model answer within 150 seconds on its first run, and on its second run confirmed 5 of 12 cells; the lead search listed 20 leads (13 checked, 7 labelled "not checked") and the runner counted only one of its two tables.
 - An ask to research something "in the background" can start two jobs for the same work (seen 15 Nov 2026).

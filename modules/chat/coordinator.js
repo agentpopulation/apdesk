@@ -38,6 +38,32 @@ export function makeCoordinator(ctx, store, bus) {
     const t = ctx.modules.tools().find(x => x.name === toolName);
     return over[toolName] || (t && over[t.module]) || (t && HANDOFF[t.module]) || null;
   };
+  /** The agent on the team whose role is this kind of work, or null. */
+  const agentForKind = (kind) => {
+    const re = KIND_ROLE[kind]; if (!re) return null;
+    const on = ctx.agents.list().filter(a => a.id !== 'coordinator' && a.enabled !== false && re.test(a.role || ''));
+    const usual = wantedHand(KIND_TOOL[kind]);
+    return (on.find(a => a.id === usual) || on[0])?.id || null;
+  };
+  /** A job of this chat that finished in the last hour for the same ask as this owner message (the same stored text after
+   *  trimming and case-folding), and is still a success; null when there is none. The ask's jobs are the ones started between
+   *  that message and the owner's next one (his answer about his business does not end an ask). */
+  function finishedFor(chatId, user) {
+    const key = (t) => String(t ?? '').trim().toLowerCase();
+    const since = new Date(Date.now() - REPEAT_WINDOW_MS).toISOString();
+    const jobs = ctx.jobs.list({ status: 'done', limit: 100 }).filter(j => j.chatId === chatId && REPEAT_KINDS.test(j.kind || '') && j.finished && j.finished >= since);
+    if (!jobs.length) return null;
+    const msgs = store.messages(chatId, { limit: 200 });
+    const asks = msgs.filter(m => m.role === 'user' && !m.meta?.aboutAnswer);
+    const failed = new Set(msgs.filter(m => m.meta?.jobOf && m.meta?.unfinished).map(m => m.meta.jobOf));
+    for (let i = asks.length - 1; i >= 0; i--) {
+      const u = asks[i]; if (u.id >= user.id || key(u.text) !== key(user.text)) continue;
+      const to = asks[i + 1]?.at || user.at;
+      const j = jobs.find(x => x.created >= u.at && x.created <= to && !failed.has(x.id));
+      if (j) return j;
+    }
+    return null;
+  }
   /** Who answers: a direct chat's one agent; in a group the Coordinator, unless the owner names a member first ("@Scout ..." or "Scout, ..."). */
   /** Top-level names in the workspace (files without their extension, and folders), for "my notes", "the reports folder". */
   const workspaceNames = () => { try { return fs.readdirSync(ctx.workspace).filter(n => !n.startsWith('.')).map(n => n.replace(/\.[^.]+$/, '')); } catch { return []; } };
@@ -51,9 +77,9 @@ export function makeCoordinator(ctx, store, bus) {
 
   async function systemFor(chat, speaker, userText, tools, jsonPath, held = []) {
     const st = ctx.settings;
-    const tz = st.get('timeZone') || 'Asia/Kolkata';
+    const tz = zoneOf(st); const cur = st.get('currency');
     const when = new Date().toLocaleString('en-GB', { timeZone: tz, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: 'numeric', minute: '2-digit' });
-    const lines = [`Now: ${when} (${tz}). Currency: ${st.get('currency') || 'INR'}.`];
+    const lines = [`Now: ${when} (${tz}).${cur ? ` Currency: ${cur}.` : ''}`];
     if (st.get('ownerName')) lines.push(`The owner's name is ${st.get('ownerName')}.`);
     // his own words, quoted as a fact: it explains "my product" and changes nothing about tools or permissions
     const about = aboutOf(st).replace(/"{3,}/g, '"');
@@ -254,6 +280,8 @@ export function makeCoordinator(ctx, store, bus) {
       // Files made from web facts: no file before the facts, and every cell checked against what the pages said in this turn.
       const pages = [];   // pages actually read in this turn: { url, text }. Search snippets never confirm a cell.
       const researchAsked = heavyAsked(userText).has('research');
+      // the kind of heavy work this ask is for: the one gate that opened, or with more than one the ask's own deliverable's
+      const workKind = kindOfAsk(userText, allTools);
       const researchStarted = () => steps.some(st => st.status === 'done' && RESEARCH_JOBS.test(st.tool));
       const lastUser = store.messages(chatId, { limit: 5 }).filter(m => m.role === 'user').at(-1);
       const factsNeeded = tools.some(t => FACT_TOOLS.test(t.name)) && needsOutsideFacts(userText, { attachment: !!lastUser?.meta?.attachment && lastUser.id > (reply.id - 3) });
@@ -344,8 +372,15 @@ export function makeCoordinator(ctx, store, bus) {
           if (missing) { steps.push({ tool: name, args, agentId: speaker, status: 'refused', result: { refused: 'no business text' } }); save({ meta: { steps } }); return `Not run: the owner has not said what he sells. Tell him to add it in Settings › General under "What you do".`; }
         }
         args = asStored(name, args);   // a timed ask's schedule is stored with the owner's when and prompt: compare what will be stored
-        // research work goes to the research agent, whichever agent the model named for the task
-        if (name === 'task_create' && args && typeof args === 'object' && researchAsked && args.agentId !== 'scout' && ctx.agents.get('scout') && ctx.agents.get('scout').enabled !== false) args = { ...args, agentId: 'scout' };
+        // the task goes to the agent whose role is that kind of work (leads, research, the browser), whichever agent the model
+        // named; with no such agent on the team the Coordinator does it and says who to hire
+        if (name === 'task_create' && args && typeof args === 'object' && KIND_ROLE[workKind]) {
+          const to = agentForKind(workKind);
+          if (to) args = { ...args, agentId: to };
+          else { const want = wantedHand(KIND_TOOL[workKind]); if (want && !ctx.agents.get(want)) notOnTeam.add(want); args = { ...args, agentId: 'coordinator' }; }
+        }
+        // work this chat finished in the last hour for the very same ask is not started again by itself
+        if (REPEAT_TOOLS.test(name) && user && !detached) { const done = finishedFor(chatId, user); if (done) throw Object.assign(new Error('already done'), { code: 'already_done', done, tool: name, args }); }
         // one background task per ask: the same work already started in this turn is not started again;
         // the forced deliverable step never runs once the model's own call of that tool succeeded
         const dup = (ONCE_TOOLS.test(name) && steps.find(st => st.tool === name && ['done', 'running'].includes(st.status) && sameWork(name, st.args, args)))
@@ -530,7 +565,7 @@ export function makeCoordinator(ctx, store, bus) {
             label = r.label; attempts.push(...(r.attempts || []));
             const tc = (r.toolCalls || []).find(x => deliver.tools.includes(x.name));
             if (tc) { msgs.push({ role: 'user', content: order }); msgs.push(typeof ctx.model.toolMessage === 'function' ? ctx.model.toolMessage({ ...r, toolCalls: [tc] }) : { role: 'assistant', content: '', tool_calls: [{ id: tc.id, type: 'function', function: { name: tc.name, arguments: JSON.stringify(tc.args || {}) } }] }); msgs.push({ role: 'tool', tool_call_id: tc.id, name: tc.name, content: await runTool(tc.name, tc.args, { forced: true }) }); if (delivered()) return true; }
-          } catch (e) { if (signal.aborted || ['aborted', 'halted', 'timeout', 'needs_about'].includes(e.code)) throw e; }
+          } catch (e) { if (signal.aborted || ['aborted', 'halted', 'timeout', 'needs_about', 'already_done'].includes(e.code)) throw e; }
         }
         if (deliver.args) {   // the tool can run with what it has (Sales drafts without an offer): run it, no question back
           await runTool(want[0].name, deliver.args, { forced: true }); if (delivered()) return true;
@@ -544,7 +579,7 @@ export function makeCoordinator(ctx, store, bus) {
           let d = r.json && typeof r.json === 'object' ? r.json : null;
           if (!d?.tool && r.toolCalls?.length) d = { tool: r.toolCalls[0].name, args: r.toolCalls[0].args };
           if (d?.tool && deliver.tools.includes(d.tool)) { const out = await runTool(d.tool, d.args || {}, { forced: true }); msgs.push({ role: 'user', content: `The desk called ${d.tool} for you. Result:\n${out}` }); }
-        } catch (e) { if (signal.aborted || ['aborted', 'halted', 'timeout', 'needs_about'].includes(e.code)) throw e; }
+        } catch (e) { if (signal.aborted || ['aborted', 'halted', 'timeout', 'needs_about', 'already_done'].includes(e.code)) throw e; }
         return delivered();
       };
 
@@ -616,6 +651,16 @@ export function makeCoordinator(ctx, store, bus) {
       const cur = store.message(reply.id);
       save({ text: text.trim() || (steps.some(s => s.status === 'done') ? 'Done.' : 'The model gave an empty answer. Ask again, or pick another model for this agent.'), label, status: text.trim() || steps.some(s => s.status === 'done') ? 'done' : 'error', cards: [...cur.cards, ...extraCards], meta: { steps, flagged, models: attempts.slice(-8), ...(blocked ? { blocked } : {}), ...(unfinished ? { unfinished } : {}), ...(jobOf ? { jobOf } : {}) } });
     } catch (e) {
+      if (e.code === 'already_done' && !signal.aborted) {
+        // one line written by code: what is done, when, and where the result is; the owner may still run it again
+        const j = e.done; const [where, go] = resultPlace(j);
+        const mins = Math.floor((Date.now() - Date.parse(j.finished)) / 60000);
+        const at = new Date(j.finished).toLocaleTimeString(localeOf(ctx.settings), { hour: 'numeric', minute: '2-digit', timeZone: zoneOf(ctx.settings) });
+        steps.push({ tool: e.tool, args: e.args || {}, agentId: speaker, status: 'skipped', result: { skipped: 'already done', jobId: j.id } });
+        reset(); text = `This is already done in this chat: "${j.title}" finished ${mins < 1 ? 'just now' : mins === 1 ? '1 minute ago' : mins + ' minutes ago'}, at ${at}. The result is ${where}.`;
+        save({ text, status: 'done', label: null, cards: [...(store.message(reply.id)?.cards || []), { kind: 'actions', actions: [{ label: 'Open the result', go }, { label: 'Run it again', tool: e.tool, args: e.args || {} }] }], meta: { steps, alreadyDone: j.id, wait: null } });
+        return reply;
+      }
       if (e.code === 'needs_about' && !signal.aborted) {
         // the ask leans on what the owner sells and he has not said it: one question, written here, and the chat waits for it
         store.setSettings(chatId, { awaitBusiness: { text: userText, at: new Date().toISOString() } });
@@ -849,23 +894,52 @@ export function pasteTextAsk(text) {
 export const HEAVY = { research_deep: 'research', research_swarm: 'swarm', council_ask: 'council', leads_find: 'leads', browser_task: 'browser' };
 const HEAVY_WORDS = {
   // "the research on X" and "research shows" are about research findings: a question, not an ask to do research
-  research: /\bresearch(?:es|ed|ing)?\b|\bin[- ]depth\b|\bdeep[- ]dive\b|\binvestigat(?:e|es|ed|ing|ion)\b|\ba (?:\w+ )?report (?:on|about|into)\b|\bwith (?:sources|citations)\b|\bcit(?:e|ed|ing)\b|\bstudy of\b/i,
+  research: /\bresearch(?:es|ed|ing)?\b|\bin[- ]depth\b|\bdeep[- ]dive\b|\binvestigat(?:e|es|ed|ing|ion)\b|\ba (?:\w+ )?report (?:on|about|into)\b|\bstudy of\b/i,
   swarm: /\bswarms?\b|\bagents?\b[^.?!]{0,30}\bin parallel\b|\bparallel agents\b/i,
   council: /\bcouncil\b|\bverdict\b|\bthree seats\b/i,
   leads: /\bleads\b(?!\s+(?:to|into|up)\b)|\bprospect(?:s|ing)\b|\bfind\b[^.?!]{0,40}\b(?:companies|customers|clients|businesses|buyers|distributors|suppliers)\b/i,
   browser: /\b(?:use|using|in|with|open) (?:your |the |a |my )?(?:own )?browser\b|\bbrowser task\b|\bopen (?:the |this |that |their )?(?:site|website)\b|\b(?:go|navigate|head) to\s+(?:https?:\/\/|www\.)|\bopen\s+https?:\/\//i,
 };
 const RESEARCH_NOUN = /\b(?:the|recent|latest|current|new|existing|scientific|medical)\s+research\b|\bresearch\s+(?:says|shows|suggests|found|finds)\b/gi;
+/** "with sources", "cited": how the work should be done. They ask for research only when no other heavy work is named
+ *  ("Find 20 leads with sources" is a lead search whose rows carry sources). */
+const RESEARCH_MANNER = /\bwith (?:sources|citations)\b|\bcit(?:e|ed|ing)\b/i;
 /** Which kinds of heavy work the owner's words name. */
 export function heavyAsked(text) {
   const u = String(text || ''); const out = new Set();
   for (const [kind, re] of Object.entries(HEAVY_WORDS)) if (re.test(kind === 'research' ? u.replace(RESEARCH_NOUN, ' ') : u)) out.add(kind);
+  if (!out.size && RESEARCH_MANNER.test(u.replace(RESEARCH_NOUN, ' '))) out.add('research');
   return out;
 }
 /** Tools that start work that outlives the turn or belongs to another agent, and the kind of ask that opens each one. */
 export const STARTERS = { task_create: 'task', schedule_create: 'schedule', flow_create: 'flow', travel_plan: 'travel', site_build: 'site', outreach_draft: 'outreach' };
 /** Every tool that is offered only when the ask is for its work. */
 export const GATED = { ...HEAVY, ...STARTERS };
+/** The kind of heavy work an ask is for: the one kind its words open, or, when they open more than one, the kind of the tool
+ *  the ask must produce. null when that does not settle it. */
+export function kindOfAsk(text, tools = []) {
+  const kinds = [...heavyAsked(text)]; if (kinds.length <= 1) return kinds[0] || null;
+  const d = deliverableFor(text, tools); const k = d?.tools?.map(n => HEAVY[n]).find(Boolean);
+  return k && kinds.includes(k) ? k : null;
+}
+/** The tool each kind of heavy work stands for, and the words in an agent's role that say the work is its own. */
+export const KIND_TOOL = Object.fromEntries(Object.entries(HEAVY).map(([tool, kind]) => [kind, tool]));
+const KIND_ROLE = { research: /\bresearch\b/i, swarm: /\bresearch\b/i, leads: /\bleads?\b/i, browser: /\bbrowser\b/i };
+/** Jobs started for a chat that are not started again by themselves for the same ask within REPEAT_WINDOW_MS. */
+export const REPEAT_TOOLS = /^(?:task_create|leads_find|research_deep|research_swarm)$/;
+const REPEAT_KINDS = /^(?:tasks\.run|sales\.find|research\.deep|research\.swarm)$/;
+export const REPEAT_WINDOW_MS = 60 * 60000;
+/** Where a finished job's result is, in words and as a link. */
+function resultPlace(j) {
+  if (j.kind === 'sales.find') return ['in the table above and in Sales', '#/sales'];
+  if (j.kind === 'research.deep') return ['on the Research page', j.input?.reportId ? '#/research/' + j.input.reportId : '#/research'];
+  if (j.kind === 'research.swarm') return ['on the Research page, Swarm tab', j.input?.swarmId ? '#/research/swarm/' + j.input.swarmId : '#/research'];
+  return ['above in this chat and in Tasks', '#/tasks'];
+}
+/** The owner's zone and locale from settings; the computer's own through Intl only as a last resort. */
+const sysPlace = () => { try { return Intl.DateTimeFormat().resolvedOptions(); } catch { return {}; } };
+export const zoneOf = (st) => st?.get?.('timeZone') || sysPlace().timeZone || 'UTC';
+export const localeOf = (st) => st?.get?.('locale') || sysPlace().locale || undefined;
 const DAYS = 'monday|tuesday|wednesday|thursday|friday|saturday|sunday';
 const START_WORDS = {
   // the ask says the work should outlive this turn ("Make this a background task: …" is the side panel's "Turn into a task")

@@ -65,7 +65,7 @@ Models shows every way to get a model or a service, grouped, so the owner can st
 
 ## Time limits
 
-- First byte: a hop waits at most `timeoutMs` for the provider's first byte (default 60 s on the built-in router, 180 s elsewhere).
+- First byte: a hop waits at most `timeoutMs` for the provider's first byte (default 25 s on the built-in free hosts, `FREE_FIRST_MS`, so several can be tried inside one chat turn's 150 s wait; 180 s elsewhere).
 - Stream gap: a streamed reply that sends nothing for 45 s (`STREAM_GAP_MS`, per call `streamGapMs`) is dropped as an ordinary failed hop and the next target is tried. A stream that keeps sending is never cut.
 - Total: no new hop starts 170 s after the call began (`CHAT_DEADLINE_MS`, per call `deadlineMs`), and a hop's first-byte wait never runs past that; the call then ends `all_failed` with its attempts. A hop that is already streaming is not cut.
 - Stop and Panic always end the call as `aborted`, never as a failed hop.

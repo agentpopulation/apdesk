@@ -522,3 +522,11 @@ test('"What you do": saved through the plain settings route, trimmed, capped at 
     r = await t.call('/api/settings', { body: { 'business.about': '' } }); assert.equal(r.json.settings['business.about'], '');
   } finally { await t.close(); }
 });
+
+test('model door: a free host gets a short first-answer limit so several fit in one chat wait', async () => {
+  const door = await import('../app/core/model-door.js');
+  assert.ok(door.FREE_FIRST_MS <= 30000, 'a free host is given up on within 30 seconds');
+  assert.ok(Math.floor(150000 / door.FREE_FIRST_MS) >= 5, 'at least five free hosts can be tried inside the chat wait of 150 seconds');
+  assert.ok(door.LOCAL_FIRST_MS > door.FREE_FIRST_MS, 'a local model still gets the longer first-call wait');
+});
+

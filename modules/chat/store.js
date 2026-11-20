@@ -77,6 +77,8 @@ export function makeStore(ctx) {
       for (const m of rows) { const i = m.cards.findIndex(c => c && c.kind === card.kind && ((card.id && c.id === card.id) || (card.approvalId && c.approvalId === card.approvalId))); if (i >= 0) return { message: m, index: i }; }
       return null;
     },
+    /** Has an owner message on this desk been answered by a reply that finished (any chat)? */
+    exchanged() { return !!db.get("SELECT 1 AS x FROM m_chat_messages a WHERE a.role = 'assistant' AND a.status = 'done' AND EXISTS (SELECT 1 FROM m_chat_messages u WHERE u.chat_id = a.chat_id AND u.role = 'user' AND u.id < a.id) LIMIT 1"); },
     lastOf(chatId) { return msgRow(db.get('SELECT * FROM m_chat_messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1', chatId)); },
   };
   return s;

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { makeStore, SEED_GROUPS } from './store.js';
 import { makeCoordinator, cardKey, RESEARCH_JOBS, deliverableFor, NOT_NOW } from './coordinator.js';
 import { aboutOf, clipAbout, ABOUT_KEY, ASK_ABOUT, savedLine } from './business.js';
-import { dropFileClaims, previewText, cutAtWord } from './ui-text.js';
+import { dropFileClaims, previewText, cutAtWord, bareStart, BARE_LINES, NEXT_LINE } from './ui-text.js';
 
 const TEXT_EXT = /\.(txt|md|markdown|csv|tsv|json|js|mjs|ts|py|html?|css|xml|ya?ml|ini|log|sql|sh|bat|ps1|rtf)$/i;
 
@@ -96,6 +96,10 @@ export async function activate(ctx) {
     store.touch(chat.id, text || job.title); bus.emitMessage(m); emit({ type: 'chats' });
   }
 
+  /** The desk's first exchange has finished (an owner message answered by a reply that finished, in any chat). Kept in kv
+   *  once true, so clearing messages does not make the desk new again; a desk from before the flag is read from its messages. */
+  const deskStarted = () => { if (ctx.kv.get('chat.started', false)) return true; if (!store.exchanged()) return false; ctx.kv.set('chat.started', true); return true; };
+
   const listChats = () => {
     for (const a of ctx.agents.list()) store.direct(a.id);
     return store.list().map(c => ({ ...c, running: co.running.has(c.id) }));
@@ -127,7 +131,7 @@ export async function activate(ctx) {
   ctx.route('POST', '/rooms/fit', (req, res, { owner }) => owner ? ctx.json(res, fitRooms()) : ctx.json(res, { error: 'Only the owner at this desk can change this.' }, 403));
 
   // ---------- routes for the UI
-  ctx.route('GET', '/chats', (req, res) => ctx.json(res, { chats: listChats() }));
+  ctx.route('GET', '/chats', (req, res) => ctx.json(res, { chats: listChats(), started: deskStarted() }));
   ctx.route('POST', '/chats', (req, res, { body }) => ctx.json(res, store.create({ title: body?.title, members: body?.members })));
   ctx.route('GET', '/chats/:id', (req, res, { params }) => { const c = resolveChat(params.id); c ? ctx.json(res, { ...c, running: co.running.has(c.id) }) : ctx.json(res, { error: 'That chat is gone.' }, 404); });
   ctx.route('PATCH', '/chats/:id', (req, res, { params, body }) => {
@@ -161,6 +165,8 @@ export async function activate(ctx) {
     const text = String(body?.text || '').trim(); if (!text) return ctx.json(res, { error: 'Type a message first.' }, 400);
     if (co.running.has(c.id)) return ctx.json(res, { error: 'A reply is still coming in this chat. Stop it first.' }, 409);
     if (ctx.panic.halted) return ctx.json(res, { error: 'Everything is stopped. Press Resume first.', code: 'halted' }, 503);
+    const bare = bareStart(text); if (bare) return ctx.json(res, { error: BARE_LINES[bare], code: 'empty_ask' }, 400);   // a side-panel prefix alone asks for nothing
+    const first = !deskStarted();
     const chip = body?.chip === true;
     const waiting = c.settings.awaitBusiness;
     let p;
@@ -184,7 +190,8 @@ export async function activate(ctx) {
       bus.emitMessage(q); store.touch(c.id, ASK_ABOUT); emit({ type: 'chats' });
       return ctx.json(res, { ok: true, chatId: c.id, replyId: q.id, asked: true });
     } else p = co.turn(c.id, text, { speaker: body?.agentId, userMeta: chip ? { chip: true } : {} });
-    p.catch(e => ctx.log('turn failed', e.message));
+    // the reply that finished the desk's first exchange gets one line under it, once, that points at the suggestions
+    p.then((m) => { if (!first || m?.status !== 'done' || ctx.kv.get('chat.nextShown', false) || !deskStarted()) return; ctx.kv.set('chat.nextShown', true); bus.emitMessage(store.add(c.id, { role: 'system', text: NEXT_LINE, meta: { firstNext: true } })); emit({ type: 'chats' }); }, e => ctx.log('turn failed', e.message));
     await new Promise(r => setImmediate(r));
     ctx.json(res, { ok: true, chatId: c.id, replyId: co.running.get(c.id)?.replyId || null });
   });
