@@ -2,7 +2,7 @@
 // Limits are estimates, not promises.
 export const UPSTREAM_TERMS = {
   ovh: { signup: 'https://www.ovhcloud.com/en/public-cloud/ai-endpoints/catalog/', logsOrTrains: false, terms: 'Says it does not keep or train on prompts and replies. Hosted in the EU. Read the host\'s terms before business use.', limit: 'About 2 requests a minute per address for each model, without a key.' },
-  llm7: { signup: 'https://token.llm7.io', logsOrTrains: 'unknown', terms: 'No statement on keeping prompts, so treat it as logging. The free quota can shrink without notice.', limit: 'Published for the free token. Limits without a token are not published.' },
+  llm7: { signup: 'https://token.llm7.io', logsOrTrains: 'unknown', terms: 'No statement on keeping prompts, so treat it as logging. The free quota can shrink without notice.', limit: 'Off by default. Without a token it answered "free token allowance reached" on 20 Nov 2026. Its model names are read from the host when you switch it on.' },
   pollinations: { signup: 'https://enter.pollinations.ai', logsOrTrains: 'unknown', terms: 'No statement on keeping prompts, so treat it as logging. Only one model works without a key.', limit: 'Not published. A careful guess: about 4 a minute.' },
   kilo: { signup: 'https://app.kilo.ai/profile', logsOrTrains: true, terms: 'May send your prompts on to providers that log them. The free pool changes often. Read the host\'s terms before business use.', limit: 'About 200 requests an hour per address on the free models.' },
   aihorde: { signup: 'https://aihorde.net/register', logsOrTrains: true, terms: 'Volunteer machines read your prompts, so treat everything you send as public. Answers can wait in a queue.', limit: 'Not published. Anonymous requests wait in the lowest queue.' },

@@ -58,7 +58,7 @@ if (want('core')) try {
   await t.call('/api/m/chat/settings', { method: 'PUT', body: { jsonProviders: ['router'] } });   // force the JSON protocol for this check
   r = await say('dm-coder', 'Use the lookup_code tool to get the secret desk code word, then tell me the code word.');
   if (r.m?.status !== 'done') { await sleep(30000); r = await say('dm-coder', 'Use the lookup_code tool to get the secret desk code word, then tell me the code word.'); }
-  check('JSON decision path (built-in router): tool runs, answer uses its result', r.m?.status === 'done' && r.m.text.includes(CODE) && /Agent Population Router/.test(r.m.label || ''), `[${r.m?.label}] steps ${JSON.stringify(r.m?.meta?.steps?.map(s => s.tool))} · ${r.m?.text} · tried ${why(r.m)}`);
+  check('JSON decision path (built-in router): tool runs, answer uses its result', r.m?.status === 'done' && r.m.text.includes(CODE) && /^Free API · /.test(r.m.label || ''), `[${r.m?.label}] steps ${JSON.stringify(r.m?.meta?.steps?.map(s => s.tool))} · ${r.m?.text} · tried ${why(r.m)}`);
 
   await t.call('/api/m/chat/settings', { method: 'PUT', body: { jsonProviders: [] } });
   // ask 11: rename an agent and change its tone; the next reply shows it
@@ -74,7 +74,7 @@ if (want('core')) try {
   await t.call('/api/agents/scout', { method: 'PATCH', body: { model: { main: { provider: 'gemini' } } } });
   r = await sayGemini('dm-scout', 'Say goodbye in five words.');
   const l2 = r.m?.label;
-  check('ask 12: change the model, the next reply names it (router, then Gemini)', /Agent Population Router/.test(l1 || '') && /Gemini/.test(l2 || '') && r.m?.status === 'done', `router reply: [${l1}] · gemini reply: [${l2}] ${r.m?.text} · tried ${why(r.m)}`);
+  check('ask 12: change the model, the next reply names it (router, then Gemini)', /^Free API · /.test(l1 || '') && /Gemini/.test(l2 || '') && r.m?.status === 'done', `router reply: [${l1}] · gemini reply: [${l2}] ${r.m?.text} · tried ${why(r.m)}`);
 
   // ask 6: a job started from chat; nobody watching; the finished work is in the chat
   r = await say('build-room', 'Start the compare job for three laptops (45 seconds). Just start it.');

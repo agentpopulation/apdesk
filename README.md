@@ -130,7 +130,7 @@ Then open `http://127.0.0.1:3960`. Run the tests with `npm test`.
 
 **First five minutes**
 
-1. Say hello in **Chat**. The free router answers with no key and no sign-in.
+1. Say hello in **Chat**. The Free API answers with no key and no sign-in.
 2. Open **Models** to add your own keys, or point the desk at [Ollama](https://ollama.com) for fully local work.
 3. Open **Settings › Modules** and switch on what you want: Mail, Calendar, Voice, Telegram, and more.
 4. Try **Research** with a topic you know well, and check the sources it gives you.
@@ -141,15 +141,15 @@ Every model call in the whole desk goes through one door, so one place decides w
 
 | Source | What it is | Cost |
 |---|---|---|
-| **Agent Population Router** | Built in. Uses free models that need no sign-in. If you run your own router at `http://127.0.0.1:8787/v1`, the desk uses that. | Free |
+| **Free API by Agent Population Desk** | Built in. Uses free models that need no sign-in. If you run your own router at `http://127.0.0.1:8787/v1`, the desk uses that. | Free |
 | **Ollama** | Local models at `http://127.0.0.1:11434`. The only source used when you go Offline. | Free, on your hardware |
 | **Your own keys** | OpenRouter, OpenAI, Anthropic, Groq, Gemini, or any OpenAI-compatible address. Typed in under Models. Several keys per provider. | Yours to decide |
 
 <p align="center">
-  <img src="docs/images/models.png" alt="The Models page: the free router is on from the first run, and every other provider waits for your key" width="100%">
+  <img src="docs/images/models.png" alt="The Models page: the Free API is on from the first run, and every other provider waits for your key" width="100%">
 </p>
 
-OpenRouter is used with **free models only** until you switch paid models on in Settings › Payments and spend.
+Free or paid is your choice. OpenRouter is used with **free models only** until you switch on "Paid models" beside its keys on the Models page. Only you can switch it, from the desk's own window.
 
 Keys found in the environment when the desk starts are used for that run and are never written to disk: `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GROQ_API_KEY`, `GEMINI_API_KEY`, or `LLM_BASE_URL` with `LLM_API_KEY`.
 

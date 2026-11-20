@@ -44,7 +44,7 @@ test('council: a run stores answers, rankings and a Verdict; Panic stops a secon
 
 test('council: seats and chairman are spread across providers first, then across one provider\'s models', () => {
   const label = (p, m) => `${p} · ${m}`;
-  const router = { provider: 'router', kind: 'router', label: 'Agent Population Router', ok: true, model: 'llama-3.3-70b', models: ['llama-3.3-70b', 'llama-3.1-8b', 'qwen3-32b', 'mistral-small', 'gpt-oss-120b', 'nomic-embed-text'] };
+  const router = { provider: 'router', kind: 'router', label: 'Free API by Agent Population Desk', ok: true, model: 'llama-3.3-70b', models: ['llama-3.3-70b', 'llama-3.1-8b', 'qwen3-32b', 'mistral-small', 'gpt-oss-120b', 'nomic-embed-text'] };
   const gemini = { provider: 'gemini', kind: 'keyed', label: 'Google Gemini', ok: true, model: 'gemini-3.6-flash', models: ['gemini-3.6-flash'] };
   const ollama = { provider: 'ollama', kind: 'local', label: 'Ollama', ok: true, model: 'qwen2.5:14b', models: ['qwen2.5:14b', 'nomic-embed-text'] };
   const key = (x) => x.provider + '|' + x.model;

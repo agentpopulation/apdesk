@@ -3,10 +3,22 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { id as makeId, now } from './storage.js';
+import { SETTINGS_TOKEN } from './approval-door.js';
 
 const CATALOG = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'providers.json'), 'utf8'));
 export const PROVIDERS = CATALOG.providers;
 export const FREE_ROUTER = CATALOG.freeRouter;
+/** The one place that names the built-in free models: full on the Models page, short on reply labels, pills and notices. */
+export const ROUTER_NAME = Object.freeze({ full: FREE_ROUTER.name, short: FREE_ROUTER.shortName });
+const isFreeOpenRouter = (m) => /:free$/.test(String(m || '')) || m === 'openrouter/free';
+/** How long a free host-and-model is skipped after it said no (per door: this.backoff; tests use short ones).
+ *  busy: a 429 or a "retry after" notice that names no time (the anonymous limits are per minute);
+ *  unavailable: the host says the model is unavailable or unknown; timeout: no answer in time; other: any other failure. */
+export const BACKOFF = Object.freeze({ busyMs: 35000, unavailableMs: 30 * 60000, timeoutMs: 2 * 60000, otherMs: 20000, maxMs: 2 * 3600000 });
+/** A local model's first call loads it into memory, which on a laptop can take minutes: its first-byte wait. */
+export const LOCAL_FIRST_MS = 150000;
+/** A model list is read again after this long (the provider's /models; OpenRouter's is public). */
+const CATALOG_TTL_MS = 5 * 60000;
 // Attempts per call. The built-in router alone gives up to 4 targets, so 6 lets a call that the free router cannot answer
 // still reach Ollama and the first keyed model (MODEL-DOOR.md, Choosing).
 const MAX_ATTEMPTS = 6;
@@ -25,6 +37,9 @@ export class ModelDoor {
     this.s = storage; this.settings = settings; this.panic = panic; this.agents = agents; this.events = events; this.log = log; this.fetch = fetchImpl;
     this.envKeys = [];            // { id, provider, label, value, baseUrl? } not persisted
     this.cooldown = new Map();    // provider|keyId -> until ms
+    this.coolWhy = new Map();     // builtin router keyId -> { why: 'busy'|'unavailable'|'timeout'|'other', until }
+    this.lastPick = new Map();    // builtin router keyId -> when it was last tried (spreads calls over the free models)
+    this.backoff = { ...BACKOFF };
     this.cache = new Map();       // probe results
     this.last = new Map();        // provider -> the last real call's result, shown in Active now
     this.loadEnvKeys();
@@ -92,8 +107,8 @@ export class ModelDoor {
     const [router, ollama] = await Promise.all([this.routerModels(), this.ollamaModels()]);
     if (this.settings.get('router.enabled')) {
       const builtin = !router.ok && this.settings.get('router.builtin') !== false;
-      const ups = builtin ? (this.settings.get('router.upstreams') || FREE_ROUTER.upstreams).filter(u => u.enabled !== false) : [];
-      out.push({ provider: 'router', kind: 'router', label: 'Agent Population Router', ok: online && (router.ok || builtin), builtin, upstreams: ups.map(u => ({ id: u.id, name: u.name, models: u.models, limit: u.limit })), models: router.ok ? router.models : ups.flatMap(u => u.models), error: !online ? 'offline' : (router.ok || builtin ? null : router.error), model: router.ok ? this.routerDefault(router.models) : 'auto' });
+      const ups = builtin ? this.upstreams().filter(u => u.enabled !== false).map(u => ({ ...u, models: this.upModels(u) })) : [];
+      out.push({ provider: 'router', kind: 'router', label: ROUTER_NAME.full, shortLabel: ROUTER_NAME.short, ok: online && (router.ok || builtin), builtin, upstreams: ups.map(u => ({ id: u.id, name: u.name, models: u.models, limit: u.limit })), models: router.ok ? router.models : ups.flatMap(u => u.models), error: !online ? 'offline' : (router.ok || builtin ? null : router.error), model: router.ok ? this.routerDefault(router.models) : 'auto' });
     }
     out.push({ provider: 'ollama', kind: 'local', label: 'Ollama', ok: ollama.ok, models: (ollama.models || []).map(m => m.name), detail: ollama.models || [], error: ollama.error, model: this.ollamaDefault(ollama.models) });
     for (const [pid, p] of Object.entries(PROVIDERS)) {
@@ -120,7 +135,7 @@ export class ModelDoor {
       else if (PROVIDERS[step]) { if (this.keysFor(step).some(k => k.enabled)) chain.push({ provider: step, model: null, why: 'default key' }); }
       else if (step === 'keyed') { for (const pid of Object.keys(PROVIDERS)) if (this.keysFor(pid).some(k => k.enabled)) chain.push({ provider: pid, model: null, why: 'default key' }); for (const n of this.settings.get('network.lanNodes') || []) if (n?.enabled !== false && n?.baseUrl) chain.push({ provider: 'lan:' + n.id, model: n.model || null, why: 'lan' }); }
     }
-    const seen = new Set(); const uniq = chain.filter(c => { const k = c.provider + '|' + (c.model || ''); if (seen.has(k)) return false; seen.add(k); return true; });
+    const seen = new Set(); const uniq = chain.filter(c => { const k = c.provider + '|' + (c.model || ''); if (seen.has(k)) return false; seen.add(k); return true; }).map(c => ({ ...c, name: this.label(c.provider) }));
     // Offline: the chain that will really be used holds only local models. The full list is kept for the screen.
     const online = this.online;
     return { main: a?.model?.main || null, fallback: a?.model?.fallback || null, online, chain: online ? uniq : uniq.filter(c => this.isLocal(c.provider)), whenOnline: uniq };
@@ -136,6 +151,7 @@ export class ModelDoor {
     if (!online) chain = chain.filter(c => this.isLocal(c.provider));   // an explicit pick of an online model is refused offline too
     if (!chain.length) throw new ModelError(online ? 'no_provider' : 'offline', online ? 'No model is set up. Add a key or start Ollama or the router in Models.' : 'The desk is offline and no local model is running. Start Ollama or go online.');
     const attempts = [];
+    let busyUntil = 0;   // every free target of the router step was cooling down: the earliest one may answer then
     const limit = Number(opts.deadlineMs) > 0 ? Number(opts.deadlineMs) : CHAT_DEADLINE_MS;
     const deadline = Date.now() + limit; let late = false;
     let shown = false;   // a target already streamed text: the caller is told to clear it before the next one streams
@@ -146,13 +162,19 @@ export class ModelDoor {
       if (signal.aborted) throw new ModelError('aborted', 'Stopped.', { attempts });
       if (Date.now() >= deadline) { late = true; break; }
       const targets = await this.targets(step, opts);
-      if (!targets.length) { attempts.push({ provider: step.provider, model: step.model, ok: false, error: 'not available' }); continue; }
+      if (!targets.length) {
+        const until = step.provider === 'router' ? this.routerBusyUntil(!!opts.tools?.length) : 0;
+        if (until) busyUntil = busyUntil ? Math.min(busyUntil, until) : until;   // skipped, not tried: no attempt, no waiting
+        else attempts.push({ provider: step.provider, model: step.model, ok: false, error: 'not available' });
+        continue;
+      }
       for (const t of targets) {
         if (attempts.length >= MAX_ATTEMPTS) break;
         if (Date.now() >= deadline) { late = true; break; }
         // a paid model is not called once today's or this month's spend has reached the owner's limit
         if (t.key && this.priceOf(t.model) && this.spendGuard) { const over = this.spendGuard(); if (over) { attempts.push({ provider: t.provider, model: t.model, ok: false, error: `not called: your ${over} is reached` }); continue; } }
         const t0 = Date.now();
+        if (t.via) this.lastPick.set(t.keyId, t0);
         try {
           if (shown) { shown = false; try { opts.onReset?.(); } catch {} }
           const r = await this.callOne(t, hopOpts, signal, deadline - Date.now());
@@ -167,15 +189,61 @@ export class ModelDoor {
           attempts.push({ provider: t.provider, model: t.model, ok: false, error: e.message, ms });
           if (!this.last.get(t.provider)?.ok || this.last.get(t.provider).model === t.model) this.last.set(t.provider, { ok: false, at: now(), model: t.model, error: short(e.message) });
           this.record({ ...opts, provider: t.provider, model: t.model, ok: false, ms, error: e.message });
-          if (e.status === 429) this.cool(t.provider, (t.keyId || '-') + (t.via ? '' : '|' + t.model), /quota|per day|daily/i.test(e.message) ? 15 * 60000 : 60000);   // one model out of quota does not silence the key's other models
+          if (t.via) { const b = this.backoffFor(e); this.cool('router', t.keyId, b.ms); this.coolWhy.set(t.keyId, { why: b.why, until: Date.now() + b.ms }); }
+          else if (e.status === 429) this.cool(t.provider, (t.keyId || '-') + (t.via ? '' : '|' + t.model), /quota|per day|daily/i.test(e.message) ? 15 * 60000 : 60000);   // one model out of quota does not silence the key's other models
           else if (e.status === 401 || e.status === 403) this.cool(t.provider, t.keyId || '-', t.via ? 60000 : 10 * 60000);
-          else if (t.via) this.cool(t.provider, t.keyId, 20000);
           this.log('model', t.provider, t.model, 'failed:', e.message);
         }
       }
       if (late) break;
     }
-    throw new ModelError('all_failed', (late ? `No model answered within ${limit / 1000} seconds. ` : 'No model answered. ') + attempts.map(a => `${this.label(a.provider, a.model)}: ${a.error}`).join('; '), { attempts });
+    const tried = attempts.filter(a => a.error !== 'not available');
+    if (busyUntil && !tried.length) throw new ModelError('all_failed', busyLine(busyUntil), { attempts, retryAt: new Date(busyUntil).toISOString() });
+    throw new ModelError('all_failed', (busyUntil ? busyLine(busyUntil) + ' ' : '') + (late ? `No model answered within ${limit / 1000} seconds. ` : 'No model answered. ') + attempts.map(a => `${this.label(a.provider, a.model)}: ${a.error}`).join('; '), { attempts, ...(busyUntil ? { retryAt: new Date(busyUntil).toISOString() } : {}) });
+  }
+  /** How long a free host-and-model is skipped after this failure, and why. */
+  backoffFor(e) {
+    const B = this.backoff; const m = String(e?.message || '');
+    if (e?.hostCode === 'model_unavailable' || /model\b[^.]{0,80}\b(unavailable|not found|does not exist|not available|not supported)/i.test(m) || e?.status === 404) return { ms: B.unavailableMs, why: 'unavailable' };
+    const named = Number(e?.retryAfter) > 0 ? Number(e.retryAfter) * 1000 : retryAfterMs(m);
+    if (e?.status === 429 || e?.status === 402 || named || /rate limit|quota|budget|limit/i.test(m)) return { ms: Math.min(named || B.busyMs, B.maxMs), why: 'busy' };
+    if (/No answer within|stopped coming|stalled/i.test(m)) return { ms: B.timeoutMs, why: 'timeout' };
+    return { ms: B.otherMs, why: 'other' };
+  }
+  /** The built-in upstreams: the catalog's definitions, with the owner's on/off choice from the Router tab laid over them,
+   *  so a saved copy never keeps stale model names or switches on a host that is off by default. */
+  upstreams() {
+    const saved = this.settings.get('router.upstreams'); const list = Array.isArray(saved) ? saved.filter(Boolean) : [];
+    const byId = new Map(list.map(u => [u.id, u]));
+    const known = FREE_ROUTER.upstreams.map(u => { const s = byId.get(u.id); return s && typeof s.enabled === 'boolean' ? { ...u, enabled: s.enabled } : { ...u }; });
+    return [...known, ...list.filter(u => !FREE_ROUTER.upstreams.some(k => k.id === u.id))];
+  }
+  /** A host whose model names change (liveModels): the names it lists itself, read through the door; never guessed. */
+  upModels(u) { return u.liveModels ? (this.cache.get('upstream:' + u.id)?.v?.models || []) : (u.models || []); }
+  async readLiveUpstreams() {
+    for (const u of this.upstreams().filter(x => x.liveModels && x.enabled !== false)) await this.probe('upstream:' + u.id, async () => {
+      const r = await this.http(u.baseUrl.replace(/\/$/, '') + '/models', {}, 6000);
+      if (!r.ok) return { ok: false, models: [] };
+      const j = await r.json();
+      // only models the host itself marks as usable without paid usage
+      return { ok: true, models: (j.data || []).filter(m => m && m.id && m.usage_based_only === false && (!m.model_type || m.model_type === 'chat')).map(m => m.id) };
+    }, CATALOG_TTL_MS);
+  }
+  /** The earliest time a cooling free target may be tried again; 0 when none is cooling. */
+  routerBusyUntil(needTools = false) {
+    let min = 0;
+    for (const u of this.upstreams().filter(x => x.enabled !== false)) for (const m of this.upModels(u)) {
+      if (needTools && (u.noTools || []).includes(m)) continue;
+      const until = this.cooldown.get('router|builtin:' + u.id + ':' + m) || 0;
+      if (until > Date.now()) min = min ? Math.min(min, until) : until;
+    }
+    return min;
+  }
+  /** upstream id -> model -> { why, until } for the free targets cooling down now (the Router tab shows them). */
+  routerCooling() {
+    const out = {};
+    for (const [k, v] of this.coolWhy) { if (v.until <= Date.now()) continue; const [, up, ...m] = k.split(':'); (out[up] ||= {})[m.join(':')] = { why: v.why, until: new Date(v.until).toISOString() }; }
+    return out;
   }
   /** Concrete (provider, model, baseUrl, key) targets for one chain step. */
   async targets(step, opts = {}) {
@@ -185,12 +253,13 @@ export class ModelDoor {
       const r = await this.routerModels();
       if (r.ok) return [{ provider: 'router', api: 'openai', baseUrl: this.settings.get('router.baseUrl'), model: step.model || this.routerDefault(r.models), headers: this.routerHeaders() }];
       if (this.settings.get('router.builtin') === false) return [];
-      return this.builtinRouterTargets(step.model, !!opts.tools?.length);
+      await this.readLiveUpstreams();
+      return this.builtinRouterTargets(step.model, !!opts.tools?.length, step.via || null);
     }
     if (p === 'ollama') {
       const r = await this.ollamaModels(); if (!r.ok) return [];
       const model = step.model || this.ollamaDefault(r.models); if (!model) return [];
-      return [{ provider: 'ollama', api: 'openai', baseUrl: this.settings.get('ollama.baseUrl') + '/v1', model, headers: {} }];
+      return [{ provider: 'ollama', api: 'openai', baseUrl: this.settings.get('ollama.baseUrl') + '/v1', model, headers: {}, local: true }];
     }
     if (p.startsWith('lan:')) {
       const n = (this.settings.get('network.lanNodes') || []).find(x => 'lan:' + x.id === p); if (!n || !n.baseUrl) return [];
@@ -201,7 +270,7 @@ export class ModelDoor {
     // The owner's rule: OpenRouter is used with free models only. A paid model id is refused here, at the one door,
     // unless the owner switches paid OpenRouter on in Settings (guarded route; off by default).
     const freeOnly = p === 'openrouter' && this.settings.get('openrouter.allowPaid') !== true;
-    const isFree = (m) => /:free$/.test(String(m || '')) || m === 'openrouter/free';
+    const isFree = isFreeOpenRouter;
     for (const k of this.liveKeys(p)) {
       if (step.keyId && k.id !== step.keyId) continue;            // a Test of one key uses that key only
       const first = step.model || k.meta?.model || this.keyedDefault(p);
@@ -211,24 +280,27 @@ export class ModelDoor {
     }
     return out;
   }
-  /** The built-in Agent Population Router: no-sign-in upstreams, rotated so one model's rate limit is not hit twice in a row. */
-  builtinRouterTargets(wantModel, needTools = false) {
-    const ups = (this.settings.get('router.upstreams') || FREE_ROUTER.upstreams).filter(u => u && u.enabled !== false);
+  /** The built-in Free API: no-sign-in upstreams. A model that is cooling down is skipped; among the rest, the one tried
+   *  longest ago goes first, so one job spreads over a host's models instead of using up one model's allowance. */
+  builtinRouterTargets(wantModel, needTools = false, onlyVia = null) {
+    const ups = this.upstreams().filter(u => u && u.enabled !== false && (!onlyVia || u.id === onlyVia));
     const all = [];
-    for (const u of ups) for (const m of u.models || []) if (!(needTools && (u.noTools || []).includes(m))) all.push({ provider: 'router', via: u.id, viaName: u.name, api: 'openai', baseUrl: u.baseUrl.replace(/\/$/, ''), chatPath: u.chatPath, model: m, headers: u.key ? { authorization: 'Bearer ' + u.key } : {}, keyId: 'builtin:' + u.id + ':' + m });
+    for (const u of ups) for (const m of this.upModels(u)) if (!(needTools && (u.noTools || []).includes(m))) all.push({ provider: 'router', via: u.id, viaName: u.name, api: 'openai', baseUrl: u.baseUrl.replace(/\/$/, ''), chatPath: u.chatPath, model: m, headers: u.key ? { authorization: 'Bearer ' + u.key } : {}, keyId: 'builtin:' + u.id + ':' + m });
+    // a Test of one host (the owner pressed it) calls that host's model even while it cools down, and never another host
+    if (onlyVia) return all.filter(t => !wantModel || t.model === wantModel).slice(0, 1);
     let list = all.filter(t => !this.onCooldown('router', t.keyId));
     if (wantModel && wantModel !== 'auto') { const hit = list.filter(t => t.model === wantModel); if (hit.length) return hit; }
     if (!list.length) return [];
-    // one model per upstream first, rotating which, so the chain reaches a second upstream quickly
-    this._rr = (this._rr || 0) + 1;
-    const byUp = new Map(); for (const t of list) { if (!byUp.has(t.via)) byUp.set(t.via, []); byUp.get(t.via).push(t); }
+    // one model per upstream first (least recently tried), so the chain reaches a second upstream quickly
+    const used = (t) => this.lastPick.get(t.keyId) || 0;
+    const byUp = new Map(); for (const t of [...list].sort((a, b) => used(a) - used(b))) { if (!byUp.has(t.via)) byUp.set(t.via, []); byUp.get(t.via).push(t); }
     const out = [];
-    for (const [, arr] of byUp) out.push(arr[this._rr % arr.length]);
-    for (const [, arr] of byUp) if (arr.length > 1) out.push(arr[(this._rr + 1) % arr.length]);
+    for (const [, arr] of byUp) out.push(arr[0]);
+    for (const [, arr] of byUp) if (arr.length > 1) out.push(arr[1]);
     return out.slice(0, 4);
   }
   label(provider, model, via) {
-    const name = provider === 'router' ? 'Agent Population Router' : provider === 'ollama' ? 'Ollama' : String(provider).startsWith('lan:') ? 'LAN node' : (PROVIDERS[provider]?.name || provider);
+    const name = provider === 'router' ? ROUTER_NAME.short : provider === 'ollama' ? 'Ollama' : String(provider).startsWith('lan:') ? 'LAN node' : (PROVIDERS[provider]?.name || provider);
     return model ? `${name} · ${model}${via ? ' (' + via + ')' : ''}` : name;
   }
   /** leftMs: time left before the call's deadline; a hop's wait for its first byte never runs past it. */
@@ -242,12 +314,12 @@ export class ModelDoor {
     if (opts.maxTokens) body.max_tokens = opts.maxTokens;
     if (opts.json && !t.via && t.provider !== 'router') body.response_format = { type: 'json_object' };
     if (opts.tools?.length) body.tools = opts.tools.map(f => ({ type: 'function', function: { name: f.name, description: f.description, parameters: f.parameters || { type: 'object', properties: {} } } }));
-    if (t.provider === 'openrouter' && this.settings.get('openrouter.allowPaid') !== true && !(/:free$/.test(String(t.model)) || t.model === 'openrouter/free')) throw Object.assign(new Error('Paid OpenRouter models are switched off. Only free models are used.'), { status: 402 });
+    if (t.provider === 'openrouter' && this.settings.get('openrouter.allowPaid') !== true && !isFreeOpenRouter(t.model)) throw Object.assign(new Error('Paid OpenRouter models are switched off. Only free models are used.'), { status: 402 });
     const headers = { 'content-type': 'application/json', ...t.headers };
     if (t.key) headers.authorization = 'Bearer ' + t.key;
     if (t.provider === 'openrouter') { headers['http-referer'] = 'http://127.0.0.1:3960'; headers['x-title'] = 'AP Desk'; }
-    const r = await this.http(t.baseUrl + (t.chatPath ?? '/chat/completions'), { method: 'POST', headers, body: JSON.stringify(body), signal }, Math.max(1, Math.min(opts.timeoutMs || (t.via ? 60000 : 180000), leftMs)));
-    if (!r.ok) { const txt = await r.text().catch(() => ''); throw Object.assign(new Error(`HTTP ${r.status} ${short(txt)}`), { status: r.status }); }
+    const r = await this.http(t.baseUrl + (t.chatPath ?? '/chat/completions'), { method: 'POST', headers, body: JSON.stringify(body), signal }, Math.max(1, Math.min(opts.timeoutMs || (t.via ? 60000 : t.local ? LOCAL_FIRST_MS : 180000), leftMs)));
+    if (!r.ok) throw await httpError(r);
     let text = ''; let toolCalls = []; let usage = null;
     let finish = null;
     if (body.stream) {
@@ -289,7 +361,7 @@ export class ModelDoor {
     out.finish = finish || null; out.cutOff = cutOff;
     if (opts.json) out.json = extractJson(text);
     if (!out.text && !out.toolCalls.length) throw new Error('Empty reply');
-    if (t.via && NOTICE.test(out.text.slice(0, 400))) throw Object.assign(new Error('The free provider answered with a notice, not a reply: ' + short(out.text)), { status: 429 });
+    if (t.via && NOTICE.test(out.text.slice(0, 400))) throw Object.assign(new Error('The free provider answered with a notice, not a reply: ' + firstSentence(out.text)), { status: 429, retryAfter: retryAfterMs(out.text) / 1000 || null });
     return out;
   }
   async callAnthropic(t, opts, signal, leftMs = Infinity) {
@@ -306,7 +378,7 @@ export class ModelDoor {
     if (opts.temperature != null) body.temperature = opts.temperature;
     if (opts.tools?.length) body.tools = opts.tools.map(f => ({ name: f.name, description: f.description, input_schema: f.parameters || { type: 'object', properties: {} } }));
     const r = await this.http(t.baseUrl + '/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': t.key, 'anthropic-version': '2023-06-01' }, body: JSON.stringify(body), signal }, Math.max(1, Math.min(opts.timeoutMs || 180000, leftMs)));
-    if (!r.ok) { const txt = await r.text().catch(() => ''); throw Object.assign(new Error(`HTTP ${r.status} ${short(txt)}`), { status: r.status }); }
+    if (!r.ok) throw await httpError(r);
     let text = ''; const toolCalls = []; let usage = null; let finish = null;
     if (body.stream) {
       let cur = null;
@@ -362,6 +434,37 @@ export class ModelDoor {
     if (provider === 'openrouter' && this.settings.get('openrouter.allowPaid') !== true) list = list.filter(m => /:free$/.test(m));
     return list;
   }
+  /** Every model a provider gives, each marked free or paid where the provider states a price (never guessed: null).
+   *  Read through the door: refused Offline, cached for a few minutes. OpenRouter's list is public, so no key is needed;
+   *  other providers list models only to a key holder. While paid OpenRouter is off, only free ids are returned.
+   *  -> { ok, models: [{ id, price: 'free'|'paid'|null }], at, needsKey, total, hiddenPaid, error } */
+  async modelCatalog(provider) {
+    const def = PROVIDERS[provider]; if (!def) return { ok: false, models: [], needsKey: false, error: 'Unknown provider' };
+    const k = this.liveKeys(provider)[0];
+    const needsKey = !def.listsWithoutKey && !k;
+    if (needsKey) return { ok: false, models: [], needsKey: true, error: null };
+    if (!this.online) return { ok: false, models: [], needsKey: false, error: 'The desk is offline, so the list is not read.' };
+    const r = await this.probe('catalog:' + provider + (k ? '|' + k.id : ''), async () => {
+      const base = (k?.meta?.baseUrl || def.baseUrl).replace(/\/$/, '');
+      const headers = !k ? {} : def.api === 'anthropic' ? { 'x-api-key': k.value, 'anthropic-version': '2023-06-01' } : { authorization: 'Bearer ' + k.value };
+      const res = await this.http(base + '/models', { headers }, 10000);
+      if (!res.ok) return { ok: false, models: [], error: `HTTP ${res.status}`, at: now() };
+      const j = await res.json();
+      const models = (j.data || j.models || []).map(m => ({ id: String(typeof m === 'string' ? m : m.id || m.name || '').replace(/^models\//, ''), price: priceTag(m?.pricing) })).filter(m => m.id);
+      return { ok: true, models, at: now() };
+    }, CATALOG_TTL_MS);
+    let models = r.models || []; const total = models.length;
+    if (provider === 'openrouter' && this.settings.get('openrouter.allowPaid') !== true) models = models.filter(m => isFreeOpenRouter(m.id));
+    return { ok: !!r.ok, models, at: r.at || null, needsKey: false, total, hiddenPaid: total - models.length, error: r.ok ? null : r.error || 'The list did not answer.' };
+  }
+  /** The paid switch. Only core/settings-routes.js holds the token (the owner, from the desk's own window). */
+  setPaid(provider, on, token) {
+    if (token !== SETTINGS_TOKEN) throw Object.assign(new Error('Paid models are switched on or off only from the desk window.'), { code: 'forbidden' });
+    if (provider !== 'openrouter') throw Object.assign(new Error('Only OpenRouter has a paid switch.'), { status: 400 });
+    this.settings.set('openrouter.allowPaid', on === true);
+    this.cache.clear(); this.events.emit('models', { change: 'paid' });
+    return { provider, on: on === true };
+  }
   record(o) {
     try {
       const cost = this.estimate(o.provider, o.model, o.usage);
@@ -397,9 +500,10 @@ export class ModelDoor {
   /** What a module gets. Keys are managed by the Models module through these calls; values never come back. */
   forModule() {
     return Object.freeze({
-      chat: (o) => this.chat(o), embed: (o) => this.embed(o), active: () => this.active(), listModels: (p) => this.listModels(p), resolve: (id) => this.resolve(id), label: (p, m) => this.label(p, m),
+      chat: (o) => this.chat(o), embed: (o) => this.embed(o), active: () => this.active(), listModels: (p) => this.listModels(p), modelCatalog: (p) => this.modelCatalog(p), resolve: (id) => this.resolve(id), label: (p, m) => this.label(p, m),
       providers: () => Object.fromEntries(Object.entries(PROVIDERS).map(([k, v]) => [k, { name: v.name, baseUrl: v.baseUrl, signup: v.signup, defaultModel: v.defaultModel, tier: v.tier || 'paid', freeNote: v.freeNote || null }])),
-      freeRouter: () => ({ note: FREE_ROUTER.note, upstreams: (this.settings.get('router.upstreams') || FREE_ROUTER.upstreams) }),
+      freeRouter: () => ({ note: FREE_ROUTER.note, upstreams: this.upstreams().map(u => ({ ...u, models: this.upModels(u) })) }),
+      routerCooling: () => this.routerCooling(),
       /** The assistant message to send back before the tool results, with everything the provider needs kept (Gemini's signature). */
       toolMessage: (r) => toolMessage(r),
       keys: { list: () => this.listKeys(), add: (p, v, l, m) => this.addKey(p, v, l, m), toggle: (id, on) => this.toggleKey(id, on), remove: (id) => this.removeKey(id) },
@@ -445,6 +549,42 @@ export function extractJson(text) {
   const c = s.indexOf('['), d = s.lastIndexOf(']'); if (c >= 0 && d > c) { try { return JSON.parse(s.slice(c, d + 1)); } catch {} }
   return null;
 }
+/** 'free' | 'paid' from a provider's own price fields (OpenRouter: prompt/completion; Together: input/output); null when it states none. */
+export function priceTag(p) {
+  if (!p || typeof p !== 'object') return null;
+  const vals = [p.prompt ?? p.input, p.completion ?? p.output].map(v => v == null || v === '' ? NaN : Number(v));
+  if (vals.some(v => !Number.isFinite(v) || v < 0)) return null;
+  return vals.every(v => v === 0) ? 'free' : 'paid';
+}
 function mask(v) { if (!v) return ''; return v.length <= 8 ? '••••' : v.slice(0, 4) + '••••' + v.slice(-4); }
+/** "The free models are busy. The next one may answer in about 30 seconds. …" */
+function busyLine(until) {
+  const s = Math.max(1, Math.round((until - Date.now()) / 1000));
+  const when = s < 60 ? `about ${Math.max(5, Math.round(s / 5) * 5)} seconds` : s < 5400 ? `about ${Math.round(s / 60)} minute${Math.round(s / 60) === 1 ? '' : 's'}` : `about ${Math.round(s / 3600)} hours`;
+  return `The free models are busy. The next one may answer in ${when}. A free key or a local model in Models avoids this.`;
+}
+/** A time the host named: "Retry after 28s", "retry in 3600 seconds", "try again in 2 minutes". 0 when none. */
+export function retryAfterMs(text) {
+  const m = String(text || '').match(/(?:retry|try again)\s*(?:after|in)?\s*(\d+(?:\.\d+)?)\s*(ms|s|sec|secs|seconds?|m|min|mins|minutes?)?\b/i);
+  if (!m) return 0;
+  const n = Number(m[1]); const u = (m[2] || 's').toLowerCase();
+  return Math.round(u === 'ms' ? n : /^m(in|inutes?)?$|^mins$/.test(u) ? n * 60000 : n * 1000);
+}
+/** A host's text cut at its first sentence, with links taken out (a notice can carry a link with an id in it). */
+export function firstSentence(t) {
+  const s = String(t || '').replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
+  const m = s.match(/^.*?[.!?](?=\s|$)/);
+  return (m ? m[0] : s).replace(/[\s:(,-]+$/, '').slice(0, 160);
+}
+/** An HTTP error from a provider: the host's own message (first sentence, no links), its code and any retry time kept. */
+async function httpError(r) {
+  const txt = await r.text().catch(() => '');
+  let j = null; try { j = JSON.parse(txt); } catch {}
+  const err = j && (typeof j.error === 'object' ? j.error : j);
+  const msg = typeof err?.message === 'string' ? err.message : typeof j?.error === 'string' ? j.error : txt;
+  const header = Number(r.headers?.get?.('retry-after')) || 0;
+  const named = Number(err?.retry_after) || header || retryAfterMs(msg) / 1000 || null;
+  return Object.assign(new Error(`HTTP ${r.status} ${firstSentence(msg)}`), { status: r.status, hostCode: typeof err?.code === 'string' ? err.code : null, retryAfter: named });
+}
 function short(t) { return String(t || '').replace(/\s+/g, ' ').slice(0, 160); }
 function safeJson(x) { try { return x ? JSON.parse(x) : {}; } catch { return {}; } }

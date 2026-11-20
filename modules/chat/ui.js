@@ -5,7 +5,7 @@ import { cleanReply, uniqueOutputs, previewText, stepChips, footTag, waitLine, h
 const API = 'm/chat/';
 const PRESETS = [['everyone', 'Everyone'], ['sales-room', 'Sales room'], ['build-room', 'Build room']];
 const PRESET_MEMBERS = { 'sales-room': ['coordinator', 'closer', 'scout'], 'build-room': ['coordinator', 'coder', 'operator'] };
-const PROVIDER_NAMES = { router: 'Free router', ollama: 'Ollama', gemini: 'Gemini', openai: 'OpenAI', anthropic: 'Anthropic', openrouter: 'OpenRouter', groq: 'Groq', mistral: 'Mistral', deepseek: 'DeepSeek', together: 'Together', fireworks: 'Fireworks', cerebras: 'Cerebras', xai: 'xAI', custom: 'Custom' };
+const PROVIDER_NAMES = { ollama: 'Ollama', gemini: 'Gemini', openai: 'OpenAI', anthropic: 'Anthropic', openrouter: 'OpenRouter', groq: 'Groq', mistral: 'Mistral', deepseek: 'DeepSeek', together: 'Together', fireworks: 'Fireworks', cerebras: 'Cerebras', xai: 'xAI', custom: 'Custom' };
 const STATUS = { running: ['Running', 'run'], waiting: ['Waiting for you', 'wait'], done: ['Done', 'ok'], failed: ['Did not finish', 'stop'], stopped: ['Stopped', 'stop'], interrupted: ['Stopped', 'stop'] };
 const DRAFT_WORDS = { pending: 'Waiting for you', approved: 'Approved', denied: 'Denied', timeout: 'Timed out', aborted: 'Stopped', halted: 'Stopped', sent: 'Sent', failed: 'Not sent' };
 
@@ -341,7 +341,7 @@ async function render(el, ui, route) {
     try {
       const a = await api(`agents/${speaker()}`);
       const first = online ? (a.resolved?.chain || [])[0] : (a.resolved?.chain || []).find(c => c.provider === 'ollama' || String(c.provider).startsWith('lan:'));
-      const pname = first ? PROVIDER_NAMES[first.provider] || (String(first.provider).startsWith('lan:') ? 'LAN node' : first.provider) : null;
+      const pname = first ? (first.provider === 'router' ? first.name : PROVIDER_NAMES[first.provider]) || (String(first.provider).startsWith('lan:') ? 'LAN node' : first.provider) : null;
       const lastLabel = [...messages].reverse().find(m => m.role === 'assistant' && m.agentId === speaker() && m.label && m.status === 'done')?.label;
       mdl.textContent = !first ? 'No model set up' : first.model ? `${pname} · ${first.model}` : `${pname} · auto${lastLabel ? ' (last: ' + lastLabel.replace(/^.*? · /, '') + ')' : ''}`;
     } catch { mdl.textContent = 'Models'; }

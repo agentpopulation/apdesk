@@ -12,7 +12,7 @@ test('model door: answers, names the model, falls back, and reports attempts', a
     // first target fails (router), no other provider -> all_failed with attempts
     await assert.rejects(() => t.core.model.chat({ messages: [{ role: 'user', content: 'hi' }] }), (e) => e.code === 'all_failed' && e.attempts.length >= 1 && e.attempts[0].provider === 'router');
     const r = await t.core.model.chat({ messages: [{ role: 'user', content: 'hi' }] });
-    assert.equal(r.text, 'hello from fake'); assert.equal(r.provider, 'router'); assert.match(r.label, /Agent Population Router · fake-model/);
+    assert.equal(r.text, 'hello from fake'); assert.equal(r.provider, 'router'); assert.match(r.label, /^Free API · fake-model$/);
     // per-agent model: an explicit keyed provider with a custom base URL
     t.core.model.addKey('custom', 'sk-test-12345678', 'test', { baseUrl: t.fake.baseUrl, model: 'agent-model' });
     t.core.agents.update('scout', { model: { main: { provider: 'custom', model: 'agent-model' } } });

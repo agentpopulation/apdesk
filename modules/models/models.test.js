@@ -13,7 +13,7 @@ test('routes: overview, test through the door, keys never come back, pickers, us
     const o = (await m('/overview')).json;
     assert.ok(o.active.some(a => a.provider === 'router')); assert.equal(o.router.mode, 'owner');
     const r = (await m('/test', { body: { provider: 'router' } })).json;
-    assert.equal(r.ok, true); assert.match(r.label, /Agent Population Router · fake-model/);
+    assert.equal(r.ok, true); assert.match(r.label, /^Free API · fake-model$/);
     const k = (await m('/keys', { body: { provider: 'custom', value: 'sk-secret-abcdefgh', label: 'Fake', baseUrl: t.fake.baseUrl, model: 'agent-model' } })).json;
     assert.ok(!JSON.stringify((await m('/providers')).json).includes('sk-secret-abcdefgh'));
     assert.equal((await m('/test', { body: { provider: 'custom', keyId: k.id } })).json.ok, true);
@@ -21,7 +21,7 @@ test('routes: overview, test through the door, keys never come back, pickers, us
     assert.equal((await m('/providers')).json.providers.find(p => p.id === 'custom').keys.find(x => x.id === k.id).enabled, true);
     const av = (await m('/available')).json; const g = av.groups;
     t.core.settings.set('model.defaultChain', ['gemini', 'router', 'ollama']);
-    assert.equal((await m('/available')).json.defaultLabel, 'Desk default (Gemini, then Router, then Ollama)');
+    assert.equal((await m('/available')).json.defaultLabel, 'Desk default (Gemini, then Free API, then Ollama)');
     assert.ok(g.some(x => x.provider === 'router')); assert.ok(g.some(x => x.provider === 'custom'));
     assert.ok(!g.some(x => x.provider === 'ollama'), 'Ollama is not running, so it is not offered');
     assert.equal((await m('/keys/' + k.id, { method: 'DELETE', session: false })).status, 403, 'only the owner removes keys');

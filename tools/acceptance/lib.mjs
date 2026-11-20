@@ -249,7 +249,7 @@ export async function askJudge(desk, prompt) {
 }
 
 /** Known real-model label shapes (MODEL-DOOR.md "Naming the model"). */
-export const LABEL_RE = /^(Agent Population Router|Ollama|LAN node|OpenAI|Anthropic|OpenRouter|Groq|Google Gemini|Gemini|Mistral|DeepSeek|Together|Fireworks|Cerebras|xAI|Custom[^·]*) · \S/;
+export const LABEL_RE = /^(Free API|Ollama|LAN node|OpenAI|Anthropic|OpenRouter|Groq|Google Gemini|Gemini|Mistral|DeepSeek|Together|Fireworks|Cerebras|xAI|Custom[^·]*) · \S/;
 export const hash = (buf) => crypto.createHash('sha1').update(buf).digest('hex').slice(0, 12);
 export const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 

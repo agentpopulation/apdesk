@@ -685,7 +685,7 @@ export async function ask12(t) {
     await sel.selectOption(hit.value); await sleep(1500); t.pickedQuota = hit.quota; return hit.text;
   };
   const out = [];
-  for (const [re, want, prov] of [[['Agent Population Router', 'gpt-oss-120b|Llama-3_3-70B'], /^Agent Population Router · /, 'router'], [['Gemini', 'gemini-3\\.5-flash-lite||gemini-3\\.1-flash-lite||flash-lite||gemini'], /^(Google )?Gemini · gemini/, 'gemini']]) {
+  for (const [re, want, prov] of [[['Free API by Agent Population Desk', 'gpt-oss-120b|Llama-3_3-70B'], /^Free API · /, 'router'], [['Gemini', 'gemini-3\\.5-flash-lite||gemini-3\\.1-flash-lite||flash-lite||gemini'], /^(Google )?Gemini · gemini/, 'gemini']]) {
     const o = await pick(re); if (!o) { t.shot = await shot(page, t.shots, 'ask12_picker'); const gm = (await t.desk.call('/api/m/models/available')).json; t.did = `Agents › ${agent?.name} › Model: looked for ${re.join(' › ')}`; t.saw = `the picker offered: ${t.pickerSaw}; GET /api/m/models/available groups: ${(gm?.groups || []).map(g => g.provider + (Object.keys(g.failing || {}).length ? ' (failing)' : '')).join(', ')}`; t.expected = 'a gemini-3.5-flash-lite option under the Gemini group'; t.repro = 'Agents › Coder › Model › open the main picker'; hookMissing(t, `a model picker option matching ${re.join(' › ')}; the picker offered: ${t.pickerSaw}`); }
     const saved = (await t.desk.call('/api/agents/' + id)).json?.model?.main?.provider;
     if (!(await chatWithAgent(page, id, agent?.name || 'Coder'))) hookMissing(t, `the chat-rail entry for ${agent?.name}`);
@@ -698,16 +698,16 @@ export async function ask12(t) {
   t.shot = await shot(page, t.shots, 'ask12_reply');
   t.did = 'Agents › Coder › Model: main = router option, asked "What is 7 times 6?" in its chat; then main = Gemini option, asked again';
   t.saw = out.map(x => `picked "${x.o}"${x.quotaMarked ? ' (marked out of quota)' : ''} saved ${x.saved} -> label "${x.label}"; door tried: ${x.tried.join(', ')}`).join(' | ');
-  t.expected = 'first label "Agent Population Router · …", then "Google Gemini · …"'; t.repro = 'Agents › Coder › Model › pick › Chat with Coder › ask';
+  t.expected = 'first label "Free API · …", then "Google Gemini · …"'; t.repro = 'Agents › Coder › Model › pick › Chat with Coder › ask';
   const ev = out.map(x => `${x.prov}: "${x.label}"${x.ok ? '' : x.capacity ? ' (every Gemini model over quota: ' + x.tried.join(', ') + ')' : ' (WRONG)'}`).join('; ');
   if (out[0].ok && !out[1].ok && out[1].capacity) {
     // Gemini over quota: switch between two models that answer, and check the reply names the new one
     await sleep(30000);
-    const o3 = await pick(['Agent Population Router', 'Llama-3_3-70B||Mistral-Small||Qwen']);
+    const o3 = await pick(['Free API by Agent Population Desk', 'Llama-3_3-70B||Mistral-Small||Qwen']);
     if (!o3) nc(`router half PASS; Gemini over quota and no second router model in the picker: ${ev}`);
     if (!(await chatWithAgent(page, id, agent?.name || 'Coder'))) hookMissing(t, `the chat-rail entry for ${agent?.name}`);
     const r3 = await chatAsk(page, 'What is 9 times 5? Answer with the number only.', { timeout: 120000 });
-    const ok3 = r3.label.startsWith('Agent Population Router · ') && r3.label.includes(o3) && /45/.test(r3.text);
+    const ok3 = r3.label.startsWith('Free API · ') && r3.label.includes(o3) && /45/.test(r3.text);
     t.saw += ` | Gemini over quota, so picked "${o3}" -> label "${r3.label}"`;
     t.shot = await shot(page, t.shots, 'ask12_reply2');
     return { ok: out[0].ok && ok3, evidence: `pair used: router ${out[0].o} -> router ${o3} (every Gemini model answered 429: ${out[1].tried.join(', ')}). Labels: "${out[0].label}" then "${r3.label}"${ok3 ? '' : ' (WRONG)'}` };

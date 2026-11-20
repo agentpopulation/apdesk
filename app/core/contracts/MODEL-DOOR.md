@@ -28,7 +28,9 @@ const r = await ctx.model.chat({
 
 `ctx.model.toolMessage(r)` -> the assistant message to send back before the tool results. Use it instead of building `tool_calls` by hand: it keeps what the provider needs on a replayed call (Gemini's `extra_content` signature).
 
-`ctx.model.listModels(provider)` -> the model ids a provider offers, read server-side with the owner's key (OpenRouter: free ids only while paid is off). An explicit pick may carry `keyId` to use one saved key only (`model: { provider, model, keyId }`), which is how a per-key Test works.
+`ctx.model.listModels(provider)` -> the model ids a provider offers, read server-side with the owner's key (OpenRouter: free ids only while paid is off). An explicit pick may carry `keyId` to use one saved key only (`model: { provider, model, keyId }`), which is how a per-key Test works. For `router`, `via: '<host id>'` calls that one built-in host only (the Router tab's Test), even while it cools down.
+
+`ctx.model.modelCatalog(provider)` -> every model the provider gives, for the Models page's Default model box: `{ ok, models: [{ id, price: 'free'|'paid'|null }], at, needsKey, total, hiddenPaid, error }`. `price` comes only from the provider's own price fields, never guessed. Read through the door (refused Offline, cached 5 minutes). OpenRouter's list is public (`listsWithoutKey` in `providers.json`), so it is read before any key; other providers list models only to a key holder (`needsKey: true` before a key). While paid OpenRouter is off, only free ids come back.
 
 `ctx.model.resolve(agentId)` -> `{ main: { provider, model }, fallback: { provider, model } | null, chain: [...] }`.
 
@@ -38,7 +40,7 @@ Errors: the door throws `ModelError` with `code` in `offline`, `halted` (Panic),
 
 | id | kind | how | default |
 |---|---|---|---|
-| `router` | router | OpenAI-compatible server, the owner's Free LLM Router, shown as **Agent Population Router**. Base URL setting `router.baseUrl`, default `http://127.0.0.1:8787/v1`. Free no-sign-in models **on by default**; switch `router.enabled`. Optional key. | on |
+| `router` | router | The built-in free models, shown as **Free API by Agent Population Desk** on the Models page and **Free API** wherever space is tight (reply labels, the line under the message box, pills, notices). Both forms live in one place: `freeRouter.name` and `freeRouter.shortName` in `providers.json`, exported as `ROUTER_NAME`. Internal ids stay `router` (`router.*` settings, `/router/v1`). The owner may also run his own OpenAI-compatible router ("Your own router"); base URL setting `router.baseUrl`, default `http://127.0.0.1:8787/v1`. Free no-sign-in models **on by default**; switch `router.enabled`. Optional key. | on |
 | `ollama` | local | `http://127.0.0.1:11434` (`ollama.baseUrl`). Lists installed models. The only provider used when Offline. | on |
 | `openai`, `anthropic`, `openrouter`, `groq`, `gemini`, `mistral`, `deepseek`, `together`, `fireworks`, `cerebras`, `xai`, `custom` | keyed | Several keys per provider, each with its own switch and label. OpenAI-compatible chat for all but `anthropic` (native Messages API) and `gemini` (OpenAI-compatible endpoint). `custom` is any OpenAI-compatible base URL. | off until a key is added |
 | `lan:<node>` | lan | Another PC on the LAN running Ollama or the router (Models › Nodes) | off |
@@ -48,7 +50,7 @@ Keys live in the `secrets` table of the SQLite file (STORAGE.md), never in code,
 ## What the owner sees: four groups of keys
 
 Models shows every way to get a model or a service, grouped, so the owner can start free and add keys when he wants:
-1. **Free, no sign-in**: the Agent Population Router (his own router, or the built-in one with its upstreams from `ctx.model.freeRouter()`). On by default.
+1. **Free, no sign-in**: the Free API (his own router, or the built-in free hosts from `ctx.model.freeRouter()`). On by default.
 2. **Free with sign-up**: providers whose `tier` is `free-signup` in `ctx.model.providers()` (Gemini, Groq, OpenRouter free models, Cerebras, Mistral, NVIDIA, Z.ai, Cohere, Cloudflare), each with its sign-up link and `freeNote`.
 3. **Paid**: `tier: 'paid'` (OpenAI, Anthropic, DeepSeek, Together, Fireworks, xAI) and `custom`.
 4. **Search, voice and audio**: dedicated services from `GET /api/keys/services` (Serper, Tavily, Brave, Exa, Jina; ElevenLabs, Deepgram, Cartesia, AssemblyAI), one key each, read by modules with `ctx.serviceKey(id)`.
@@ -67,16 +69,25 @@ Models shows every way to get a model or a service, grouped, so the owner can st
 - Stream gap: a streamed reply that sends nothing for 45 s (`STREAM_GAP_MS`, per call `streamGapMs`) is dropped as an ordinary failed hop and the next target is tried. A stream that keeps sending is never cut.
 - Total: no new hop starts 170 s after the call began (`CHAT_DEADLINE_MS`, per call `deadlineMs`), and a hop's first-byte wait never runs past that; the call then ends `all_failed` with its attempts. A hop that is already streaming is not cut.
 - Stop and Panic always end the call as `aborted`, never as a failed hop.
+- A local model (Ollama) waits up to 150 s for its first byte (`LOCAL_FIRST_MS`): its first call loads it into memory. It is never longer than what is left of the call's deadline.
+
+## Free hosts that said no
+
+Each built-in free host-and-model that fails is skipped for a while (`BACKOFF`, per door `this.backoff`): after a 429, a 402 or a notice, for the time the host named ("Retry after 28s", `retry_after`, a `Retry-After` header), else 35 s (the anonymous limits are per minute); after "model … unavailable / not found" (`model_unavailable`, 404), 30 minutes, shown as "Unavailable at the host" on the Router tab; after no answer in time, 2 minutes; after anything else, 20 s. A skipped target is not an attempt and costs no waiting. When every free target is cooling down and nothing else could be tried, the call ends at once: "The free models are busy. The next one may answer in about N seconds. A free key or a local model in Models avoids this." (`retryAt` on the error). Among the free models not cooling down, the one tried longest ago goes first; a call with tools goes only to models that make tool calls.
+
+The built-in hosts come from `providers.json`; the owner's Router tab choice (`router.upstreams`) only lays its on/off over them, so a saved copy never keeps stale model names or switches on a host that is off by default. A host marked `liveModels` (LLM7) is called only with the model names it lists itself without a key, read through the door and cached. A host's notice is cut at its first sentence and links are taken out before it reaches a log or the screen.
 
 Offline: the chain is reduced to `ollama` and `lan` entries. Online/Offline is a setting (`online`), changed from the chip under the message box or Settings › Network. It is not a per-call flag.
 
 ## OpenRouter: free models only
 
-The owner's rule. For provider `openrouter` the door refuses any model id that does not end in `:free` (or is `openrouter/free`), whatever an agent, a module or a Council seat asks for. Paid OpenRouter models can be switched on only by the owner through the guarded spend route (`POST /api/settings/spend { openrouterPaid: true }`, Settings > Payments and spend). Off by default.
+The owner's rule. For provider `openrouter` the door refuses any model id that does not end in `:free` (or is `openrouter/free`), whatever an agent, a module or a Council seat asks for. Paid OpenRouter models can be switched on only by the owner from the desk's own window: the "Paid models" switch beside the OpenRouter keys in Models, and the same switch in Settings › Payments and spend. Both call `POST /api/settings/paid-models { provider: 'openrouter', on }` (the older `POST /api/settings/spend { openrouterPaid }` does the same), which needs the session of the desk's own page and writes an activity line. The setting `openrouter.allowPaid` is written only by `door.setPaid(provider, on, SETTINGS_TOKEN)`, and only `core/settings-routes.js` holds that token, as for the security level. The plain settings route skips every `openrouter.` key, modules get read-only settings and no `setPaid`, and no tool, chat message or request flag reaches it. Off by default.
+
+Providers that are always paid (`tier: 'paid'`) show a "Paid API" tag and no switch. Providers with a free tier on the same key (`tier: 'free-signup'` other than OpenRouter) show that billing depends on the owner's own account with that provider; the desk cannot see or control it.
 
 ## Naming the model
 
-Every reply in chat shows `r.label` ("Agent Population Router · llama-3.3-70b", "Ollama · qwen2.5:14b", "OpenAI · gpt-4.1-mini"). Modules must surface `label`, not a hardcoded name. A reply that reached the owner without a label is a bug.
+Every reply in chat shows `r.label` ("Free API · Qwen3.8-27B (OVHcloud AI Endpoints)", "Ollama · qwen2.5:14b", "OpenAI · gpt-4.1-mini"). Modules must surface `label`, not a hardcoded name. A reply that reached the owner without a label is a bug.
 
 ## Spend
 

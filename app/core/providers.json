@@ -31,7 +31,8 @@
     "google/gemma-4-26b-a4b-it:free"
    ],
    "tier": "free-signup",
-   "freeNote": "Free models only (ids ending in :free). About 50 requests a day on a new account."
+   "freeNote": "Free models only (ids ending in :free). About 50 requests a day on a new account.",
+   "listsWithoutKey": true
   },
   "groq": {
    "name": "Groq",
@@ -262,7 +263,9 @@
   "CNY": 6.67
  },
  "freeRouter": {
-  "note": "No-sign-in upstreams for the built-in Agent Population Router. Re-checked 13 Nov 2026: OVH and Pollinations answered; LLM7 timed out; Kilo now needs a token and was dropped. Limits are tight (OVH about 2 requests a minute per model per address). Tool calls: gpt-oss-120b, Llama 3.3 70B and Qwen3.8-27B on OVH make native tool calls (checked 13 Nov); Mistral Small and Pollinations do not, so they are skipped when a call needs tools.",
+  "name": "Free API by Agent Population Desk",
+  "shortName": "Free API",
+  "note": "No-sign-in upstreams for the built-in Free API. Re-checked 13 Nov 2026: OVH and Pollinations answered; LLM7 timed out; Kilo now needs a token and was dropped. Limits are tight (OVH about 2 requests a minute per model per address). Tool calls: gpt-oss-120b, Llama 3.3 70B and Qwen3.8-27B on OVH make native tool calls (checked 13 Nov); Mistral Small and Pollinations do not, so they are skipped when a call needs tools.",
   "upstreams": [
    {
     "id": "ovh",
@@ -299,13 +302,11 @@
     "id": "llm7",
     "name": "LLM7.io",
     "baseUrl": "https://api.llm7.io/v1",
-    "models": [
-     "GLM-5.3-Flash",
-     "DeepSeek-V4-Flash-0731"
-    ],
+    "models": [],
+    "liveModels": true,
     "key": "unused",
     "logsOrTrains": "unknown",
-    "limit": "Off by default: answered \"temporarily busy\" without a token on 13 Nov 2026",
+    "limit": "Off by default. Without a token it answered \"free token allowance reached\" on 20 Nov 2026, and the two model names it had before are no longer offered. When switched on, the desk reads its model names from the host.",
     "enabled": false
    }
   ]

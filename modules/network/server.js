@@ -22,7 +22,7 @@ export async function activate(ctx) {
     let active = [];
     try { active = await ctx.model.active(); } catch (e) { rows.push({ name: 'Models', ok: false, detail: e.message }); }
     for (const a of active) {
-      if (a.provider === 'router') rows.push({ name: 'Agent Population Router', ok: !!a.ok, detail: a.builtin ? `Your router at ${ctx.settings.get('router.baseUrl') || 'http://127.0.0.1:8787/v1'} was not found; the built-in free router is used (${(a.upstreams || []).length} free sources).` : a.ok ? `Your router answers with ${(a.models || []).length} models.` : (a.error || 'Not reachable') });
+      if (a.provider === 'router') rows.push({ name: a.label, ok: !!a.ok, detail: a.builtin ? `Your router at ${ctx.settings.get('router.baseUrl') || 'http://127.0.0.1:8787/v1'} was not found; the built-in Free API is used (${(a.upstreams || []).length} free sources).` : a.ok ? `Your router answers with ${(a.models || []).length} models.` : (a.error || 'Not reachable') });
       else if (a.provider === 'ollama') rows.push({ name: 'Ollama', ok: !!a.ok, detail: a.ok ? `${(a.models || []).length} models installed.` : `Not running at ${ctx.settings.get('ollama.baseUrl') || 'http://127.0.0.1:11434'}.` });
       else rows.push({ name: a.label, ok: !!a.ok, detail: a.kind === 'lan' ? `Model node on your network, ${(a.models || []).length} models` : a.ok ? `A key is set (${a.keys} ${a.keys === 1 ? 'key' : 'keys'}). The model test checks it for real.` : 'Offline' });
     }

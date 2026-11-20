@@ -28,7 +28,7 @@ The first start needs Node.js 22.13 or newer. If it is missing, `start.bat` runs
 
 ## Models
 Every model call goes through one door.
-- **Agent Population Router.** Built in. It uses free models that need no sign-in. If you run your own router at `http://127.0.0.1:8787/v1`, the desk uses that instead. You can switch the free models off in Models.
+- **Free API by Agent Population Desk.** Built in. It uses free models that need no sign-in. If you run your own router at `http://127.0.0.1:8787/v1`, the desk uses that instead. You can switch the free models off in Models.
 - **Ollama** at `http://127.0.0.1:11434` for local and offline work.
 - **Your keys**, typed in under Models. Several keys per provider. OpenRouter is used with free models only unless you switch paid models on in Settings, Payments and spend.
 

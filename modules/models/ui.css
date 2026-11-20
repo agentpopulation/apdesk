@@ -3,7 +3,7 @@
 .mdl-why{flex:0 1 auto;min-width:0;max-width:640px}
 .mdl-active{max-height:min(34vh,300px);overflow:auto;padding:2px}
 .mdl-active .api .sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.mdl-active .api .pill{display:inline-block;margin-top:3px;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.mdl-active .api .pill{display:inline-block;margin-top:3px;max-width:100%;white-space:normal;overflow-wrap:anywhere}
 .mdl-dim{border-color:var(--line)!important;border-style:dashed}
 .mdl-body{flex:1;min-height:0;align-items:stretch}
 .mdl-col{display:flex;flex-direction:column;min-height:0;overflow:hidden}
@@ -18,7 +18,23 @@
 .mdl-tab .line select{max-width:360px}
 @media (max-width:860px){.view.mdl{height:auto;overflow:visible}.mdl-active{max-height:none}}
 .mdl-active{grid-template-columns:repeat(auto-fill,minmax(270px,1fr))}
-.mdl-active .api b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mdl-active .api b{display:block;white-space:normal;overflow-wrap:anywhere}   /* a provider's name is never cut */
 .mdl-acts{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0}
 .keys .k{font-family:var(--ui)}
 .mdl-tab{max-width:760px}
+.mdl-test{display:inline-flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0;max-width:100%}
+.mdl-test .pill{white-space:normal;overflow-wrap:anywhere}
+.mdl-reason{font-size:12px;line-height:1.35;white-space:normal!important;overflow-wrap:anywhere}
+.prow b{overflow-wrap:anywhere}
+.mdl-mbox{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.mdl-mq{min-width:0;width:100%;max-width:420px}
+.mdl-mlist{max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:var(--r-s);max-width:520px;background:var(--card)}
+.mdl-mopt{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:5px 9px;border-bottom:1px solid var(--line);background:none;font-family:var(--ui)}
+.mdl-mopt:last-child{border-bottom:0}
+.mdl-mopt[aria-selected=true]{background:var(--bubble);font-weight:600}
+.mdl-mid{flex:1;min-width:0;overflow-wrap:anywhere}
+.mdl-needkey{color:var(--warn)}
+.mdl-paid{border-top:1px solid var(--line)}
+.line>.mdl-test,.k>.mdl-test{flex:0 1 220px}
+.mdl-test .mdl-reason{max-width:260px}
+@media (max-width:600px){.mdl-scroll .line{flex-wrap:wrap}.mdl-scroll .line>div:first-child{flex:1 1 100%}.line>.mdl-test,.k>.mdl-test{flex:1 1 160px}}

@@ -8,6 +8,12 @@ const PLAIN_KEYS = new Set(['theme', 'role', 'onboarded', 'online', 'ownerName',
 
 export function settingsRoutes(core, sessionOk) {
   const { settings, approval } = core;
+  const setPaid = (provider, on) => {
+    const was = settings.get('openrouter.allowPaid') === true;
+    const r = core.model.setPaid(provider, on, SETTINGS_TOKEN);
+    if (was !== r.on) { approval.activity({ action: 'models.paid', title: r.on ? 'Paid OpenRouter models switched on' : 'Paid OpenRouter models switched off', how: 'owner' }); core.events.emit('settings', { 'openrouter.allowPaid': r.on }); }
+    return r;
+  };
   return {
     'GET /api/settings': (req, res) => sendJson(res, publicSettings(settings)),
     'POST /api/settings': (req, res, { body }) => {
@@ -32,9 +38,15 @@ export function settingsRoutes(core, sessionOk) {
     'POST /api/settings/spend': (req, res, { body }) => {
       if (!sessionOk(req)) return sendJson(res, { error: 'Spend limits change only in Settings on this desk.' }, 403);
       for (const k of ['perItem', 'perDay', 'perMonth']) if (body?.[k] != null && Number(body[k]) >= 0) settings.set('spend.' + k, Math.round(Number(body[k])));
-      if (typeof body?.openrouterPaid === 'boolean') settings.set('openrouter.allowPaid', body.openrouterPaid);
+      if (typeof body?.openrouterPaid === 'boolean') setPaid('openrouter', body.openrouterPaid);
       approval.activity({ action: 'spend.limits', title: 'Spend limits changed', how: 'owner' });
       sendJson(res, approval.state());
+    },
+    // The paid switch beside the keys (Models) and in Settings › Payments and spend: one setting, one guarded route.
+    'POST /api/settings/paid-models': (req, res, { body }) => {
+      if (!sessionOk(req)) return sendJson(res, { error: 'Paid models are switched on or off only from the desk window.' }, 403);
+      if (body?.provider !== 'openrouter' || typeof body?.on !== 'boolean') return sendJson(res, { error: 'Only OpenRouter has a paid switch: { provider: "openrouter", on: true|false }.' }, 400);
+      sendJson(res, setPaid('openrouter', body.on));
     },
     'GET /api/security': (req, res) => sendJson(res, approval.state()),
     'GET /api/approvals': (req, res) => sendJson(res, { pending: approval.listPending(), recent: approval.listRecent(50) }),

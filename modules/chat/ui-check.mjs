@@ -35,7 +35,7 @@ try {
   await p.waitForFunction(() => { const m = [...document.querySelectorAll('.msg.it')].pop(); return m && /tokyo/i.test(m.textContent) && m.querySelector('.mdl'); }, null, { timeout: 90000 }).catch(() => {});
   const who = await p.evaluate(() => [...document.querySelectorAll('.msg.it')].pop()?.querySelector('.who')?.textContent || '');
   const said = await p.evaluate(() => [...document.querySelectorAll('.msg.it')].pop()?.textContent || '');
-  check('ask 1 on screen: the reply shows the agent and the model that answered', /^Coordinator · .+·|^Coordinator · (Google Gemini|Agent Population Router|OpenRouter)/.test(who) && /tokyo/i.test(said), `"${who}" · ${said.slice(who.length, who.length + 60)}`);
+  check('ask 1 on screen: the reply shows the agent and the model that answered', /^Coordinator · .+·|^Coordinator · (Google Gemini|Free API|OpenRouter)/.test(who) && /tokyo/i.test(said), `"${who}" · ${said.slice(who.length, who.length + 60)}`);
   // ask 10 regression on a slow model (the free router): sending while a reply streams, and right after a stop, always sends
   await t.call('/api/agents/coordinator', { method: 'PATCH', body: { model: { main: { provider: 'router' } } } });
   await p.evaluate(() => { location.hash = '#/chat/dm-coordinator'; }); await p.waitForTimeout(800);

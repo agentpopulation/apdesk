@@ -17,7 +17,7 @@ try {
   // 2. Test the built-in router for real
   let r = (await m('/test', { body: { provider: 'router' } })).json;
   if (!r.ok && /rate|429|503/i.test(r.error || '')) { await new Promise(s => setTimeout(s, 30000)); r = (await m('/test', { body: { provider: 'router' } })).json; }
-  check(r.ok && /^Agent Population Router/.test(r.label), 'Test: built-in Agent Population Router answers', `${r.label} in ${(r.ms / 1000).toFixed(1)} s: "${r.reply || r.error}"`);
+  check(r.ok && /^Free API · /.test(r.label), 'Test: built-in Free API answers', `${r.label} in ${(r.ms / 1000).toFixed(1)} s: "${r.reply || r.error}"`);
   // 2b. each built-in upstream on its own; a host that answers with its own error text must not pass
   for (const up of rs.upstreams.filter(u => u.enabled)) {
     const ru = (await m('/test', { body: { provider: 'router', upstream: up.id } })).json;

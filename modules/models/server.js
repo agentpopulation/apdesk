@@ -4,11 +4,17 @@ import path from 'node:path';
 import * as hw from './hardware.js';
 import { UPSTREAM_TERMS, PROVIDER_TERMS, safeFirst } from './catalog.js';
 import providersFile from '../../app/core/providers.json' with { type: 'json' };
+import { ROUTER_NAME } from '../../app/core/model-door.js';
 
 const BUILTIN_UPSTREAMS = providersFile.freeRouter.upstreams;
 const TEST_PROMPT = [{ role: 'user', content: 'Reply with the single word: ready' }];
 const LITELLM_URL = 'http://127.0.0.1:4000';
 const OLLAMA_FIX = 'Ollama is not running on this PC. Fix: install it from ollama.com, then start it (or run "ollama serve").';
+// How long a Test waits. A local model's first call loads it into memory, which on a laptop can take far longer than a
+// hosted call, so it gets a longer first wait and, when that runs out, one more try (the model is usually loaded by then).
+// Per desk: kv 'testLimits' (tests use short ones).
+const TEST_LIMITS = { hosted: 90000, localFirst: 150000, localRetry: 60000 };
+const NOT_CHAT = /embed|tts|audio|image|imagen|veo|aqa|whisper|moderation|guard|rerank|transcri|speech|dall-e|learnlm|computer-use/i;
 
 export async function activate(ctx) {
   const S = (k) => ctx.settings.get(k);
@@ -21,7 +27,7 @@ export async function activate(ctx) {
   // ---------- the router
   function upstreams() {
     const list = rawUpstreams();
-    return list.map(u => ({ id: u.id, name: u.name, baseUrl: u.baseUrl, models: u.models || [], noTools: u.noTools || [], enabled: u.enabled !== false, limit: UPSTREAM_TERMS[u.id]?.limit || u.limit || '', terms: UPSTREAM_TERMS[u.id]?.terms || 'No statement on keeping prompts, so treat it as logging.', logsOrTrains: UPSTREAM_TERMS[u.id]?.logsOrTrains ?? u.logsOrTrains ?? 'unknown', signup: UPSTREAM_TERMS[u.id]?.signup || '' }));
+    return list.map(u => ({ id: u.id, name: u.name, baseUrl: u.baseUrl, models: u.models || [], liveModels: !!u.liveModels, noTools: u.noTools || [], enabled: u.enabled !== false, limit: UPSTREAM_TERMS[u.id]?.limit || u.limit || '', terms: UPSTREAM_TERMS[u.id]?.terms || 'No statement on keeping prompts, so treat it as logging.', logsOrTrains: UPSTREAM_TERMS[u.id]?.logsOrTrains ?? u.logsOrTrains ?? 'unknown', signup: UPSTREAM_TERMS[u.id]?.signup || '' }));
   }
   function rawUpstreams() {
     const fr = typeof ctx.model.freeRouter === 'function' ? ctx.model.freeRouter().upstreams : S('router.upstreams');
@@ -35,12 +41,12 @@ export async function activate(ctx) {
     const ups = upstreams();
     const mode = !enabled ? 'off' : own.ok ? 'owner' : builtinOn ? 'builtin' : 'none';
     const models = mode === 'owner' ? own.models : mode === 'builtin' ? ups.filter(u => u.enabled).flatMap(u => u.models) : [];
-    const line = mode === 'off' ? 'Free models are switched off.'
-      : mode === 'owner' ? `Your Free LLM Router answers at ${baseUrl} with ${own.models.length} models.`
-      : mode === 'builtin' ? `Your Free LLM Router at ${baseUrl} does not answer, so the built-in router is used: ${ups.filter(u => u.enabled).map(u => u.name).join(', ') || 'no upstream switched on'}.`
-      : `Your Free LLM Router at ${baseUrl} does not answer and the built-in router is off.`;
+    const line = mode === 'off' ? `${ROUTER_NAME.short} is switched off.`
+      : mode === 'owner' ? `Your own router answers at ${baseUrl} with ${own.models.length} models.`
+      : mode === 'builtin' ? `No router of your own answers at ${baseUrl}, so the built-in free hosts are used: ${ups.filter(u => u.enabled).map(u => u.name).join(', ') || 'none switched on'}.`
+      : `No router of your own answers at ${baseUrl}, and the built-in free hosts are off.`;
     const t = tests(); const upTests = Object.fromEntries(ups.map(u => [u.id, t[tkey('router', 'up:' + u.id, null)] || null]));
-    return { raw: rawUpstreams(), tests: upTests, enabled, baseUrl, builtin: builtinOn, ownerAnswers: !!own.ok, ownerError: own.ok ? null : own.error, mode, models, upstreams: ups, line, online: S('online') !== false };
+    return { name: ROUTER_NAME.full, shortName: ROUTER_NAME.short, raw: rawUpstreams(), cooling: typeof ctx.model.routerCooling === 'function' ? ctx.model.routerCooling() : {}, tests: upTests, enabled, baseUrl, builtin: builtinOn, ownerAnswers: !!own.ok, ownerError: own.ok ? null : own.error, mode, models, upstreams: ups, line, online: S('online') !== false };
   }
 
   // ---------- providers and keys (values never leave the door; we only see labels)
@@ -48,7 +54,7 @@ export async function activate(ctx) {
     const defs = ctx.model.providers(); const keys = ctx.model.keys.list();
     return Object.entries(defs).map(([id, p]) => ({
       id, name: p.name, signup: p.signup, tier: id === 'custom' ? 'paid' : (p.tier || 'paid'), freeNote: p.freeNote || null, terms: PROVIDER_TERMS[id] || 'No statement on keeping prompts, so treat it as logging.',
-      paidOff: id === 'openrouter' && !openrouterPaid(), defaultModel: S(`provider.${id}.model`) || p.defaultModel, builtinModel: p.defaultModel,
+      paidOff: id === 'openrouter' && !openrouterPaid(), paidOn: id === 'openrouter' && openrouterPaid(), paid: paidKind(id, p), listsWithoutKey: !!providersFile.providers[id]?.listsWithoutKey, defaultModel: S(`provider.${id}.model`) || p.defaultModel, builtinModel: p.defaultModel,
       models: knownModels(id),
       keys: (keys[id] || []).map(k => ({ id: k.id, label: k.label, enabled: k.enabled, created: k.created, fromEnv: !!k.fromEnv, baseUrl: k.meta?.baseUrl || null, model: k.meta?.model || null, test: tests()[tkey(id, null, k.id)] || null })),
     }));
@@ -60,29 +66,74 @@ export async function activate(ctx) {
     return pid === 'openrouter' && !openrouterPaid() ? out.filter(m => /:free$/.test(m) || m === 'openrouter/free') : out;
   }
   function openrouterPaid() { return S('openrouter.allowPaid') === true; }
+  /** 'switch': free models unless the owner switches paid on (OpenRouter). 'always': adding a key means paying.
+   *  'account': a free tier on the same key; billing is between the owner and that provider. null: the owner's own server. */
+  function paidKind(id, p) { return id === 'openrouter' ? 'switch' : id === 'custom' ? null : (p.tier || 'paid') === 'paid' ? 'always' : 'account'; }
+  /** The whole list for the Default model box: live from the provider (OpenRouter needs no key), else the suggested ones. */
+  async function catalog(pid) {
+    if (!providersFile.providers[pid]) throw new Error('Unknown provider.');
+    const c = await ctx.model.modelCatalog(pid);
+    const suggested = knownModels(pid).map(id => ({ id, price: pid === 'openrouter' && /:free$/.test(id) ? 'free' : null }));
+    const name = providersFile.providers[pid].name;
+    const why = !c.error ? null : /fetch failed|ENOTFOUND|ECONN|EAI_AGAIN|No answer within/i.test(c.error) ? `Could not reach ${name} just now.` : /HTTP 401|HTTP 403/.test(c.error) ? `${name} refused the key for its model list.` : c.error;
+    if (!c.ok || !c.models.length) return { provider: pid, source: 'suggested', models: suggested, needsKey: !!c.needsKey, error: why, at: null, total: suggested.length, hiddenPaid: 0 };
+    const chat = c.models.filter(m => !NOT_CHAT.test(m.id));
+    const ids = new Set(chat.map(m => m.id));
+    const mine = suggested.filter(m => m.id === S(`provider.${pid}.model`) && !ids.has(m.id));   // the saved default stays visible
+    return { provider: pid, source: 'live', models: [...mine, ...chat], needsKey: false, error: null, at: c.at, total: c.total, hiddenPaid: c.hiddenPaid || 0 };
+  }
 
   // ---------- one real test call through the door
+  const limits = () => ({ ...TEST_LIMITS, ...(ctx.kv.get('testLimits', {}) || {}) });
+  const isLocal = (p) => p === 'ollama';
+  /** One call with its own wait. A wait that runs out is told apart from a provider error. */
+  async function oneTry(pick, ms) {
+    const timer = AbortSignal.timeout(ms + 2000);   // the door's own wait (timeoutMs) normally ends it first
+    try { return { r: await ctx.model.chat({ model: pick, messages: TEST_PROMPT, purpose: 'small', signal: timer, timeoutMs: ms, deadlineMs: ms + 1000 }) }; }
+    catch (e) {
+      const last = e.attempts?.at(-1)?.error || '';
+      const late = timer.aborted || /No answer within|aborted due to timeout|timeout/i.test(last + ' ' + e.message);
+      return { e, late };
+    }
+  }
   async function testOne({ provider, model = null, keyId = null, upstream = null }) {
     return serial(async () => {
       if (!provider) throw new Error('Pick a provider to test.');
       if (upstream) { const u = upstreams().find(x => x.id === upstream); model = model || u?.models?.[0] || null; }
       if (keyId && !(ctx.model.keys.list()[provider] || []).some(k => k.id === keyId)) throw new Error('That key is gone.');
-      const t0 = Date.now(); let out;
-      try {
-        const r = await ctx.model.chat({ model: { provider, model, ...(keyId ? { keyId } : {}) }, messages: TEST_PROMPT, purpose: 'small', signal: AbortSignal.timeout(90000) });
+      const L = limits(); const local = isLocal(provider);
+      const pick = { provider, model, ...(keyId ? { keyId } : {}), ...(upstream ? { via: upstream } : {}) };
+      const t0 = Date.now(); let out; let tries = 1;
+      let got = await oneTry(pick, local ? L.localFirst : L.hosted);
+      if (local && got.late) { tries = 2; got = await oneTry(pick, L.localRetry); }
+      const at = new Date().toISOString();
+      if (got.r) {
+        const r = got.r; const said = String(r.text || '').trim();
         const same = r.provider === provider && (!upstream || r.via === upstream);
-        // A host that answers its own error as text ("budget reached") must not pass: the reply has to be the word we asked for.
-        const real = /\bready\b/i.test(String(r.text || '')) && String(r.text).length < 400;
+        // A hosted service may answer its own error as text ("budget reached"): its reply must be the word we asked for.
+        // A model on this PC has no host in between, so any short reply it gives is an answer, shown with what it said.
+        const real = local ? said.length > 0 && said.length < 400 : /\bready\b/i.test(said) && said.length < 400;
         const ok = same && real;
-        out = { ok, provider, model: r.model, label: r.label, ms: r.ms, reply: String(r.text || '').trim().slice(0, 80), at: new Date().toISOString(),
-          error: !same ? `Answered by ${r.label}, not by the provider under test.` : !real ? `It answered with something else, likely its own error: "${String(r.text || '').trim().slice(0, 120)}"` : null };
-      } catch (e) {
-        out = { ok: false, provider, model, label: ctx.model.label(provider, model), ms: Date.now() - t0, at: new Date().toISOString(), error: plainError(e), code: e.code || null };
+        out = { ok, provider, model: r.model, label: r.label, ms: r.ms, reply: said.slice(0, 80), at, tries, local,
+          ...(local && ok && !/\bready\b/i.test(said) ? { said: said.slice(0, 80) } : {}),
+          error: !same ? `Answered by ${r.label}, not by the provider under test.` : !real ? (said ? `It answered with something else: "${said.slice(0, 120)}"` : 'It answered with nothing.') : null };
+      } else {
+        const e = got.e; const ms = local ? (tries === 2 ? L.localRetry : L.localFirst) : L.hosted;
+        let error = got.late ? `No answer within ${seconds(ms)}.` + (local ? ' The model may still be loading; try again in a minute.' : '') : testReason(e);
+        out = { ok: false, provider, model, label: ctx.model.label(provider, model), ms: Date.now() - t0, at, tries, local, error, code: e.code || null };
       }
       const all = tests(); all[tkey(provider, upstream ? 'up:' + upstream : null, keyId)] = out; ctx.kv.set('tests', all);
       ctx.events.emit('models', { change: 'test', provider, ok: out.ok });
       return out;
     });
+  }
+  /** Is this Ollama model in memory already? (Ollama's /api/ps.) The page shows "Loading the model…" while it is not. */
+  async function ollamaLoaded(model) {
+    try {
+      const r = await ctx.fetch(ollamaBase() + '/api/ps', { signal: AbortSignal.timeout(2000) }); if (!r.ok) return { loaded: false };
+      const j = await r.json(); const names = (j.models || []).map(m => m.name || m.model);
+      return { loaded: model ? names.includes(model) : names.length > 0 };
+    } catch { return { loaded: false }; }
   }
   async function activeList() {
     const act = await ctx.model.active(); const t = tests();
@@ -96,7 +147,6 @@ export async function activate(ctx) {
   }
 
   // ---------- what the pickers may offer: only reachable or installed models
-  const NOT_CHAT = /embed|tts|audio|image|imagen|veo|aqa|whisper|moderation|guard|rerank|transcri|speech|dall-e|learnlm|computer-use/i;
   /** model -> reason, for models that failed their last real call (door's last call, or our last Test), newest result wins. */
   async function failing() {
     const seen = new Map();
@@ -105,11 +155,11 @@ export async function activate(ctx) {
     for (const t of Object.values(tests())) note(t.provider, t.model, t.ok, t.at, t.error);
     for (const c of ctx.model.usage().recent || []) note(c.provider, c.model, !!c.ok, c.at, c.error);    // every real call the door made, fallbacks included
     const out = {};
-    for (const [k, v] of seen) if (!v.ok && Date.now() - new Date(v.at).getTime() < 20 * 60000) { const [p, ...m] = k.split('|'); (out[p] ||= {})[m.join('|')] = /429|quota|rate/i.test(v.error || '') ? 'out of quota now' : 'not answering now'; }
+    for (const [k, v] of seen) if (!v.ok && Date.now() - new Date(v.at).getTime() < 20 * 60000) { const [p, ...m] = k.split('|'); (out[p] ||= {})[m.join('|')] = /429|quota|rate|too many requests/i.test(v.error || '') ? 'out of quota now' : 'not answering now'; }
     return out;
   }
   function chainLabel() {
-    const names = { router: 'Router', ollama: 'Ollama', keyed: 'your other keys' };
+    const names = { router: ROUTER_NAME.short, ollama: 'Ollama', keyed: 'your other keys' };
     const parts = (S('model.defaultChain') || ['router', 'ollama', 'keyed']).map(x => names[x] || providersFile.providers[x]?.name?.replace(/^Google /, '') || x);
     return 'Desk default (' + [...new Set(parts)].join(', then ') + ')';
   }
@@ -120,13 +170,13 @@ export async function activate(ctx) {
     const chat = listed.filter(m => !NOT_CHAT.test(m));
     // The catalog's picks first (when the provider lists them, or lists nothing), then what the provider lists.
     const first = chat.length ? known.filter(m => chat.includes(m) || m === S(`provider.${pid}.model`)) : known;
-    const out = [...new Set([...first, ...chat])].slice(0, 40);
+    const out = [...new Set([...first, ...chat])];
     return out.length ? out : known;
   }
   async function available() {
     const groups = []; const bad = await failing();
     const rs = await routerStatus();
-    if (S('online') !== false && (rs.mode === 'owner' || rs.mode === 'builtin')) groups.push({ provider: 'router', label: 'Agent Population Router', models: ['auto', ...rs.models] });
+    if (S('online') !== false && (rs.mode === 'owner' || rs.mode === 'builtin')) groups.push({ provider: 'router', label: ROUTER_NAME.full, models: ['auto', ...rs.models] });
     const o = await ctx.model.ollamaModels();
     if (o.ok) groups.push({ provider: 'ollama', label: 'Ollama on this PC', models: safeFirst((o.models || []).map(m => m.name).filter(n => !/embed|bge|minilm/i.test(n))) });
     if (S('online') !== false) for (const p of providers()) if (p.keys.some(k => k.enabled)) {
@@ -263,6 +313,7 @@ export async function activate(ctx) {
   R('GET', '/active', async () => ({ online: S('online') !== false, active: await activeList() }));
   R('GET', '/router', () => routerStatus());
   R('GET', '/providers', () => ({ providers: providers() }));
+  R('GET', '/catalog/:provider', ({ params }) => catalog(String(params.provider || '')));
   R('GET', '/available', async () => ({ groups: await available(), defaultLabel: chainLabel() }));
   R('POST', '/test', ({ body }) => testOne(body || {}));
   R('POST', '/test-all', async () => ({ results: await testAll() }));
@@ -289,6 +340,7 @@ export async function activate(ctx) {
     ctx.model.keys.remove(params.id); ctx.json(res, { ok: true });
   });
   R('GET', '/ollama', () => ollama());
+  R('GET', '/ollama/loaded', ({ query }) => ollamaLoaded(query.model ? String(query.model) : null));
   R('POST', '/ollama/pull', ({ body }) => pull(body?.model));
   R('POST', '/ollama/delete', ({ body }) => removeModel(String(body?.model || '')));
   R('GET', '/loras', async () => ({ ollama: await adaptersInOllama(), folder: ctx.kv.get('loraFolder', null) }));
@@ -316,10 +368,24 @@ export function lanUrl(u) {
   if (/:11434$/.test(s)) s += '/v1';                 // a plain Ollama address: use its OpenAI-compatible path
   return s;
 }
+const seconds = (ms) => { const s = Math.round(ms / 100) / 10; return `${s} second${s === 1 ? '' : 's'}`; };
+/** Why a Test failed, in plain words, from the last thing the door tried. */
+export function testReason(e) {
+  const last = String(e?.attempts?.at(-1)?.error || '');
+  const m = last || String(e?.message || e || '');
+  if (/^not available$/.test(m)) return 'Not available: no working key, or the key was refused recently and is cooling down.';
+  if (/answered with a notice/i.test(m)) return `It answered with something else: "${m.replace(/^.*?not a reply:\s*/i, '').slice(0, 120)}"`;
+  if (/model.{0,20}loading|loading model/i.test(m)) return 'The model is still loading. Try again in a minute.';
+  if (/^Empty reply/.test(m)) return 'It answered with nothing.';
+  if (/HTTP 5\d\d/.test(m)) return `The provider had a problem on its side (${m.match(/HTTP 5\d\d/)[0]}). Try again later.`;
+  if (/ECONNREFUSED|fetch failed|ENOTFOUND|EAI_AGAIN/i.test(m + ' ' + (e?.cause?.code || ''))) return 'Nothing answers at this address.';
+  return plainError(last ? new Error(last) : e);
+}
 export function plainError(e) {
   const m = String(e?.message || e || 'Something went wrong');
   if (/HTTP 401|HTTP 403/.test(m)) return 'The key was refused (not valid or not allowed).';
-  if (/HTTP 429/.test(m)) return 'Rate limited right now. Try again in a minute.';
+  if (/HTTP 429/.test(m)) return 'Too many requests right now. Try again in a minute.';
+  const wait = m.match(/No answer within ([\d.]+) seconds/); if (wait) return `No answer within ${seconds(Number(wait[1]) * 1000)}.`;
   if (/not available/.test(m) && /No model answered/.test(m)) return 'Not available: no working key, or the key was refused recently and is cooling down.';
   if (/timeout|aborted due to timeout/i.test(m)) return 'No answer in time.';
   return m.replace(/\s*\{.*$/, '').slice(0, 220);

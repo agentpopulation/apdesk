@@ -8,7 +8,7 @@ export const settings = {
       const { h, api, card, line, btn, toast, fmt, pill, meter, table } = ui;
       const cur = ui.state.settings.currency || undefined;   // none set: plain numbers, no guessed symbol
       const sym = !cur ? '' : (() => { try { return new Intl.NumberFormat(ui.state.settings.locale || undefined, { style: 'currency', currency: cur }).formatToParts(0).find(p => p.type === 'currency')?.value || cur; } catch { return cur; } })();
-      const inputs = {}; const spentBox = h('div'); const logBox = h('div');
+      const inputs = {}; const spentBox = h('div'); const logBox = h('div'); const paidBox = h('div');
       const field = (k) => { inputs[k] = h('input', { type: 'text', inputmode: 'numeric', style: { width: '120px', textAlign: 'right' }, 'aria-label': k }); return h('span', { class: 'row', style: { gap: '6px' } }, h('span', { class: 'val' }, sym), inputs[k]); };
       const save = btn('Save limits', { onClick: async () => {
         const body = {}; for (const k of ['perItem', 'perDay', 'perMonth']) { const v = Number(String(inputs[k].value).replace(/[^\d.]/g, '')); if (!(v >= 0)) return toast('Limits are amounts like 2000.', 'err'); body[k] = Math.round(v * 100); }
@@ -19,7 +19,18 @@ export const settings = {
           line('Per item', 'One purchase', field('perItem')), line('Per day', 'All purchases today', field('perDay')), line('Per month', 'All purchases this month, paid model calls included', field('perMonth')),
           h('div', { class: 'row', style: { marginTop: '8px' } }, h('span', { class: 'grow' }), save)),
         card(h('h3', null, 'Spent'), spentBox, h('p', { class: 'sub', style: { marginTop: '8px' } }, 'The desk never pays by itself in this version. An allowed spend means you agreed to it; you make the payment yourself.')),
+        card(h('h3', null, 'Paid models'), paidBox),
         card(h('h3', null, 'Spend log'), h('p', { class: 'sub' }, 'Every spend an agent asked for, and what you decided.'), logBox));
+      // the same switch as beside the OpenRouter keys in Models: one setting, changed only from this window
+      function paintPaid(on) {
+        paidBox.replaceChildren(line('Paid OpenRouter models', on ? 'On: paid models may be used. Your spend limits still apply.' : 'Off: only free OpenRouter models are listed and used.',
+          ui.sw(on, 'Paid OpenRouter models', async (next) => {
+            if (next && !await ui.confirm('This key may be charged by OpenRouter. Your spend limits still apply.', { title: 'Switch on paid models?', ok: 'Switch on' })) return false;
+            await api('settings/paid-models', { body: { provider: 'openrouter', on: next } }); ui.state.settings['openrouter.allowPaid'] = next; paintPaid(next);
+          }, { 'data-apd': 'paid-switch' })));
+      }
+      paintPaid(ui.state.settings['openrouter.allowPaid'] === true);
+      ui.on('settings', (c) => { if (c && 'openrouter.allowPaid' in c) { ui.state.settings['openrouter.allowPaid'] = c['openrouter.allowPaid']; paintPaid(c['openrouter.allowPaid'] === true); } });
       async function paint() {
         try {
           const s = await api('security'); const l = s.limits;

@@ -85,6 +85,10 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - First start now asks what you sell, lets you pick your starting team, and says which models answer and how to make them faster.
 - When an ask means "my product" and the desk does not know it yet, it asks once, saves your answer, and carries on with the same ask.
 - Settings › General shows "Saved" beside each field. A fresh desk takes its time zone, country and currency from your computer; a desk that was already set up keeps what it had.
+- The built-in free models are now called "Free API by Agent Population Desk" ("Free API" on replies), and no title on the Models page is cut.
+- A failed Test says why, local models get a fair first-call wait, and the Default model box lists every model: OpenRouter's whole list even before a key, each marked Free or Paid.
+- Paid OpenRouter models are switched beside the keys or in Payments, by the owner only, from the desk's own window. A new safety probe checks that nothing else can switch them on.
+- Free hosts that say no are skipped for a while instead of being retried, and when all of them are busy the desk says so at once with when to try again.
 - A built-in agent left out at first start or retired later shows under "Not on your team" on the Agents page, and one click hires it back as it was, with its chats and rooms.
 - Briefs, schedules, calendar dates, lead values and spend amounts follow your own zone, locale and currency; nothing falls back to India any more.
 
