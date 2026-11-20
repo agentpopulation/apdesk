@@ -485,3 +485,40 @@ test('model door: the stop-after-attempts number in the contract matches the cod
   const n = Number(src.match(/const MAX_ATTEMPTS = (\d+)/)[1]);
   assert.match(doc, new RegExp(`attempts\\.length >= ${n}\\b`));
 });
+
+test('where you are: a fresh desk takes zone, locale, country and currency from the computer; stored values are kept', async () => {
+  const { Settings, systemPlace } = await import('../app/core/settings.js');
+  const { openStorage } = await import('../app/core/storage.js');
+  const os = await import('node:os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'apd-place-'));
+  try {
+    assert.deepEqual(systemPlace({ timeZone: 'Europe/Berlin', locale: 'de-DE' }), { country: 'DE', currency: 'EUR', timeZone: 'Europe/Berlin', locale: 'de-DE' });
+    assert.deepEqual(systemPlace({ timeZone: 'America/Chicago', locale: 'en-US' }), { country: 'US', currency: 'USD', timeZone: 'America/Chicago', locale: 'en-US' });
+    assert.equal(systemPlace({ timeZone: 'Asia/Kolkata', locale: 'en-IN' }).currency, 'INR');
+    assert.equal(systemPlace({ timeZone: 'Africa/Cairo', locale: 'ar-EG' }).currency, 'USD', 'a country not in the short map: USD until he changes it');
+    const s1 = new Settings(openStorage(path.join(dir, 'a'), path.join(dir, 'ab')), { system: { timeZone: 'Europe/London', locale: 'en-GB' } });
+    assert.deepEqual([s1.get('country'), s1.get('currency'), s1.get('timeZone'), s1.get('locale')], ['GB', 'GBP', 'Europe/London', 'en-GB']);
+    assert.equal(s1.all().currency, 'GBP'); assert.equal(s1.stored('currency'), false);
+    s1.set('currency', 'INR'); s1.set('timeZone', 'Asia/Kolkata');
+    assert.equal(s1.get('currency'), 'INR'); assert.equal(s1.get('timeZone'), 'Asia/Kolkata'); assert.equal(s1.get('country'), 'GB');
+    // a desk set up before (onboarded) keeps exactly what it showed then, whatever the computer says now
+    const st2 = openStorage(path.join(dir, 'b'), path.join(dir, 'bb'));
+    st2.run("INSERT INTO settings (key, value) VALUES ('onboarded', 'true')");
+    const s2 = new Settings(st2, { system: { timeZone: 'America/New_York', locale: 'en-US' } });
+    assert.deepEqual([s2.get('country'), s2.get('currency'), s2.get('timeZone'), s2.get('locale')], ['IN', 'INR', 'Asia/Kolkata', 'en-IN']);
+    // the one write a module has: the owner's business text, nothing else
+    const ro = s1.readonly(); assert.equal(typeof ro.set, 'undefined');
+    assert.equal(ro.setOwnerText('business.about', '  x'.padEnd(700, 'y')).length, 600);
+    assert.throws(() => ro.setOwnerText('security.level', 'open'), /Only the owner/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('"What you do": saved through the plain settings route, trimmed, capped at 600, and clearable', async () => {
+  const t = await testDesk();
+  try {
+    let r = await t.call('/api/settings', { body: { 'business.about': '  We sell payroll software.  ' } });
+    assert.equal(r.json.settings['business.about'], 'We sell payroll software.');
+    r = await t.call('/api/settings', { body: { 'business.about': 'z'.repeat(900) } }); assert.equal(r.json.settings['business.about'].length, 600);
+    r = await t.call('/api/settings', { body: { 'business.about': '' } }); assert.equal(r.json.settings['business.about'], '');
+  } finally { await t.close(); }
+});

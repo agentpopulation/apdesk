@@ -167,7 +167,8 @@ export async function activate(ctx) {
     const owner = ctx.settings.get('ownerName') || '';
     const business = clip(ctx.settings.get('companyName') || '', 120);
     const closer = ctx.agents.get('closer');
-    const offer = clip(ctx.kv.get('offer', ''), 600);
+    // his offer text from the Sales page; with none, what he wrote under "What you do" in Settings (his own words either way)
+    const offer = clip(ctx.kv.get('offer', '') || ctx.settings.get('business.about') || '', 600);
     const support = [offer, business].filter(Boolean).join(' ');     // what the owner gave about himself: his offer text and business name
     const lang = languageOf(language);
     const langRule = lang && lang.name !== 'English' ? ` Write the whole message${channel === 'email' ? ', subject and body,' : ''} in ${lang.name}${lang.script ? `, in ${lang.script} script` : ''}; only names of companies and people, numbers and addresses may stay as they are.` : '';
@@ -365,6 +366,7 @@ export async function activate(ctx) {
 
   ctx.expose({
     listLeads: () => store.listLeads(),
+    offer: () => ctx.kv.get('offer', ''),
     addLead: (lead) => store.addLead(lead, { who: 'Closer' }),
     moveLead: (id, stage) => store.moveLead(id, stage, { who: 'Closer' }),
     drafts: () => store.drafts(),

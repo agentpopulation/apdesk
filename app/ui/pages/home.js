@@ -1,13 +1,21 @@
 // Home and the optional onboarding roles. Owned by the shell.
+// chips: a suggestion is text, or { text, needsBusiness: true } when it means the owner's own business ("my product") and
+// cannot be done until he has said what he sells. team: the agents ticked by default on the first-start step (the
+// Coordinator is always on); a role without a team list gets all five.
 export const ROLES = {
-  sales:        { name: 'Sales person', desc: 'Leads, outreach, follow-ups', off: [], labels: {}, chips: ['Find 20 leads with sources for my product', 'Draft outreach to the top five leads', 'Research this company before my call'] },
+  sales:        { name: 'Sales person', desc: 'Leads, outreach, follow-ups', off: [], labels: {}, team: ['coordinator', 'scout', 'closer'], chips: [{ text: 'Find 20 leads with sources for my product', needsBusiness: true }, 'Draft outreach to the top five leads', 'Research this company before my call'] },
   entrepreneur: { name: 'Entrepreneur', desc: 'Research, decisions, a morning brief', off: [], labels: {}, chips: ['Research a market in depth', 'Ask the Council: build or buy?', 'Every morning at 8, brief me'] },
-  host:         { name: 'Airbnb host', desc: 'Guests, bookings, messages', off: ['models'], labels: { sales: 'Guests', tasks: 'Bookings' }, chips: ['Draft a reply to my new booking request', 'Compare my price with five nearby listings', "Every Friday, list next week's check-ins"] },
-  educator:     { name: 'Educator', desc: 'Lessons, marking, class plans', off: ['sales'], labels: { tasks: 'Classes' }, chips: ['Plan a 6-week course', "Research three sources for tomorrow's lesson", 'Make a quiz from this file'] },
-  student:      { name: 'Student', desc: 'Study plans, research, notes', off: ['sales', 'models'], labels: { tasks: 'Study plan' }, chips: ['Research this topic and cite sources', 'Make a revision plan for my exams', 'Explain this file in plain words'] },
+  host:         { name: 'Airbnb host', desc: 'Guests, bookings, messages', off: ['models'], labels: { sales: 'Guests', tasks: 'Bookings' }, team: ['coordinator', 'closer', 'operator'], chips: ['Draft a reply to my new booking request', 'Compare my price with five nearby listings', "Every Friday, list next week's check-ins"] },
+  educator:     { name: 'Educator', desc: 'Lessons, marking, class plans', off: ['sales'], labels: { tasks: 'Classes' }, team: ['coordinator', 'scout', 'coder'], chips: ['Plan a 6-week course', "Research three sources for tomorrow's lesson", 'Make a quiz from this file'] },
+  student:      { name: 'Student', desc: 'Study plans, research, notes', off: ['sales', 'models'], labels: { tasks: 'Study plan' }, team: ['coordinator', 'scout', 'coder'], chips: ['Research this topic and cite sources', 'Make a revision plan for my exams', 'Explain this file in plain words'] },
 };
-export const DEFAULT_CHIPS = ['Research a topic in depth', 'Find 20 leads with sources', 'Every morning at 8, brief me', 'Compare three products into a table file'];
+export const DEFAULT_CHIPS = ['Research a topic in depth', { text: 'Find 20 leads with sources', needsBusiness: true }, 'Every morning at 8, brief me', 'Compare three products into a table file'];
 export const chipsFor = (roleId) => ROLES[roleId]?.chips || DEFAULT_CHIPS;
+export const chipText = (c) => typeof c === 'string' ? c : String(c?.text || '');
+export const chipNeedsBusiness = (c) => !!(c && typeof c === 'object' && c.needsBusiness);
+/** The five starting agents; the team ticked by default for a role (all five when the role has no opinion). */
+export const STARTING_TEAM = ['coordinator', 'scout', 'closer', 'operator', 'coder'];
+export const teamFor = (roleId) => ROLES[roleId]?.team || STARTING_TEAM;
 
 export async function applyRole(ui, id) {
   const r = await ui.api('settings', { body: { role: id || null, onboarded: true } });
@@ -40,7 +48,7 @@ export async function homePage(el, ui) {
     waiting.replaceChildren(...(waits.length || stopped ? [...waits, stopped].filter(Boolean) : [empty('Nothing is waiting.')]));
     const rec = [...(d.recent || []).map(c => line(c.title || 'Chat', c.last || '', btn('Open', { kind: 'ghost sm', onClick: () => ui.go('chat', c.id) }))),
       ...owners(d.jobs.done).slice(0, 4).map(j => line(j.title, `Finished ${fmt.ago(j.finished)}`, btn('Open', { kind: 'ghost sm', onClick: () => j.chatId ? ui.go('chat', j.chatId) : ui.go('tasks') })))];
-    recent.replaceChildren(...(rec.length ? rec : [empty('Start in Chat: ask for research, leads, a schedule or a file.'), h('div', { class: 'chips', style: { justifyContent: 'center' } }, chipsFor(ui.state.settings.role).map(c => h('button', { class: 'chip', onclick: () => ui.go('chat') + sessionStorage.setItem('apd-prefill', c) }, c)))]));
+    recent.replaceChildren(...(rec.length ? rec : [empty('Start in Chat: ask for research, leads, a schedule or a file.'), h('div', { class: 'chips', style: { justifyContent: 'center' } }, chipsFor(ui.state.settings.role).map(c => h('button', { class: 'chip', onclick: () => { try { sessionStorage.setItem('apd-prefill', chipText(c)); sessionStorage.setItem('apd-prefill-chip', JSON.stringify({ text: chipText(c), needsBusiness: chipNeedsBusiness(c) })); } catch {} ui.go('chat'); } }, chipText(c))))]));
     const mods = ui.state.modules.filter(m => m.on && m.kind !== 'core' && (m.menu || []).length);
     extra.replaceChildren(...mods.map(m => h('button', { class: 'card hov', onclick: () => ui.go(m.menu[0].id) }, h('b', null, m.name), h('div', { class: 'sub' }, 'Module is on. Open it.'))));
   };

@@ -193,7 +193,8 @@ export function waitLine(wait, nowMs = Date.now()) {
   if (!wait || !wait.text) return '';
   const secs = Math.max(0, Math.round((nowMs - Date.parse(wait.since)) / 1000)) || 0;
   const limit = Number(wait.limitS) || 0;
-  return `${wait.text} · ${secs} s` + (limit && secs >= Math.min(20, limit / 2) ? `. Some models are slow; the desk stops waiting at ${limit} s.` : '');
+  // only free models answer here: one clause points at Models, where a free key or a local model makes it faster
+  return `${wait.text} · ${secs} s` + (limit && secs >= Math.min(20, limit / 2) ? `. Some models are slow${wait.freeOnly ? ' (a free key or a local model in Models is faster)' : ''}; the desk stops waiting at ${limit} s.` : '');
 }
 
 /** Plain one-line preview of a reply for the chat list and Home: no markdown marks, no table rules or pipes. */

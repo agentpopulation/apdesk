@@ -25,8 +25,9 @@ export function makeStore(ctx) {
   const msgRow = (r) => r && ({ id: r.id, chatId: r.chat_id, role: r.role, agentId: r.agent_id, text: r.text || '', cards: j(r.cards, []), label: r.label || null, status: r.status || 'done', meta: j(r.meta, {}), at: r.at, updated: r.updated });
 
   const s = {
-    seed() {
-      for (const g of SEED_GROUPS) if (!db.get('SELECT 1 AS x FROM m_chat_chats WHERE id = ?', g.id)) {
+    /** The starting groups; a room the first-start step left out (too few of its agents on the team) is not made again. */
+    seed(hidden = []) {
+      for (const g of SEED_GROUPS) if (!hidden.includes(g.id) && !db.get('SELECT 1 AS x FROM m_chat_chats WHERE id = ?', g.id)) {
         const t = now(); db.run('INSERT INTO m_chat_chats (id, title, kind, members, opts, created, updated, last, seeded) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)', g.id, g.title, 'group', g.members ? JSON.stringify(g.members) : null, '{}', t, t, '');
       }
     },

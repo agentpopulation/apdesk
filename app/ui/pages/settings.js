@@ -2,23 +2,43 @@
 // replaces a core one with the same id (the Safety, Backup, Store, Vault and other modules do that).
 import { ROLES } from '/ui/pages/home.js';
 
+export const ABOUT_MAX = 600;
+export const ABOUT_HELP = 'What you sell, who buys it, and where. Your agents use this for leads, drafts and research.';
+
 const ORDER = ['general', 'appearance', 'security', 'modules', 'accounts', 'keys', 'channels', 'payments', 'network', 'memory', 'backup'];
 const TITLES = { general: 'General', appearance: 'Appearance', security: 'Security', modules: 'Modules', accounts: 'Accounts and lock', keys: 'Keys and logins', channels: 'Channels and mail', payments: 'Payments and spend', network: 'Network', memory: 'Memory', backup: 'Backup' };
 const NEEDS = { accounts: 'accounts', keys: 'vault', channels: 'channels', payments: 'payments', network: 'network', memory: 'memory', backup: 'backup' };
 
 export const coreSettingsSections = {
   general: { title: 'General', render(el, ui) {
-    const { h, api, card, line, toast } = ui; const s = ui.state.settings;
-    const save = async (patch) => { try { const r = await api('settings', { body: patch }); ui.state.settings = r.settings; ui.setPrefs(r.settings); await ui.refresh(); } catch (e) { toast(e.message, 'err'); } };
-    const text = (key, ph) => h('input', { type: 'text', value: s[key] ?? '', placeholder: ph, onchange: (e) => save({ [key]: e.target.value }) });
-    const roleSel = h('select', { onchange: async (e) => { await save({ role: e.target.value || null, onboarded: true }); location.reload(); } }, h('option', { value: '' }, 'Everything'), Object.entries(ROLES).map(([id, r]) => h('option', { value: id, selected: s.role === id }, r.name)));
+    const { h, api, card, line } = ui; const s = ui.state.settings;
+    // Every field here saves by itself when the owner leaves it (or presses Enter): a short "Saved" beside it says so,
+    // or the reason in plain words when it did not save.
+    const save = async (patch, mark) => {
+      try {
+        const r = await api('settings', { body: patch }); ui.state.settings = r.settings; ui.setPrefs(r.settings); await ui.refresh();
+        if (mark) { mark.textContent = 'Saved'; mark.className = 'saved ok'; clearTimeout(mark._t); mark._t = setTimeout(() => { mark.textContent = ''; }, 2000); }
+        return true;
+      } catch (e) { if (mark) { clearTimeout(mark._t); mark.textContent = 'Not saved: ' + e.message; mark.className = 'saved err'; } else ui.toast(e.message, 'err'); return false; }
+    };
+    const mark = () => h('span', { class: 'saved', role: 'status', 'aria-live': 'polite' });
+    const text = (key, ph) => { const m = mark(); return h('span', { class: 'field' }, h('input', { type: 'text', value: s[key] ?? '', placeholder: ph, 'data-key': key, onchange: (e) => save({ [key]: e.target.value }, m) }), m); };
+    const roleMark = mark();
+    const roleSel = h('select', { onchange: async (e) => { if (await save({ role: e.target.value || null, onboarded: true }, roleMark)) setTimeout(() => location.reload(), 700); } }, h('option', { value: '' }, 'Everything'), Object.entries(ROLES).map(([id, r]) => h('option', { value: id, selected: s.role === id }, r.name)));
     const notifyOn = s.notifications !== false;
     const canAsk = typeof Notification !== 'undefined';
-    const notifySw = ui.sw(notifyOn, 'Tell me when a job finishes', async (on) => { await save({ notifications: on }); if (on && canAsk && Notification.permission === 'default') { try { await Notification.requestPermission(); } catch {} } });
+    const notifyMark = mark();
+    const notifySw = ui.sw(notifyOn, 'Tell me when a job finishes', async (on) => { await save({ notifications: on }, notifyMark); if (on && canAsk && Notification.permission === 'default') { try { await Notification.requestPermission(); } catch {} } });
     const perm = !canAsk ? 'This browser has no desktop notifications.' : Notification.permission === 'granted' ? 'Desktop notifications are allowed.' : Notification.permission === 'denied' ? 'Desktop notifications are blocked in this browser; the notice and the menu count still show.' : 'Switch it on to allow desktop notifications.';
-    el.append(card(h('h3', null, 'You'), line('Your name', 'Agents use it when they write for you', text('ownerName', 'Your name')), line('Your business', 'Agents use it when they write in its name', text('companyName', 'Business name')), line('What you mainly use the desk for', 'Renames some places and changes the suggestions', roleSel)),
-      card(h('h3', null, 'This desk'), line('Name of this desk', 'Shown in the top bar and the window title', text('appName', 'AP Desk')), line('About', 'AP Desk is short for Agent Population Desk. On X: @agentpopulation', h('span', { class: 'val' }, '@agentpopulation')), line('Tell me when a job finishes', 'A notice, a count on the menu place and, when the window is in the background, a desktop notification. ' + perm, notifySw)),
-      card(h('h3', null, 'Country rows'), line('Country', 'Two-letter code', text('country', 'IN')), line('Currency', 'Money is shown in this currency', text('currency', 'INR')), line('Time zone', 'Times are shown in this zone', text('timeZone', 'Asia/Kolkata')), line('Number and date style', 'For example en-IN, en-US', text('locale', 'en-IN'))));
+    // "What you do": the owner's own words about his business, for leads, drafts and research. Up to 600 characters.
+    const aboutMark = mark();
+    const about = h('textarea', { id: 'about', rows: 3, maxlength: String(ABOUT_MAX), placeholder: 'For example: Payroll software for small firms. HR heads buy it. Pune and Mumbai.', 'aria-label': 'What you do', onchange: (e) => save({ 'business.about': e.target.value }, aboutMark) });
+    about.value = s['business.about'] || '';
+    const aboutBox = h('div', { class: 'line about' }, h('div', null, h('b', null, 'What you do'), h('span', { class: 'd' }, ABOUT_HELP), about, h('span', { class: 'field' }, aboutMark)));
+    el.append(h('p', { class: 'sub', id: 'saves-note' }, 'Changes are saved when you leave a field.'),
+      card(h('h3', null, 'You'), line('Your name', 'Agents use it when they write for you', text('ownerName', 'Your name')), line('Your business', 'Agents use it when they write in its name', text('companyName', 'Business name')), line('What you mainly use the desk for', 'Renames some places and changes the suggestions', h('span', { class: 'field' }, roleSel, roleMark))),
+      card(h('h3', null, 'This desk'), line('Name of this desk', 'Shown in the top bar and the window title', text('appName', 'AP Desk')), aboutBox, line('About', 'AP Desk is short for Agent Population Desk. On X: @agentpopulation', h('span', { class: 'val' }, '@agentpopulation')), line('Tell me when a job finishes', 'A notice, a count on the menu place and, when the window is in the background, a desktop notification. ' + perm, h('span', { class: 'field' }, notifySw, notifyMark))),
+      card(h('h3', null, 'Where you are'), line('Country', 'Two-letter code', text('country', 'US')), line('Currency', 'Money is shown in this currency', text('currency', 'USD')), line('Time zone', 'Times are shown in this zone', text('timeZone', 'Europe/London')), line('Number and date style', 'For example en-GB, en-US', text('locale', 'en-US'))));
   } },
   appearance: { title: 'Appearance', render(el, ui) {
     const { h, card, line, seg } = ui;

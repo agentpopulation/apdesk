@@ -1,5 +1,5 @@
 // Chat page: rail of chats, the conversation at full width, the folding panel. Matches the Chat section of the approved preview.
-import { chipsFor } from '/ui/pages/home.js';
+import { chipsFor, chipText, chipNeedsBusiness } from '/ui/pages/home.js';
 import { cleanReply, uniqueOutputs, previewText, stepChips, footTag, waitLine, hasTable, shortCell, railLine, liveText } from '/modules/chat/ui-text.js';
 
 const API = 'm/chat/';
@@ -191,6 +191,7 @@ async function render(el, ui, route) {
   // ---------- cards
   const runAction = async (a, extra = null) => {
     if (a.go) { if (String(a.go).startsWith('#')) location.hash = a.go; else ui.go(...String(a.go).split('/')); return; }
+    if (a.stopAsk) { try { await api(API + `chats/${chat.id}/stop`, { method: 'POST' }); toast('Fine. Ask again when you want it.'); } catch (e) { toast(e.message, 'err'); } return; }
     if (a.retry) { try { await api(API + `chats/${chat.id}/retry`, { method: 'POST' }); setRunning(true); } catch (e) { toast(e.message, 'err'); } return; }
     if (!a.tool) return;
     // row actions: '$row' in the args stands for that row's id (rowIds beside rows); without it the row itself rides along
@@ -198,7 +199,7 @@ async function render(el, ui, route) {
     if (extra) args = hasRow(args) ? fillRow(args, extra.rowId ?? extra.rowIndex) : { ...args, ...(extra.rowId != null ? { rowId: extra.rowId } : { row: extra.row }) };
     try { await api(API + `chats/${chat.id}/action`, { body: { tool: a.tool, args, label: a.label } }); } catch (e) { toast(e.message, 'err'); }
   };
-  const actionBtns = (actions, extra) => (actions || []).filter(a => a && a.label && (a.tool || a.go || a.retry)).map(a => btn(a.label, { kind: 'ghost sm', onClick: (ev) => { ev.currentTarget.disabled = true; runAction(a, extra); } }));
+  const actionBtns = (actions, extra) => (actions || []).filter(a => a && a.label && (a.tool || a.go || a.retry || a.stopAsk)).map(a => btn(a.label, { kind: 'ghost sm', onClick: (ev) => { ev.currentTarget.disabled = true; runAction(a, extra); } }));
   function cardEl(c, m) {
     const el = cardInner(c, m);
     if (el instanceof Element) el.setAttribute('data-card', String(c.kind || 'text'));
@@ -282,7 +283,9 @@ async function render(el, ui, route) {
   const repaintSoon = () => { clearTimeout(repaintTimer); repaintTimer = setTimeout(() => { if (alive && chat) { const st = chatEl.scrollTop; paintMessages(); chatEl.scrollTop = st; toBottom(); } }, 150); };
 
   // ---------- compose and controls
-  chips.replaceChildren(...chipsFor(ui.state.settings.role).map(t => h('button', { class: 'chip', type: 'button', onclick: () => send(t) }, t)));
+  // a chip press is told to the desk as such: a chip that means the owner's own business waits for what he sells
+  chips.replaceChildren(...chipsFor(ui.state.settings.role).map(c => h('button', { class: 'chip', type: 'button', onclick: () => send(chipText(c), { chip: true, needsBusiness: chipNeedsBusiness(c) }) }, chipText(c))));
+  let prefillChip = null;   // a chip pressed on Home arrives as text in the box; sent unchanged, it is still that chip
   // Enter never stops a reply. While a reply is coming, Enter with text queues one message ("Waiting to send") that goes out by
   // itself the moment the turn ends, finished or stopped. Only a click on the visible Stop button stops a turn.
   let busy = false; let queued = null; let queueEl = null;
@@ -308,12 +311,14 @@ async function render(el, ui, route) {
   form.onsubmit = (e) => { e.preventDefault(); const t = input.value.trim(); if (!t) return; if (chat?.running) queue(t); else send(t); };
   sendBtn.type = 'button';
   sendBtn.onclick = () => { const t = input.value.trim(); if (!t) { if (chat?.running) stop(); return; } if (chat?.running) queue(t); else send(t); };
-  async function send(text) {
+  async function send(text, chipOf = null) {
     text = String(text || '').trim(); if (!text || !chat) return;
+    if (!chipOf && prefillChip && prefillChip.text === text) chipOf = { chip: true, needsBusiness: !!prefillChip.needsBusiness };
+    prefillChip = null;
     if (busy) { queue(text); return; }
     if (ui.state.panic?.halted) { input.value = input.value || text; return toast('Everything is stopped. Press Resume first.', 'err'); }
     busy = true; input.value = '';
-    try { setRunning(true); await api(API + `chats/${chat.id}/send`, { body: { text } }); }
+    try { setRunning(true); await api(API + `chats/${chat.id}/send`, { body: { text, ...(chipOf || {}) } }); }
     catch (e) { if (e.status === 409) { busy = false; chat.running = true; queue(text); return; } setRunning(false); input.value = text; toast(e.message, 'err'); }
     finally { busy = false; paintBtn(); }
   }
@@ -446,7 +451,7 @@ async function render(el, ui, route) {
 
   await loadChats();
   await open(curId);
-  let pre = null; try { pre = sessionStorage.getItem('apd-prefill'); sessionStorage.removeItem('apd-prefill'); } catch {}
+  let pre = null; try { pre = sessionStorage.getItem('apd-prefill'); sessionStorage.removeItem('apd-prefill'); prefillChip = JSON.parse(sessionStorage.getItem('apd-prefill-chip') || 'null'); sessionStorage.removeItem('apd-prefill-chip'); } catch {}
   if (pre) prefill(pre); else input.focus();
 }
 

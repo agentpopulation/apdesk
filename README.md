@@ -246,7 +246,7 @@ The full list is in [`CHANGELOG.md`](CHANGELOG.md) under "Known weak points". Fo
 | Platform | State |
 |---|---|
 | Linux x64, Node 22 and 24 | Developed and tested here, including `start.sh`. |
-| Windows 11 x64 | The main target. The zip with the packages inside was run and tested on Windows 11 on 14 Nov 2026. Starting from a GitHub download was broken until 20 Nov 2026 and has not been re-run on Windows since the repair. |
+| Windows 11 x64 | The main target. The one-line install was run on a Windows 11 PC on 20 Nov 2026: it downloaded, installed the packages, started all 16 default modules and opened the desk. The full set of acceptance asks has not been run on Windows. |
 | Windows on ARM64 | Not tested. The desk is plain JavaScript with no native add-ons, so it should work. |
 | macOS | Not tested yet. `start.command` uses the same script as Linux. |
 

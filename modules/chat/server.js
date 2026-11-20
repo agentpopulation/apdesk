@@ -1,15 +1,16 @@
 // Chat and Coordinator: chats, messages, cards, the Coordinator turn, and the API other modules post into.
 import fs from 'node:fs';
 import path from 'node:path';
-import { makeStore } from './store.js';
-import { makeCoordinator, cardKey, RESEARCH_JOBS } from './coordinator.js';
+import { makeStore, SEED_GROUPS } from './store.js';
+import { makeCoordinator, cardKey, RESEARCH_JOBS, deliverableFor, NOT_NOW } from './coordinator.js';
+import { aboutOf, clipAbout, ABOUT_KEY, ASK_ABOUT, savedLine } from './business.js';
 import { dropFileClaims, previewText, cutAtWord } from './ui-text.js';
 
 const TEXT_EXT = /\.(txt|md|markdown|csv|tsv|json|js|mjs|ts|py|html?|css|xml|ya?ml|ini|log|sql|sh|bat|ps1|rtf)$/i;
 
 export async function activate(ctx) {
   const store = makeStore(ctx);
-  store.seed();
+  store.seed(ctx.kv.get('roomsHidden', []));
   const emit = (data) => ctx.events.emit('chat', data);
   const bus = {
     emit,
@@ -47,6 +48,13 @@ export async function activate(ctx) {
     return c;
   };
   const co = makeCoordinator(ctx, store, bus);
+  // Panic drops every wait for the owner's business text, as it stops everything else
+  ctx.panic.onStop(() => { for (const c of store.list()) if (c.settings.awaitBusiness) store.setSettings(c.id, { awaitBusiness: null }); });
+  const speakerOf = (c, forced) => forced && ctx.agents.get(forced) ? forced : co.speakerFor(c, '');
+  /** A typed message that is plainly an ask of its own, not an answer about the business: a question, or an ask for leads,
+   *  drafts or research (the same test that decides what such an ask must produce). Unsure: it is taken as the answer. */
+  const ASK_TOOLS = [{ name: 'leads_find' }, { name: 'outreach_draft' }, { name: 'research_deep' }];
+  const newAsk = (text) => /\?\s*$/.test(text) || !!deliverableFor(text, ASK_TOOLS);
 
   // Jobs that came from a chat keep their progress card current on the server, browser open or not. A job's output may carry
   // { cards: [...] } and/or { text } for the chat; those land in the same chat when it finishes.
@@ -93,6 +101,31 @@ export async function activate(ctx) {
     return store.list().map(c => ({ ...c, running: co.running.has(c.id) }));
   };
 
+  // ---------- the starting rooms follow the team: a room needs at least two of its own agents (besides the Coordinator) on.
+  // The first-start step calls fitRooms once after the owner picked his team; a room it left out comes back by itself when
+  // hiring makes two of its agents on again. A desk that never had a room left out is never changed here.
+  const roomMembersOn = (g) => g.members.filter(id => id !== 'coordinator' && ctx.agents.get(id)).length;
+  function fitRooms() {
+    const hidden = new Set(ctx.kv.get('roomsHidden', []));
+    for (const g of SEED_GROUPS) {
+      if (!g.members || roomMembersOn(g) >= 2) continue;
+      const c = store.chat(g.id); if (c && store.messages(g.id, { limit: 1 }).length) continue;   // a room in use stays
+      if (c) store.remove(g.id); hidden.add(g.id);
+    }
+    // the own chat of an agent that is not on the team, never used, goes with it
+    for (const c of store.list()) if (c.id.startsWith('dm-') && !ctx.agents.get(c.id.slice(3)) && !store.messages(c.id, { limit: 1 }).length) store.remove(c.id);
+    ctx.kv.set('roomsHidden', [...hidden]); emit({ type: 'chats' });
+    return { rooms: store.list().filter(c => SEED_GROUPS.some(g => g.id === c.id)).map(c => c.id) };
+  }
+  const offAgents = ctx.events.on((type, data) => {
+    if (type !== 'agents' || data?.change !== 'create') return;
+    const hidden = ctx.kv.get('roomsHidden', []); if (!hidden.length) return;
+    const back = hidden.filter(id => { const g = SEED_GROUPS.find(x => x.id === id); return g && roomMembersOn(g) >= 2; });
+    if (!back.length) return;
+    const left = hidden.filter(id => !back.includes(id)); ctx.kv.set('roomsHidden', left); store.seed(left); emit({ type: 'chats' });
+  });
+  ctx.route('POST', '/rooms/fit', (req, res, { owner }) => owner ? ctx.json(res, fitRooms()) : ctx.json(res, { error: 'Only the owner at this desk can change this.' }, 403));
+
   // ---------- routes for the UI
   ctx.route('GET', '/chats', (req, res) => ctx.json(res, { chats: listChats() }));
   ctx.route('POST', '/chats', (req, res, { body }) => ctx.json(res, store.create({ title: body?.title, members: body?.members })));
@@ -123,12 +156,34 @@ export async function activate(ctx) {
     const m = store.add(c.id, { role: 'system', text: `Now in this chat: ${names.join(', ')}. The conversation above stays.` });
     bus.emitMessage(m); emit({ type: 'chats' }); ctx.json(res, n);
   });
-  ctx.route('POST', '/chats/:id/send', async (req, res, { params, body }) => {
+  ctx.route('POST', '/chats/:id/send', async (req, res, { params, body, owner }) => {
     const c = resolveChat(params.id); if (!c) return ctx.json(res, { error: 'That chat is gone.' }, 404);
     const text = String(body?.text || '').trim(); if (!text) return ctx.json(res, { error: 'Type a message first.' }, 400);
     if (co.running.has(c.id)) return ctx.json(res, { error: 'A reply is still coming in this chat. Stop it first.' }, 409);
     if (ctx.panic.halted) return ctx.json(res, { error: 'Everything is stopped. Press Resume first.', code: 'halted' }, 503);
-    const p = co.turn(c.id, text, { speaker: body?.agentId });
+    const chip = body?.chip === true;
+    const waiting = c.settings.awaitBusiness;
+    let p;
+    if (waiting && owner) {
+      // the chat waits for what the owner sells: his next message is that answer, unless it is plainly a new ask of its own
+      // (a chip he pressed, an ask for leads, drafts or research, or a question)
+      store.setSettings(c.id, { awaitBusiness: null });
+      if (chip || newAsk(text)) p = co.turn(c.id, text, { speaker: body?.agentId });
+      else {
+        const about = ctx.settings.setOwnerText(ABOUT_KEY, clipAbout(text));
+        const um = store.add(c.id, { role: 'user', text, meta: { aboutAnswer: true } }); bus.emitMessage(um);
+        const ack = store.add(c.id, { role: 'assistant', agentId: speakerOf(c, body?.agentId), text: savedLine(about), meta: { aboutSaved: true } }); bus.emitMessage(ack);
+        p = co.turn(c.id, String(waiting.text || ''), { speaker: body?.agentId, resume: true });
+      }
+    } else if (chip && body?.needsBusiness === true && !aboutOf(ctx.settings)) {
+      // a suggestion that means the owner's own business, and he has not said what it is: ask first, start nothing
+      const um = store.add(c.id, { role: 'user', text, meta: { chip: true } }); bus.emitMessage(um);
+      if (c.title === 'New chat') store.rename(c.id, cutAtWord(text, 48));
+      const q = store.add(c.id, { role: 'assistant', agentId: speakerOf(c, body?.agentId), text: ASK_ABOUT, cards: [NOT_NOW], meta: { asksAbout: true } });
+      store.setSettings(c.id, { awaitBusiness: { text, at: new Date().toISOString() } });
+      bus.emitMessage(q); store.touch(c.id, ASK_ABOUT); emit({ type: 'chats' });
+      return ctx.json(res, { ok: true, chatId: c.id, replyId: q.id, asked: true });
+    } else p = co.turn(c.id, text, { speaker: body?.agentId, userMeta: chip ? { chip: true } : {} });
     p.catch(e => ctx.log('turn failed', e.message));
     await new Promise(r => setImmediate(r));
     ctx.json(res, { ok: true, chatId: c.id, replyId: co.running.get(c.id)?.replyId || null });
@@ -144,7 +199,12 @@ export async function activate(ctx) {
     await new Promise(r => setImmediate(r));
     ctx.json(res, { ok: true, chatId: c.id, replyId: co.running.get(c.id)?.replyId || null });
   });
-  ctx.route('POST', '/chats/:id/stop', (req, res, { params }) => ctx.json(res, { stopped: co.stop(params.id) }));
+  // Stop also drops a wait for the owner's business text (the "Not now" button under that question does the same)
+  ctx.route('POST', '/chats/:id/stop', (req, res, { params }) => {
+    const c = resolveChat(params.id); const waited = !!c?.settings.awaitBusiness;
+    if (waited) { store.setSettings(c.id, { awaitBusiness: null }); emit({ type: 'chats' }); }
+    ctx.json(res, { stopped: co.stop(params.id) || waited });
+  });
   ctx.route('POST', '/chats/:id/action', async (req, res, { params, body }) => {
     const c = resolveChat(params.id); if (!c) return ctx.json(res, { error: 'That chat is gone.' }, 404);
     const tool = String(body?.tool || '');
@@ -229,6 +289,6 @@ export async function activate(ctx) {
     stop: (chatId) => co.stop(chatId),
   });
 
-  return { async deactivate() { offJobs?.(); for (const id of [...co.running.keys()]) co.stop(id); } };
+  return { async deactivate() { offJobs?.(); offAgents?.(); for (const id of [...co.running.keys()]) co.stop(id); } };
 }
 

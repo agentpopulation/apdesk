@@ -903,3 +903,19 @@ test('page text and titles: phone brackets balance; titles and quotes are cut at
   assert.equal(cutWords('Indian companies that sell HR or payroll software to small businesses', 60), 'Indian companies that sell HR or payroll software to small…');
   assert.equal(cutWords('short ask', 60), 'short ask');
 });
+
+test('a draft with no offer text uses the owner\'s "What you do" words as his offer, and may claim nothing beyond them', async () => {
+  const seen = [];
+  const t = await testDesk({ modules: ['sales'], script: (b) => { seen.push(b.messages); return { text: JSON.stringify({ subject: 'Payroll for Tidalpay', body: 'Hello,\n\nWe make payroll software for small firms. We have helped 200 companies cut costs.\n\nCould we talk?' }) }; } });
+  try {
+    t.core.settings.set('ownerName', 'Arun Rao'); t.core.settings.set('business.about', 'We make payroll software for small firms; HR heads buy it; India.');
+    const a = (await t.call('/api/m/sales/leads', { body: { company: 'Tidalpay', need: 'Runs payroll for 40 staff.' } })).json.lead;
+    await t.core.modules.runTool('outreach_draft', { leadIds: [a.id] }, {});
+    assert.match(seen[0].at(-1).content, /What the owner offers, in his words \(the only claims you may make about him\): We make payroll software for small firms; HR heads buy it; India\./);
+    const dr = (await t.call('/api/m/sales/state')).json.drafts[0];
+    assert.doesNotMatch(dr.body, /helped 200/); assert.match(dr.note, /Check this/);
+    // an offer typed on the Sales page still wins over the Settings text
+    await t.call('/api/m/sales/offer', { body: { offer: 'Payroll audits.' } });
+    assert.equal(t.core.modules.api('sales').offer(), 'Payroll audits.');
+  } finally { await t.close(); }
+});

@@ -1,7 +1,7 @@
 // The shell: top bar, the official menu, theme, Panic, approvals, Home, onboarding, Settings frame, module pages.
 import * as kit from '/ui/kit.js';
-import { homePage, ROLES, applyRole } from '/ui/pages/home.js';
-import { settingsPage, coreSettingsSections } from '/ui/pages/settings.js';
+import { homePage, ROLES, applyRole, teamFor, STARTING_TEAM } from '/ui/pages/home.js';
+import { settingsPage, coreSettingsSections, ABOUT_MAX, ABOUT_HELP } from '/ui/pages/settings.js';
 const { $, $$, h, api, toast } = kit;
 
 const OFFICIAL = [['chat', 'Chat'], ['research', 'Research'], ['tasks', 'Tasks'], ['sales', 'Sales'], ['files', 'Files'], ['agents', 'Agents'], ['models', 'Models'], ['settings', 'Settings']];
@@ -225,14 +225,68 @@ window.addEventListener('hashchange', () => {
   render();
 });
 
-// ---------- onboarding (optional; Skip shows everything)
+// ---------- onboarding (optional; Skip shows everything). Step one: the role. Step two, one screen, only on a fresh desk:
+// what he does, his starting team, and which models answer. Save or Skip; Skip leaves everything as a fresh desk has it.
 function paintOnboarding() {
   $('#onb').hidden = !!state.settings.onboarded;
   $('#roles').replaceChildren(...Object.entries(ROLES).map(([id, r]) => h('button', { class: 'role', onclick: () => chooseRole(id) }, h('b', null, r.name), h('span', null, r.desc))));
 }
-async function chooseRole(id) { await applyRole(ui, id); $('#onb').hidden = true; paintChrome(); render(); }
+async function chooseRole(id) {
+  const fresh = !state.settings.onboarded;
+  await applyRole(ui, id);
+  if (fresh) {
+    // the desk runs on this PC: the page's own time zone wins over the server's guess, once, on a fresh desk
+    try { const tz = Intl.DateTimeFormat().resolvedOptions().timeZone; if (tz && tz !== state.settings.timeZone) { const r = await api('settings', { body: { timeZone: tz } }); state.settings = r.settings; kit.setPrefs({ timeZone: tz }); } } catch {}
+    return firstStep(id);
+  }
+  $('#onb').hidden = true; paintChrome(); render();
+}
 $('#onb-skip').onclick = () => chooseRole(null);
 ui.chooseRole = chooseRole;
+
+/** True when a keyed provider, a local model or a LAN model can answer: then the free-model note is not needed. */
+async function hasFastModel() {
+  try { const r = await api('model/active'); return (r.active || []).some(p => (p.kind === 'keyed' && p.keys) || (p.kind === 'local' && p.ok && (p.models || []).length) || p.kind === 'lan'); } catch { return false; }
+}
+async function firstStep(roleId) {
+  const box = $('#onb .card'); const done = () => { $('#onb').hidden = true; paintChrome(); render(); };
+  const role = ROLES[roleId];
+  const help = roleId === 'sales' ? 'What you sell, who buys it, and where. Your agents use this for leads, drafts and research.' : ABOUT_HELP;
+  const about = h('textarea', { id: 'onb-about', rows: 3, maxlength: String(ABOUT_MAX), 'aria-label': 'What do you do?', placeholder: 'For example: Payroll software for small firms. HR heads buy it. Pune and Mumbai.' });
+  // the team: the agents a fresh desk has, ticked from the role; the Coordinator is always on
+  const want = new Set(teamFor(roleId));
+  const ticks = state.agents.filter(a => STARTING_TEAM.includes(a.id)).map(a => {
+    const always = a.id === 'coordinator';
+    const cb = h('input', { type: 'checkbox', value: a.id, checked: always || want.has(a.id), disabled: always, 'aria-label': a.name });
+    return h('label', { class: 'tick' }, cb, h('span', null, h('b', null, a.name), h('span', { class: 'd' }, always ? 'Always on. ' + a.role : a.role)));
+  });
+  const team = ui.moduleOn('agents') && ticks.length > 1 ? h('div', null, h('h3', null, 'Your team'), h('p', { class: 'sub' }, 'Ticked for ' + (role ? role.name.toLowerCase() : 'everything') + '. You can hire or retire agents later on the Agents page.'), h('div', { class: 'ticks' }, ticks)) : null;
+  const noteSeen = !!state.settings['ui.modelNoteSeen'];
+  const note = !noteSeen && !(await hasFastModel()) ? h('div', { class: 'note', id: 'model-note' }, h('span', null, 'Free models answer by default. They need no key but can be slow. For faster answers add a free key or a local model in Models.'),
+    h('span', { class: 'row' }, kit.btn('Open Models', { kind: 'ghost sm', onClick: async () => { await finish(true); ui.go('models'); } }), kit.btn('Got it', { kind: 'ghost sm', onClick: () => { note.remove(); api('settings', { body: { 'ui.modelNoteSeen': true } }).catch(() => {}); } }))) : null;
+  const err = h('p', { class: 'sub', role: 'status' });
+  async function finish(saveIt) {
+    try {
+      const body = { 'ui.firstStep': saveIt ? 'saved' : 'skipped' };
+      if (note) body['ui.modelNoteSeen'] = true;
+      if (saveIt && about.value.trim()) body['business.about'] = about.value;
+      const r = await api('settings', { body }); state.settings = r.settings;
+      if (saveIt && team) {
+        // an agent left unticked is retired the way the Agents page retires it; the rooms then follow the team
+        const off = ticks.map(t => t.querySelector('input')).filter(cb => !cb.checked && !cb.disabled).map(cb => cb.value);
+        for (const id of off) await api(`m/agents/agents/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        if (off.length && ui.moduleOn('chat')) await api('m/chat/rooms/fit', { method: 'POST' });
+        if (off.length) state.agents = (await api('agents')).agents;
+      }
+      done(); return true;
+    } catch (e) { err.textContent = 'That did not save: ' + e.message; return false; }
+  }
+  box.replaceChildren(
+    h('div', null, h('h2', null, 'What do you do?'), h('p', { class: 'sub' }, help)), about, team, note, err,
+    h('div', { class: 'row' }, h('span', { class: 'grow' }), kit.btn('Skip for now', { kind: 'ghost', onClick: () => finish(false) }), kit.btn('Save', { onClick: () => finish(true) })));
+  box.classList.add('step2');
+  about.focus();
+}
 
 // ---------- state and live events
 async function refresh() {

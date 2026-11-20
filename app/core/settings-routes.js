@@ -4,7 +4,7 @@ import { SETTINGS_TOKEN } from './approval-door.js';
 import { sendJson } from './modules.js';
 
 const OWNER_ONLY_PREFIX = ['security.', 'spend.', 'openrouter.'];
-const PLAIN_KEYS = new Set(['theme', 'role', 'onboarded', 'online', 'ownerName', 'appName', 'companyName', 'notifications', 'country', 'currency', 'timeZone', 'locale', 'router.enabled', 'router.baseUrl', 'router.freeOnly', 'router.builtin', 'router.model', 'router.apiKey', 'router.upstreams', 'ollama.baseUrl', 'ollama.model', 'model.defaultChain', 'network.lanNodes', 'menuPosition', 'textSize', 'motion', 'countries', 'city', 'startWithWindows', 'notifications']);
+const PLAIN_KEYS = new Set(['theme', 'role', 'onboarded', 'online', 'ownerName', 'appName', 'companyName', 'business.about', 'notifications', 'country', 'currency', 'timeZone', 'locale', 'router.enabled', 'router.baseUrl', 'router.freeOnly', 'router.builtin', 'router.model', 'router.apiKey', 'router.upstreams', 'ollama.baseUrl', 'ollama.model', 'model.defaultChain', 'network.lanNodes', 'menuPosition', 'textSize', 'motion', 'countries', 'city', 'startWithWindows', 'notifications']);
 
 export function settingsRoutes(core, sessionOk) {
   const { settings, approval } = core;
@@ -12,8 +12,9 @@ export function settingsRoutes(core, sessionOk) {
     'GET /api/settings': (req, res) => sendJson(res, publicSettings(settings)),
     'POST /api/settings': (req, res, { body }) => {
       const changed = {};
-      for (const [k, v] of Object.entries(body || {})) {
+      for (let [k, v] of Object.entries(body || {})) {
         if (OWNER_ONLY_PREFIX.some(p => k.startsWith(p))) continue;        // these have their own guarded routes
+        if (k === 'business.about') v = String(v ?? '').trim().slice(0, 600);   // the owner's own words about his business, capped
         if (PLAIN_KEYS.has(k) || /^provider\.[a-z]+\.model$/.test(k) || k.startsWith('ui.')) { settings.set(k, v); changed[k] = v; }
       }
       core.events.emit('settings', changed);

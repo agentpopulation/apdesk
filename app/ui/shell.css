@@ -202,3 +202,12 @@ body.halted .wire::after,body.halted .cursor,body.halted .typing span,body.halte
 
 /* Readable in both themes: text on the blue and red fills uses --on-accent / --on-stop (white in the white theme, near-black in the black theme). */
 .btn.stop{color:var(--on-stop)}.btn.ok{color:var(--on-accent)}.btn.ghost{color:var(--fg)}.msg.me a{color:inherit}.msg.me .who{color:inherit;opacity:.8}
+/* Settings: every field saves by itself; the mark beside it says so for two seconds */
+.field{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;max-width:100%}
+.saved{font-size:12px;color:var(--dim);min-width:3.5em}.saved.ok{color:var(--ok)}.saved.err{color:var(--stop);min-width:0}
+.line.about{align-items:flex-start}.line.about textarea{margin-top:6px;min-height:64px}.line.about .field{justify-content:flex-start;margin-top:2px}
+.onb .card.step2{max-height:calc(100% - 8px);overflow:auto}
+.ticks{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:6px 12px}
+.tick{display:flex;gap:8px;align-items:flex-start;padding:6px 0;cursor:pointer}.tick input{margin-top:3px;accent-color:var(--accent)}.tick .d{display:block;color:var(--dim);font-size:12.5px}
+.onb .note{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;border:1px solid var(--line);border-radius:var(--r-s);padding:10px 12px;font-size:13px}
+@media (max-width:560px){.line:has(>.field){flex-wrap:wrap}.line>.field{width:100%;justify-content:flex-start}.line>.field>input,.line>.field>select{flex:1;min-width:0}}

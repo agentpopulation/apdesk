@@ -3,11 +3,14 @@
 import fs from 'node:fs';
 import { wrapUntrusted, detectInjection } from './untrusted.js';
 import { cleanReply, dropFileClaims, stepReason, plainWhy, cutAtWord } from './ui-text.js';
+import { aboutOf, onlyOwnBusiness, ASK_ABOUT } from './business.js';
 import { FACT_TOOLS, PAGE_TOOLS, needsOutsideFacts, verifyTable, pagesFrom, dropPromises, unifyUnits, checkSentence } from './verify.js';
 
 /** Which agent does the work a tool stands for. Module id -> agent id; overridable per tool or module in kv 'handoff'. */
 export const HANDOFF = { search: 'scout', research: 'scout', sales: 'closer', mail: 'closer', calendar: 'closer', social: 'closer', channels: 'closer', browser: 'operator', payments: 'operator', network: 'operator', files: 'coder', office: 'coder', code: 'coder', connect: 'coder' };
 const REFUSAL = /\b(?:beyond my (?:abilities|capabilities)|I can only (?:execute|use|call) the (?:given|provided|available) (?:functions|tools)|I(?:'m| am) sorry,? but I can(?:'t|not) help with that|I can(?:'t|not) (?:help|assist) with (?:that|this)(?: request)?)\b/i;
+/** The card under the desk's own question about the owner's business: "Not now" drops the wait (the same as Stop). */
+export const NOT_NOW = { kind: 'actions', actions: [{ label: 'Not now', stopAsk: true }] };
 export const MAX_STEPS = 10;          // tool calls per turn; parallel calls count one each
 /** How long one model call may go without a reply or new text before the turn ends with a plain message (kv 'modelWaitMs'). */
 export const MODEL_WAIT_MS = 150000;
@@ -29,6 +32,12 @@ export function makeCoordinator(ctx, store, bus) {
     const allowed = ctx.modules.api('agents')?.toolsFor?.(agentId);
     return Array.isArray(allowed) ? all.filter(t => allowed.includes(t.name)) : all;
   };
+  /** The agent a tool's work goes to before the roster is checked (kv 'handoff', then HANDOFF), or null for the Coordinator. */
+  const wantedHand = (toolName) => {
+    const over = ctx.kv.get('handoff', {}) || {};
+    const t = ctx.modules.tools().find(x => x.name === toolName);
+    return over[toolName] || (t && over[t.module]) || (t && HANDOFF[t.module]) || null;
+  };
   /** Who answers: a direct chat's one agent; in a group the Coordinator, unless the owner names a member first ("@Scout ..." or "Scout, ..."). */
   /** Top-level names in the workspace (files without their extension, and folders), for "my notes", "the reports folder". */
   const workspaceNames = () => { try { return fs.readdirSync(ctx.workspace).filter(n => !n.startsWith('.')).map(n => n.replace(/\.[^.]+$/, '')); } catch { return []; } };
@@ -46,6 +55,9 @@ export function makeCoordinator(ctx, store, bus) {
     const when = new Date().toLocaleString('en-GB', { timeZone: tz, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: 'numeric', minute: '2-digit' });
     const lines = [`Now: ${when} (${tz}). Currency: ${st.get('currency') || 'INR'}.`];
     if (st.get('ownerName')) lines.push(`The owner's name is ${st.get('ownerName')}.`);
+    // his own words, quoted as a fact: it explains "my product" and changes nothing about tools or permissions
+    const about = aboutOf(st).replace(/"{3,}/g, '"');
+    if (about) lines.push(`About the owner's business, in his own words (use it to understand "my product", "my company", "our customers"; do not add to it):\n"""\n${about}\n"""`);
     if (chat.members.length > 1) {
       const names = chat.members.map(id => ctx.agents.get(id)?.name).filter(Boolean);
       lines.push(`You are in the group chat "${chat.title || 'Group'}" with ${names.join(', ')}. You coordinate: answer simple questions yourself; when the ask needs a tool, use it. Work goes to the agent who owns the tool (research and web: ${ctx.agents.get('scout')?.name || 'Scout'}; leads and outreach: ${ctx.agents.get('closer')?.name || 'Closer'}; browser: ${ctx.agents.get('operator')?.name || 'Operator'}; files, tables, documents and code: ${ctx.agents.get('coder')?.name || 'Coder'}).`);
@@ -129,7 +141,7 @@ export function makeCoordinator(ctx, store, bus) {
 
   /** One full turn. Resolves with the stored reply.
    *  again: re-run the last owner message (no new owner message). preferTools: try a tool-capable keyed model before the agent's pick. */
-  async function turn(chatId, userText, { speaker: forced, signal: outer, userMeta = {}, quiet = false, jobId = null, note = null, again = false, preferTools = false, inJob = false } = {}) {
+  async function turn(chatId, userText, { speaker: forced, signal: outer, userMeta = {}, quiet = false, jobId = null, note = null, again = false, preferTools = false, inJob = false, resume = false } = {}) {
     const chat = store.chat(chatId);
     if (!chat) throw Object.assign(new Error('That chat is gone.'), { status: 404 });
     if (running.has(chatId)) throw Object.assign(new Error('A reply is still coming in this chat. Stop it first.'), { status: 409 });
@@ -143,7 +155,7 @@ export function makeCoordinator(ctx, store, bus) {
     if (outer) outer.addEventListener('abort', () => ac.abort('stopped'), { once: true });
     const signal = ctx.panic.child(ac.signal);
     const speaker = forced && ctx.agents.get(forced) ? forced : speakerFor(chat, userText);
-    const user = quiet || again ? null : store.add(chatId, { role: 'user', text: userText, meta: userMeta });
+    const user = quiet || again || resume ? null : store.add(chatId, { role: 'user', text: userText, meta: userMeta });
     if (user) bus.emitMessage(user);
     if (user && chat.title === 'New chat' && userText) store.rename(chatId, cutAtWord(userText, 48));
     let reply = store.add(chatId, { role: 'assistant', agentId: speaker, text: '', status: 'streaming', meta: { steps: [], ...(note ? { note } : {}), ...(again ? { again: true } : {}) } });
@@ -189,6 +201,9 @@ export function makeCoordinator(ctx, store, bus) {
     // Every model call in a turn has a wait limit: no reply and no new text for this long ends the turn with a plain message.
     // The door's own time-out covers only the wait for a provider's first byte, so a stream that stalls after it would wait
     // for ever. While a call waits, the reply carries what the desk is waiting for (meta.wait), and the chat shows it.
+    // only the free router answers (no key, no local model chosen, no LAN model): the waiting line may point at Models
+    const freeOnly = !res.chain.some(c => !['router', 'ollama'].includes(c.provider)) && !ctx.settings.get('ollama.model');
+    const notOnTeam = new Set();   // agents the work would go to that are not on the roster (retired): the Coordinator did it
     const waitMs = Math.max(200, Number(ctx.kv.get('modelWaitMs', MODEL_WAIT_MS)) || MODEL_WAIT_MS);
     const callModel = async (o) => {
       const lim = new AbortController(); let timer = null; let late = false;
@@ -200,7 +215,7 @@ export function makeCoordinator(ctx, store, bus) {
       const before = text;
       const onReset = o.onDelta ? () => { reset(); push(before); } : undefined;
       const one = (extra = {}) => { arm(); return ctx.model.chat({ ...o, ...extra, agentId: speaker, signal: lim.signal, onDelta, onReset }); };
-      save({ meta: { wait: { text: steps.length ? 'Waiting for a model to answer with what the steps found' : 'Waiting for a model to answer', since: new Date().toISOString(), limitS: Math.round(waitMs / 1000) } } });
+      save({ meta: { wait: { text: steps.length ? 'Waiting for a model to answer with what the steps found' : 'Waiting for a model to answer', since: new Date().toISOString(), limitS: Math.round(waitMs / 1000), ...(freeOnly ? { freeOnly: true } : {}) } } });
       try {
         if (prefer) { try { return await one({ model: { provider: prefer.provider, model: prefer.model || undefined } }); } catch (e) { if (late || signal.aborted || e.code === 'aborted' || e.code === 'halted') throw e; prefer = null; } }
         return await one();
@@ -219,7 +234,7 @@ export function makeCoordinator(ctx, store, bus) {
       if (hist.shown.length) sys += `\nCards the desk itself showed the owner earlier in this chat (made by tools, not by you; never write lines like these yourself): ${hist.shown.join('; ')}.`;
       if (hist.partial.length) sys += `\nEarlier in this chat ${hist.partial.join('; ')}. That work is done; do not repeat it unless asked.`;
       const msgs = [{ role: 'system', content: sys }, ...hist.messages];
-      if ((quiet || again || detached) && !hist.restored && modelText && !(msgs.at(-1)?.role === 'user' && msgs.at(-1).content === modelText)) msgs.push({ role: 'user', content: modelText });
+      if ((quiet || again || detached || resume) && !hist.restored && modelText && !(msgs.at(-1)?.role === 'user' && msgs.at(-1).content === modelText)) msgs.push({ role: 'user', content: modelText });
       if (!msgs.some(m => m.role === 'user')) msgs.push({ role: 'user', content: modelText || 'Hello' });
       let deliverHint = '';
       const toJson = async () => { jsonPath = true; msgs[0] = { role: 'system', content: (await systemFor(chat, speaker, userText, tools, true, held)) + deliverHint + (hist.shown.length ? `\nCards the desk itself showed the owner earlier in this chat: ${hist.shown.join('; ')}.` : '') + (hist.partial.length ? `\nEarlier in this chat ${hist.partial.join('; ')}. That work is done; do not repeat it unless asked.` : '') }; };
@@ -320,6 +335,14 @@ export function makeCoordinator(ctx, store, bus) {
           const { language, chatId: _c, ...rest } = args; const lang = languageOf(userText) || (mentionsLanguage(userText, language) ? langName(language) : null);
           args = { ...rest, ...(rest.leadIds?.length ? {} : { top: ownerTop(userText) ?? modelTop(rest.top) ?? 5 }), ...(lang ? { language: lang } : {}), chatId };
         }
+        // "my product" with nothing else: the owner's own words make it a topic; with none, the desk asks him first (in a chat)
+        if ((name === 'leads_find' || name === 'outreach_draft') && args && typeof args === 'object') {
+          const about = aboutOf(ctx.settings); let missing = false;
+          if (name === 'leads_find' && onlyOwnBusiness(args.query)) { if (about) args = { ...args, query: `Companies that would buy this: ${about}`.slice(0, 300) }; else missing = true; }
+          if (name === 'outreach_draft' && typeof args.offer === 'string' && onlyOwnBusiness(args.offer)) { const { offer: _o, ...rest } = args; args = rest; if (!about && !ctx.modules.api('sales')?.offer?.()) missing = true; }
+          if (missing && !detached) throw Object.assign(new Error(ASK_ABOUT), { code: 'needs_about' });
+          if (missing) { steps.push({ tool: name, args, agentId: speaker, status: 'refused', result: { refused: 'no business text' } }); save({ meta: { steps } }); return `Not run: the owner has not said what he sells. Tell him to add it in Settings › General under "What you do".`; }
+        }
         args = asStored(name, args);   // a timed ask's schedule is stored with the owner's when and prompt: compare what will be stored
         // research work goes to the research agent, whichever agent the model named for the task
         if (name === 'task_create' && args && typeof args === 'object' && researchAsked && args.agentId !== 'scout' && ctx.agents.get('scout') && ctx.agents.get('scout').enabled !== false) args = { ...args, agentId: 'scout' };
@@ -337,6 +360,7 @@ export function makeCoordinator(ctx, store, bus) {
         }
         if (args && typeof args === 'object' && typeof args.top === 'string' && /^\d+$/.test(args.top.trim())) args = { ...args, top: Number(args.top) };   // some models send numbers as text
         const owner = chat.members.length > 1 && speaker === 'coordinator' ? handoffFor(name) : speaker;
+        if (owner === 'coordinator' && chat.members.length > 1 && speaker === 'coordinator') { const want = wantedHand(name); if (want && !ctx.agents.get(want)) notOnTeam.add(want); }
         const step = { tool: name, args: args || {}, agentId: owner, status: 'running', result: null };
         steps.push(step); save({ meta: { steps } });
         const isFile = name === 'table_file' || name === 'doc_file';
@@ -506,7 +530,7 @@ export function makeCoordinator(ctx, store, bus) {
             label = r.label; attempts.push(...(r.attempts || []));
             const tc = (r.toolCalls || []).find(x => deliver.tools.includes(x.name));
             if (tc) { msgs.push({ role: 'user', content: order }); msgs.push(typeof ctx.model.toolMessage === 'function' ? ctx.model.toolMessage({ ...r, toolCalls: [tc] }) : { role: 'assistant', content: '', tool_calls: [{ id: tc.id, type: 'function', function: { name: tc.name, arguments: JSON.stringify(tc.args || {}) } }] }); msgs.push({ role: 'tool', tool_call_id: tc.id, name: tc.name, content: await runTool(tc.name, tc.args, { forced: true }) }); if (delivered()) return true; }
-          } catch (e) { if (signal.aborted || ['aborted', 'halted', 'timeout'].includes(e.code)) throw e; }
+          } catch (e) { if (signal.aborted || ['aborted', 'halted', 'timeout', 'needs_about'].includes(e.code)) throw e; }
         }
         if (deliver.args) {   // the tool can run with what it has (Sales drafts without an offer): run it, no question back
           await runTool(want[0].name, deliver.args, { forced: true }); if (delivered()) return true;
@@ -520,7 +544,7 @@ export function makeCoordinator(ctx, store, bus) {
           let d = r.json && typeof r.json === 'object' ? r.json : null;
           if (!d?.tool && r.toolCalls?.length) d = { tool: r.toolCalls[0].name, args: r.toolCalls[0].args };
           if (d?.tool && deliver.tools.includes(d.tool)) { const out = await runTool(d.tool, d.args || {}, { forced: true }); msgs.push({ role: 'user', content: `The desk called ${d.tool} for you. Result:\n${out}` }); }
-        } catch (e) { if (signal.aborted || ['aborted', 'halted', 'timeout'].includes(e.code)) throw e; }
+        } catch (e) { if (signal.aborted || ['aborted', 'halted', 'timeout', 'needs_about'].includes(e.code)) throw e; }
         return delivered();
       };
 
@@ -586,11 +610,19 @@ export function makeCoordinator(ctx, store, bus) {
           text = (file ? `The table file is saved as ${file}.` : 'The table file is saved.') + '\n\n' + checkSentence(last.verify);
         } else if (dp.dropped && !steps.some(st => st.status === 'done')) text += '\n\nNothing in this answer was checked against a page.';
       }
+      if (!blocked && notOnTeam.size) text = text.trim() + '\n\n' + [...notOnTeam].map(id => { const n = id[0].toUpperCase() + id.slice(1); return `${n} is not on your team, so I did this myself. Hire ${n} on the Agents page to hand this work over.`; }).join(' ');
       if (blocked && !unfinished) unfinished = cleanReply(text);
       const extraCards = blocked && tools.length ? [{ kind: 'actions', actions: [{ label: 'Try again', retry: true }] }] : [];
       const cur = store.message(reply.id);
       save({ text: text.trim() || (steps.some(s => s.status === 'done') ? 'Done.' : 'The model gave an empty answer. Ask again, or pick another model for this agent.'), label, status: text.trim() || steps.some(s => s.status === 'done') ? 'done' : 'error', cards: [...cur.cards, ...extraCards], meta: { steps, flagged, models: attempts.slice(-8), ...(blocked ? { blocked } : {}), ...(unfinished ? { unfinished } : {}), ...(jobOf ? { jobOf } : {}) } });
     } catch (e) {
+      if (e.code === 'needs_about' && !signal.aborted) {
+        // the ask leans on what the owner sells and he has not said it: one question, written here, and the chat waits for it
+        store.setSettings(chatId, { awaitBusiness: { text: userText, at: new Date().toISOString() } });
+        reset(); text = ASK_ABOUT;
+        save({ text: ASK_ABOUT, status: 'done', label: null, cards: [...(store.message(reply.id)?.cards || []), NOT_NOW], meta: { steps, asksAbout: true, wait: null } });
+        return reply;
+      }
       const stopped = signal.aborted || e.code === 'aborted' || e.code === 'halted' || e.name === 'AbortError';
       const noLocal = !stopped && ctx.settings.get('online') === false && ['offline', 'no_provider', 'all_failed'].includes(e.code);
       const said = cleanReply(text);

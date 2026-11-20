@@ -81,9 +81,14 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - `start.bat` from a GitHub download did nothing on Windows. Two causes, both repaired: `setup\setup.bat` had lost the lines that close its install block and the label that block calls, and the `.bat` files were stored with Unix line endings. The zip with the packages inside was not affected, because it never runs the install step.
 - The Windows scripts are now stored with Windows line endings, and a test checks every `.bat` file for line endings, closed blocks and missing labels.
 - The README's Quick start now opens with one copy-and-paste line per system that downloads AP Desk and starts it.
-- Not yet re-run on Windows after this repair.
+- Run on a Windows 11 PC by the project owner on 20 Nov 2026 with the one-line install: it downloaded, installed the packages, started all 16 default modules and opened the desk.
+- First start now asks what you sell, lets you pick your starting team, and says which models answer and how to make them faster.
+- When an ask means "my product" and the desk does not know it yet, it asks once, saves your answer, and carries on with the same ask.
+- Settings › General shows "Saved" beside each field. A fresh desk takes its time zone, country and currency from your computer; a desk that was already set up keeps what it had.
 
 ### Known weak points
+- An agent left out at first start is hired back by name from the Agents page; its role text comes back empty and has to be typed again.
+- Morning briefs format dates the Indian way for every owner.
 - No run of the 17 acceptance asks has passed every ask. Results vary with the free model that answers.
 - In the run on this code (15 Nov 2026) 13 asks passed, 3 failed and 1 was not checked. The three: the research report quoted one sentence about a different technology as on-topic; the compare table got no model answer within 150 seconds on its first run, and on its second run confirmed 5 of 12 cells; the lead search listed 20 leads (13 checked, 7 labelled "not checked") and the runner counted only one of its two tables.
 - An ask to research something "in the background" can start two jobs for the same work (seen 15 Nov 2026).
