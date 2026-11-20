@@ -13,9 +13,10 @@ async function render(el, ui, route) {
   const { h, api, btn, pill, toast } = ui;
   el.classList.add('scroll');
   const list = h('div', { class: 'stack', id: 'a-list' });
+  const off = h('div', { class: 'stack', id: 'a-off' });   // built-in agents not on the team, one click to hire back
   const det = h('div', { class: 'card stack', id: 'a-det' });
   const count = pill('', 'ok');
-  el.append(h('div', { class: 'row' }, h('h2', null, 'Agents'), count, h('span', { class: 'grow' }), btn('Hire an agent', { onClick: () => hire(ui, (a) => { ui.go('agents', a.id, 'profile'); }) })), h('div', { class: 'agrid' }, list, det));
+  el.append(h('div', { class: 'row' }, h('h2', null, 'Agents'), count, h('span', { class: 'grow' }), btn('Hire an agent', { onClick: () => hire(ui, (a) => { ui.go('agents', a.id, 'profile'); }) })), h('div', { class: 'agrid' }, h('div', { class: 'stack' }, list, off), det));
   let alive = true; let cleanupTab = null;
   ui.onLeave(() => { alive = false; try { cleanupTab?.(); } catch {} });
   let agents = []; let jobs = [];
@@ -29,14 +30,26 @@ async function render(el, ui, route) {
     return ['', 'Idle'];
   };
   async function load() {
-    try { [agents, jobs] = await Promise.all([api('agents').then(r => r.agents), api('jobs?limit=60').then(r => r.jobs).catch(() => [])]); ui.state.agents = agents; } catch (e) { toast(e.message, 'err'); return; }
+    let gone = [];
+    try { [agents, jobs, gone] = await Promise.all([api('agents').then(r => r.agents), api('jobs?limit=60').then(r => r.jobs).catch(() => []), api(API + 'retired').then(r => r.agents).catch(() => [])]); ui.state.agents = agents; } catch (e) { toast(e.message, 'err'); return; }
     if (!alive) return;
     count.textContent = `${agents.length} ${agents.length === 1 ? 'agent' : 'agents'}`;
     const cur = pickId();
     list.replaceChildren(...agents.map(a => { const [cls, txt] = jobLine(a); return h('button', { class: 'card hov acard' + (a.id === cur ? ' sel' : ''), type: 'button', onclick: () => ui.go('agents', a.id, route?.parts?.[1] || 'profile') },
       h('span', { class: 'av big' }, initials(a.name)),
       h('span', { style: { minWidth: '0', flex: '1' } }, h('b', null, a.name), h('span', { class: 'sub', style: { display: 'block' } }, a.role || ''), pill(txt, cls))); }));
+    off.replaceChildren(...(gone.length ? [h('h6', { style: { margin: '6px 0 0' } }, 'Not on your team'), ...gone.map(a => h('div', { class: 'card row acard' },
+      h('span', { class: 'av big' }, initials(a.name)),
+      h('span', { style: { minWidth: '0', flex: '1' } }, h('b', null, a.name), h('span', { class: 'sub', style: { display: 'block' } }, a.role || '')),
+      btn('Hire', { kind: 'ghost sm', 'aria-label': 'Hire ' + a.name, onClick: () => hireBack(a) })))] : []));
     await paintDetail(cur);
+  }
+  async function hireBack(a) {
+    try {
+      await api(API + 'retired/' + encodeURIComponent(a.id) + '/hire', { method: 'POST', body: {} });
+      if (ui.moduleOn('chat')) await api('m/chat/rooms/fit', { method: 'POST' });   // the same call first start makes; a room with two of its agents on comes back
+      toast(`${a.name} is back on your team.`, 'ok'); ui.go('agents', a.id, 'profile');
+    } catch (e) { toast(e.message, 'err'); }
   }
   async function paintDetail(id) {
     const a = agents.find(x => x.id === id); if (!a) { det.replaceChildren(ui.empty('No agents yet.')); return; }

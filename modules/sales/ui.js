@@ -185,14 +185,14 @@ export const pages = {
       async function copy(text) { try { await navigator.clipboard.writeText(text); toast('Copied', 'ok'); } catch { ui.modal({ title: 'Copy text', body: h('textarea', { rows: 10 }, text), actions: [{ label: 'Close' }] }); } }
       async function removeLead(l) { if (!(await ui.confirm(`Remove ${l.company} and its drafts?`, { ok: 'Remove', kind: 'stop' }))) return; try { await api(`m/sales/leads/${l.id}`, { method: 'DELETE' }); st.pick = null; await load(); } catch (e) { toast(e.message, 'err'); } }
       function leadDialog(l = null) {
-        const cur = ui.state.settings?.currency || 'INR';
+        const cur = ui.state.settings?.currency || '';
         const f = (label, key, v = '', type = 'text') => { const i = h('input', { type, value: v ?? '', style: { width: '100%' }, dataset: { key } }); return h('label', { class: 'f' }, label, i); };
         const box = h('div', { class: 'stack' }, f('Company', 'company', l?.company), f('Contact name', 'contactName', l?.contactName), f('Role', 'contactRole', l?.contactRole), f('Mail address', 'email', l?.email, 'email'),
-          f(`Value (${cur})`, 'value', l?.value == null ? '' : String(l.value / 100), 'number'), f('Need', 'need', l?.need), f('Next step', 'nextStep', l?.nextStep), l ? null : f('Source address (optional)', 'source', '', 'url'));
+          f(cur ? `Value (${cur})` : 'Value', 'value', l?.value == null ? '' : String(l.value / 100), 'number'), f('Need', 'need', l?.need), f('Next step', 'nextStep', l?.nextStep), l ? null : f('Source address (optional)', 'source', '', 'url'));
         ui.modal({ title: l ? 'Edit lead' : 'Add lead', body: box, actions: [{ label: 'Cancel' }, { label: l ? 'Save' : 'Add', kind: '', onClick: async () => {
           const v = Object.fromEntries([...box.querySelectorAll('input')].map(i => [i.dataset.key, i.value.trim()]));
           if (!v.company) { toast('A lead needs a company name.', 'err'); return false; }
-          const body = { company: v.company, contactName: v.contactName, contactRole: v.contactRole, email: v.email, need: v.need, nextStep: v.nextStep, valueMinor: v.value === '' ? null : Math.round(Number(v.value) * 100), currency: l?.currency || cur };
+          const body = { company: v.company, contactName: v.contactName, contactRole: v.contactRole, email: v.email, need: v.need, nextStep: v.nextStep, valueMinor: v.value === '' ? null : Math.round(Number(v.value) * 100), currency: l?.currency || cur || undefined };
           if (!l && v.source) body.sources = [{ title: v.source, url: v.source }];
           try { const r = l ? await api(`m/sales/leads/${l.id}`, { method: 'PATCH', body }) : await api('m/sales/leads', { body }); st.pick = r.lead.id; await load(); } catch (e) { toast(e.message, 'err'); return false; }
         } }] });

@@ -50,7 +50,7 @@ function instantOn({ mo, d }, { h, m }, timeZone, fromMs) {
  * parseWhen('Every morning at 8, brief me', { timeZone }) -> { cron: '0 8 * * *', text: 'Every day at 8:00 AM' }
  * parseWhen('in 10 minutes') -> { at: '2026-…Z', text: 'Once, in 10 minutes' }      null when the rules do not match.
  */
-export function parseWhen(words, { timeZone = 'Asia/Kolkata', now = Date.now() } = {}) {
+export function parseWhen(words, { timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone, now = Date.now() } = {}) {
   const raw = String(words || '').trim();
   if (!raw) return null;
   const cron = validCron(raw, timeZone);

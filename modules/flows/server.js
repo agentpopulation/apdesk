@@ -1,7 +1,7 @@
 // Flows and Schedules: stored schedules (croner, owner's time zone) and chains of agents. Every run is a job.
 import { Cron } from 'croner';
 import { parseWhen, validCron, describeCron, stripWhen, short } from './when.js';
-import { gatherBrief, composeBrief, zonedTime, BRIEF_TEMPLATE } from './brief.js';
+import { gatherBrief, composeBrief, zonedTime, ownerZone, ownerLocale, BRIEF_TEMPLATE } from './brief.js';
 import { turn } from './turn.js';
 
 const nowIso = () => new Date().toISOString();
@@ -25,7 +25,7 @@ export async function activate(ctx) {
       last_run TEXT, last_status TEXT, last_job TEXT, last_note TEXT, next_run TEXT, missed_at TEXT);
     CREATE TABLE IF NOT EXISTS m_flows_chains (id TEXT PRIMARY KEY, title TEXT NOT NULL, steps TEXT NOT NULL, chat_id TEXT, created TEXT, updated TEXT, last_run TEXT, last_job TEXT, last_status TEXT);`);
 
-  const zone = () => ctx.settings.get('timeZone') || 'Asia/Kolkata';
+  const zone = () => ownerZone(ctx);
   const crons = new Map();             // schedule id -> Cron
   const runningChats = new Set();      // chats with a scheduled turn in progress (no schedule may be made from inside one)
   const emit = (type, data) => ctx.events.emit(type, data);
@@ -282,7 +282,7 @@ export async function activate(ctx) {
   ctx.route('POST', '/chains/:id/run', wrap(({ params, body, owner: o }) => { owner(o); return runChain(params.id, body || {}); }));
 
   // ---------- Coordinator tools
-  const say = (v) => ({ ok: true, title: v.title, when: v.when, next: v.nextRun ? zonedTime(v.nextRun, zone()) + ` (${zone()})` : 'not armed', what: v.kind === 'brief' ? 'a brief' : v.work, repeats: !!v.cron, note: 'Stored. It runs on time even when the browser is closed, and each run shows in Tasks.' });
+  const say = (v) => ({ ok: true, title: v.title, when: v.when, next: v.nextRun ? zonedTime(v.nextRun, zone(), ownerLocale(ctx)) + ` (${zone()})` : 'not armed', what: v.kind === 'brief' ? 'a brief' : v.work, repeats: !!v.cron, note: 'Stored. It runs on time even when the browser is closed, and each run shows in Tasks.' });
   ctx.tool({
     name: 'schedule_create', description: 'Store something to run LATER by itself, once or repeating, and post the result into this chat. Use this (not task_create) whenever the owner names a time or a delay: "in one minute, brief me", "in 5 minutes remind me to call Ravi", "in an hour check the prices", "tomorrow at 7 ...", "every morning at 8, brief me", "every Monday at 10 ...". A delay such as "in one minute" is a one-time run.',
     parameters: { type: 'object', properties: { title: { type: 'string', description: 'Short name in the owner\'s words, e.g. Brief or Call Ravi; leave it out if unsure' }, when: { type: 'string', description: 'The time in the owner\'s own words, copied as he said it: "in one minute", "in 5 minutes", "in an hour", "tomorrow at 7" (these run once); "every morning at 8", "every weekday at 9", "every Monday at 10" (these repeat). A cron expression or an ISO time also works.' }, prompt: { type: 'string', description: 'What to do when it runs, without the time words, e.g. "brief me"' }, agentId: { type: 'string' }, topics: { type: 'array', items: { type: 'string' }, description: 'News topics for a brief, if the owner named any' } }, required: ['when', 'prompt'] },
@@ -292,7 +292,7 @@ export async function activate(ctx) {
     },
   });
   ctx.tool({ name: 'schedule_list', description: 'List the stored schedules with their next run in the owner\'s time.', parameters: { type: 'object', properties: {} },
-    async run() { return { timeZone: zone(), schedules: list().map(v => ({ title: v.title, when: v.when, on: v.enabled, next: v.nextRun ? zonedTime(v.nextRun, zone()) : null, last: v.lastRun ? `${zonedTime(v.lastRun, zone())}, ${v.lastStatus || ''}` : 'never', missed: v.missedAt ? zonedTime(v.missedAt, zone()) : null })) }; } });
+    async run() { return { timeZone: zone(), schedules: list().map(v => ({ title: v.title, when: v.when, on: v.enabled, next: v.nextRun ? zonedTime(v.nextRun, zone(), ownerLocale(ctx)) : null, last: v.lastRun ? `${zonedTime(v.lastRun, zone(), ownerLocale(ctx))}, ${v.lastStatus || ''}` : 'never', missed: v.missedAt ? zonedTime(v.missedAt, zone(), ownerLocale(ctx)) : null })) }; } });
   ctx.tool({
     name: 'flow_create', description: 'Make a chain of agents: ordered steps, each an agent with an instruction; each step gets the output of the one before. Optionally run it now or on a schedule.',
     parameters: { type: 'object', properties: { title: { type: 'string' }, steps: { type: 'array', items: { type: 'object', properties: { agentId: { type: 'string', description: 'Agent id or name (scout, closer, operator, coder, coordinator)' }, instruction: { type: 'string' } }, required: ['instruction'] } }, when: { type: 'string', description: 'Optional schedule in plain words' }, runNow: { type: 'boolean' } }, required: ['title', 'steps'] },

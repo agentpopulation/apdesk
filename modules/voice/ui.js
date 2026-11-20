@@ -30,7 +30,7 @@ function listen(onText, { onEnd, lang } = {}) {
   const R = Rec();
   if (!R) { say('This browser has no dictation. Use Edge or Chrome, or pick local dictation in Settings › Voice.', 'err'); onEnd?.(); return false; }
   const rec = new R();
-  rec.lang = lang || (status?.prefs?.language && status.prefs.language !== 'auto' ? status.prefs.language : (navigator.language || 'en-IN'));
+  rec.lang = lang || (status?.prefs?.language && status.prefs.language !== 'auto' ? status.prefs.language : (window.apd?.state?.settings?.locale || navigator.language));
   rec.interimResults = false; rec.continuous = true;
   rec.onresult = (e) => { for (let i = e.resultIndex; i < e.results.length; i++) if (e.results[i].isFinal) onText?.(e.results[i][0].transcript.trim()); };
   rec.onerror = (e) => { if (e.error === 'not-allowed') say('The browser was not allowed to use the microphone.', 'err'); else if (e.error !== 'aborted' && e.error !== 'no-speech') say('Dictation stopped: ' + e.error, 'err'); };

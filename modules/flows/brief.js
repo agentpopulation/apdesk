@@ -5,8 +5,12 @@
 const MAX = 6;
 const one = (s, n = 90) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 
-export function zonedTime(iso, timeZone) {
-  try { return new Date(iso).toLocaleString('en-IN', { timeZone, weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }); } catch { return String(iso); }
+// the owner's zone and locale from settings; before settings exist, the computer's own (never a guessed country)
+export const ownerZone = (ctx) => ctx.settings.get('timeZone') || Intl.DateTimeFormat().resolvedOptions().timeZone;
+export const ownerLocale = (ctx) => ctx.settings.get('locale') || undefined;
+
+export function zonedTime(iso, timeZone, locale) {
+  try { return new Date(iso).toLocaleString(locale || undefined, { timeZone, weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }); } catch { return String(iso); }
 }
 
 /** The stored one-line summary of a finished job, quoted as it is: its own `summary`, a report's stored summary,
@@ -27,7 +31,7 @@ export function storedSummary(ctx, job) {
 /** Gather the facts, every line built by code from the desk's own records.
  *  Returns { sections: [{ title, rows }], sources: [{ title, url }], tz, sinceWords } */
 export async function gatherBrief(ctx, { topics = [], signal, since = null, sinceMs = 24 * 3600_000 } = {}) {
-  const tz = ctx.settings.get('timeZone') || 'Asia/Kolkata';
+  const tz = ownerZone(ctx); const loc = ownerLocale(ctx);
   const sinceWords = since ? 'since the last brief' : 'since yesterday';
   since = since || new Date(Date.now() - sinceMs).toISOString();
   const sections = []; const sources = [];
@@ -43,7 +47,7 @@ export async function gatherBrief(ctx, { topics = [], signal, since = null, sinc
   let pending = [];
   try { pending = ctx.approval.listPending() || []; } catch {}
   const name = (id) => ctx.agents.get(id)?.name || 'An agent';
-  const at = (iso) => iso ? zonedTime(iso, tz) : 'time not recorded';
+  const at = (iso) => iso ? zonedTime(iso, tz, loc) : 'time not recorded';
   const word = { failed: 'failed', stopped: 'stopped', interrupted: 'interrupted by a restart' };
   const waiting = [...pending.map(a => `${one(a.title)}: waiting for your approval (asked by ${name(a.agentId)}), since ${at(a.created)}`), ...waitingJobs.map(j => `${one(j.title)}: waiting for you, since ${at(j.updated)}`)];
   const counts = { running: running.length, waiting: waiting.length, done: done.length, unfinished: unfinished.length };

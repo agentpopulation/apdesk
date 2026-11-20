@@ -6,8 +6,8 @@ export const settings = {
     title: 'Payments and spend',
     async render(el, ui) {
       const { h, api, card, line, btn, toast, fmt, pill, meter, table } = ui;
-      const cur = ui.state.settings.currency || 'INR';
-      const sym = (() => { try { return new Intl.NumberFormat(ui.state.settings.locale || 'en-IN', { style: 'currency', currency: cur }).formatToParts(0).find(p => p.type === 'currency')?.value || cur; } catch { return cur; } })();
+      const cur = ui.state.settings.currency || undefined;   // none set: plain numbers, no guessed symbol
+      const sym = !cur ? '' : (() => { try { return new Intl.NumberFormat(ui.state.settings.locale || undefined, { style: 'currency', currency: cur }).formatToParts(0).find(p => p.type === 'currency')?.value || cur; } catch { return cur; } })();
       const inputs = {}; const spentBox = h('div'); const logBox = h('div');
       const field = (k) => { inputs[k] = h('input', { type: 'text', inputmode: 'numeric', style: { width: '120px', textAlign: 'right' }, 'aria-label': k }); return h('span', { class: 'row', style: { gap: '6px' } }, h('span', { class: 'val' }, sym), inputs[k]); };
       const save = btn('Save limits', { onClick: async () => {

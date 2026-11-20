@@ -21,13 +21,17 @@ export class Agents {
     const j = (x, f) => { try { return x ? JSON.parse(x) : f; } catch { return f; } };
     return { id: r.id, name: r.name, role: r.role || '', personality: r.personality || '', instructions: r.instructions || '', model: { main: j(r.model_main, null), fallback: j(r.model_fallback, null) }, tools: j(r.tools, []), enabled: !!r.enabled, created: r.created, updated: r.updated, meta: j(r.meta, {}) };
   }
-  list() { return this.s.all('SELECT * FROM agents ORDER BY created').map(r => this.row(r)); }
+  list() {
+    // the seed is made in one go, so its agents can share a time; they keep the seed's order, also after one is hired back
+    const pos = (id) => { const i = SEED.findIndex(a => a.id === id); return i < 0 ? SEED.length : i; };
+    return this.s.all('SELECT * FROM agents ORDER BY created').map(r => this.row(r)).sort((a, b) => a.created < b.created ? -1 : a.created > b.created ? 1 : pos(a.id) - pos(b.id));
+  }
   get(id) { return this.row(this.s.get('SELECT * FROM agents WHERE id = ?', id)); }
   create(a) {
     const id = a.id || a.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'agent-' + Date.now().toString(36);
-    const t = now();
+    const t = now();   // a built-in agent hired back keeps its first place in the list
     this.s.run('INSERT INTO agents (id, name, role, personality, instructions, model_main, model_fallback, tools, enabled, created, updated, meta) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)',
-      id, a.name, a.role || '', a.personality || '', a.instructions || '', a.model?.main ? JSON.stringify(a.model.main) : null, a.model?.fallback ? JSON.stringify(a.model.fallback) : null, JSON.stringify(a.tools || []), t, t, JSON.stringify(a.meta || {}));
+      id, a.name, a.role || '', a.personality || '', a.instructions || '', a.model?.main ? JSON.stringify(a.model.main) : null, a.model?.fallback ? JSON.stringify(a.model.fallback) : null, JSON.stringify(a.tools || []), a.created || t, t, JSON.stringify(a.meta || {}));
     this.events?.emit('agents', { id, change: 'create' });
     return this.get(id);
   }

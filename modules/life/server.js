@@ -20,7 +20,7 @@ export async function activate(ctx) {
   // one quiet retry on a dropped connection or a busy answer; public keyless services blink now and then
   const f = (ms = 15000) => async (url, init = {}) => { try { const r = await f1(ms)(url, init); if (r.status === 429 || r.status >= 500) { await new Promise(x => setTimeout(x, 1500)); return f1(ms)(url, init); } return r; } catch (e) { if (init.signal?.aborted || e.code === 'halted' || e.code === 'offline') throw e; await new Promise(x => setTimeout(x, 1500)); return f1(ms)(url, init); } };
   const f1 = (ms = 15000) => async (url, init = {}) => { const ac = new AbortController(); const t = setTimeout(() => ac.abort('timeout'), ms); init.signal?.addEventListener('abort', () => ac.abort(), { once: true }); try { return await ctx.fetch(url, { ...init, headers: { ...UA, ...(init.headers || {}) }, signal: ac.signal }); } finally { clearTimeout(t); } };
-  const ownerTz = () => ctx.settings.get('timeZone') || 'Asia/Kolkata';
+  const ownerTz = () => ctx.settings.get('timeZone') || Intl.DateTimeFormat().resolvedOptions().timeZone;
   const savedPlace = () => ctx.kv.get('place', null);
 
   async function weatherFor({ city, place } = {}) {
@@ -98,7 +98,8 @@ export async function activate(ctx) {
   }
 
   async function rates(base) {
-    base = String(base || ctx.settings.get('currency') || 'INR').toUpperCase().slice(0, 3);
+    base = String(base || ctx.settings.get('currency') || '').toUpperCase().slice(0, 3);
+    if (!base) return { base: null, rates: [], error: 'Set your currency in Settings to see exchange rates.' };   // never a guessed currency
     const want = ['USD', 'EUR', 'GBP', 'INR', 'JPY', 'AED', 'SGD', 'CNY'].filter(c => c !== base);
     const res = await f()(`https://api.frankfurter.dev/v1/latest?base=${base}&symbols=${want.join(',')}`);
     if (!res.ok) throw Object.assign(new Error(base + ' is not a currency the rate service knows.'), { status: 502 });

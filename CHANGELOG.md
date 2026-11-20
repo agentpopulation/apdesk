@@ -85,10 +85,10 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - First start now asks what you sell, lets you pick your starting team, and says which models answer and how to make them faster.
 - When an ask means "my product" and the desk does not know it yet, it asks once, saves your answer, and carries on with the same ask.
 - Settings › General shows "Saved" beside each field. A fresh desk takes its time zone, country and currency from your computer; a desk that was already set up keeps what it had.
+- A built-in agent left out at first start or retired later shows under "Not on your team" on the Agents page, and one click hires it back as it was, with its chats and rooms.
+- Briefs, schedules, calendar dates, lead values and spend amounts follow your own zone, locale and currency; nothing falls back to India any more.
 
 ### Known weak points
-- An agent left out at first start is hired back by name from the Agents page; its role text comes back empty and has to be typed again.
-- Morning briefs format dates the Indian way for every owner.
 - No run of the 17 acceptance asks has passed every ask. Results vary with the free model that answers.
 - In the run on this code (15 Nov 2026) 13 asks passed, 3 failed and 1 was not checked. The three: the research report quoted one sentence about a different technology as on-topic; the compare table got no model answer within 150 seconds on its first run, and on its second run confirmed 5 of 12 cells; the lead search listed 20 leads (13 checked, 7 labelled "not checked") and the runner counted only one of its two tables.
 - An ask to research something "in the background" can start two jobs for the same work (seen 15 Nov 2026).

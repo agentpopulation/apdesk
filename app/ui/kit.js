@@ -91,7 +91,7 @@ export const ask = (title, { value = '', placeholder = '', ok = 'Save', multilin
 });
 
 // ---- formatting in the owner's zone and currency (never UTC or $ unless the owner chose them)
-let prefs = { timeZone: 'Asia/Kolkata', locale: 'en-IN', currency: 'INR' };
+let prefs = { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, locale: Intl.DateTimeFormat().resolvedOptions().locale, currency: '' };   // the computer's own until settings load; no guessed currency
 export const setPrefs = (p) => { prefs = { ...prefs, ...p }; };
 export const fmt = {
   time: (iso) => { if (!iso) return ''; const d = new Date(iso); return d.toLocaleTimeString(prefs.locale, { hour: 'numeric', minute: '2-digit', timeZone: prefs.timeZone }); },

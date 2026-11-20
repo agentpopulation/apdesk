@@ -23,7 +23,7 @@ export const pages = {
           const w = await api('m/life/weather');
           if (w.unreachable) return put(wx, h('p', { class: 'sub' }, w.error), btn('Try again', { kind: 'ghost sm', onClick: paintWeather }));
           if (!w.ok) return put(wx, chooser('Which city is yours? The desk never guesses it. Pick it once and the weather shows here.'));
-          const dayName = (iso) => new Date(iso).toLocaleDateString(ui.state.settings.locale || 'en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: w.placeTimeZone || undefined });
+          const dayName = (iso) => new Date(iso).toLocaleDateString(ui.state.settings.locale || undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone: w.placeTimeZone || undefined });
           put(wx, 
             h('div', { class: 'row' }, h('h3', { style: { margin: 0 } }, w.place), h('span', { class: 'grow' }), btn('Change city', { kind: 'ghost sm', onClick: () => put(wx, chooser('Pick another city.')) })),
             h('div', { class: 'row' }, h('b', { style: { fontSize: '30px' } }, `${round(w.current.tempC)}°C`), h('div', null, h('b', null, w.current.weather), h('span', { class: 'sub', style: { display: 'block' } }, `Feels like ${round(w.current.feelsC)}°C · humidity ${round(w.current.humidity)}% · wind ${round(w.current.windKph)} km/h`))),

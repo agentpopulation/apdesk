@@ -21,7 +21,7 @@ export const pages = {
       const { h, btn, api, toast } = ui;
       if (!document.getElementById('cal-style')) document.head.append(h('style', { id: 'cal-style' }, STYLE));
       el.classList.add('calv');
-      const tz = ui.state.settings?.timeZone || 'UTC'; const loc = ui.state.settings?.locale || 'en-IN';
+      const tz = ui.state.settings?.timeZone || 'UTC'; const loc = ui.state.settings?.locale || undefined;
       const keyOf = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(d));
       const addDays = (k, n) => { const d = new Date(k + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
       const dow = (k) => (new Date(k + 'T12:00:00Z').getUTCDay() + 6) % 7;         // Monday 0

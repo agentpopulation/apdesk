@@ -33,7 +33,7 @@ export function migrate(db) {
 }
 
 export class SalesStore {
-  constructor(db, { currency = () => 'INR', emit = () => {} } = {}) { this.db = db; this.currency = currency; this.emit = emit; migrate(db); }
+  constructor(db, { currency = () => null, emit = () => {} } = {}) { this.db = db; this.currency = currency; this.emit = emit; migrate(db); }
   leadOut(r) {
     if (!r) return null;
     return { id: r.id, company: r.company, contactName: r.contact_name || '', contactRole: r.contact_role || '', email: r.email || '', contactOther: r.contact_other || '', website: r.website || '',

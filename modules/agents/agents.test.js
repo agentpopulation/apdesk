@@ -26,3 +26,39 @@ test('hire with a pack, skills and tools per agent, retire; owner only', async (
     assert.equal(t.core.agents.get('mira'), null);
   } finally { await t.close(); }
 });
+
+test('a retired built-in agent comes back in one click with its own settings, id, order and room', async () => {
+  const t = await testDesk({ modules: ['agents', 'chat'] });
+  try {
+    const order = t.core.agents.list().map(a => a.id);
+    await t.call('/api/agents/coder', { method: 'PATCH', body: { personality: 'Terse.', model: { main: { provider: 'router', model: 'x' } } } });
+    await t.call('/api/m/agents/agents/coder/tools', { method: 'PUT', body: { off: ['agent_update'] } });
+    const before = t.core.agents.get('coder');
+    assert.equal((await t.call('/api/m/agents/retired')).json.agents.length, 0);
+    for (const id of ['coder', 'operator']) assert.equal((await t.call(`/api/m/agents/agents/${id}`, { method: 'DELETE' })).status, 200);
+    await t.call('/api/m/chat/rooms/fit', { method: 'POST' });
+    const roomIds = async () => (await t.call('/api/m/chat/chats')).json.chats.map(c => c.id);
+    assert.ok(!(await roomIds()).includes('build-room'));
+    const r = (await t.call('/api/m/agents/retired')).json.agents;
+    assert.deepEqual(r.map(a => a.id).sort(), ['coder', 'operator']);
+    assert.equal(r.find(a => a.id === 'operator').role, 'Browser and long jobs');
+    assert.equal((await t.call('/api/m/agents/retired/coder/hire', { body: {}, session: false })).status, 403);
+    assert.equal((await t.call('/api/m/agents/retired/mira/hire', { body: {} })).status, 404);
+    const back = await t.call('/api/m/agents/retired/coder/hire', { body: {} });
+    assert.equal(back.status, 200); assert.equal(back.json.id, 'coder');
+    const now = t.core.agents.get('coder');
+    for (const k of ['name', 'role', 'personality', 'instructions', 'model', 'tools', 'created']) assert.deepEqual(now[k], before[k], k);
+    assert.deepEqual(now.meta.toolsOff, ['agent_update']);
+    assert.equal((await t.call('/api/m/agents/retired/operator/hire', { body: {} })).json.role, 'Browser and long jobs');
+    assert.equal((await t.call('/api/m/agents/retired/operator/hire', { body: {} })).status, 409);
+    await t.call('/api/m/chat/rooms/fit', { method: 'POST' });
+    assert.ok((await roomIds()).includes('build-room'));
+    assert.deepEqual(t.core.agents.list().map(a => a.id), order);
+    assert.equal((await t.call('/api/m/agents/retired')).json.agents.length, 0);
+    // the Coordinator can never be retired, nor offered back
+    assert.equal((await t.call('/api/m/agents/agents/coordinator', { method: 'DELETE' })).status, 409);
+    assert.equal((await t.call('/api/agents/coordinator', { method: 'DELETE' })).status, 409);
+    assert.ok(t.core.agents.get('coordinator'));
+    assert.equal((await t.call('/api/m/agents/retired/coordinator/hire', { body: {} })).status, 404);
+  } finally { await t.close(); }
+});

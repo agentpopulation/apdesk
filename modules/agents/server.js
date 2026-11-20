@@ -2,6 +2,10 @@
 // Profile fields (name, personality, instructions) are saved through the core route PATCH /api/agents/:id.
 import fs from 'node:fs';
 import path from 'node:path';
+import { SEED } from '../../app/core/agents.js';
+
+// The desk's own agents besides the Coordinator. Retiring one keeps its profile here so one click hires it back as it was.
+const BUILT_IN = SEED.filter(a => a.id !== 'coordinator');
 
 export async function activate(ctx) {
   const DATA = JSON.parse(fs.readFileSync(path.join(ctx.dir, 'skills.json'), 'utf8'));
@@ -59,8 +63,21 @@ export async function activate(ctx) {
   ctx.route('DELETE', '/agents/:id', (req, res, { params, owner }) => {
     if (!owner) return ownerOnly(res);
     if (params.id === 'coordinator') return ctx.json(res, { error: 'The Coordinator stays.' }, 409);
-    if (!ctx.agents.get(params.id)) return noAgent(res);
+    const a = ctx.agents.get(params.id); if (!a) return noAgent(res);
+    if (BUILT_IN.some(b => b.id === a.id)) ctx.kv.set('retired', { ...retired(), [a.id]: a });
     ctx.agents.remove(params.id); ctx.json(res, { ok: true });
+  });
+  // built-in agents not on the team: as they were when retired, or as the desk first made them
+  const retired = () => ctx.kv.get('retired', {}) || {};
+  const offTeam = () => BUILT_IN.filter(b => !ctx.agents.get(b.id)).map(b => ({ ...b, ...(retired()[b.id] || {}) }));
+  ctx.route('GET', '/retired', (req, res) => ctx.json(res, { agents: offTeam().map(a => ({ id: a.id, name: a.name, role: a.role })) }));
+  ctx.route('POST', '/retired/:id/hire', (req, res, { params, owner }) => {
+    if (!owner) return ownerOnly(res);
+    if (!BUILT_IN.some(b => b.id === params.id)) return noAgent(res);
+    if (ctx.agents.get(params.id)) return ctx.json(res, { error: 'That agent is already on your team.' }, 409);
+    const a = ctx.agents.create(offTeam().find(b => b.id === params.id));
+    const { [a.id]: _, ...rest } = retired(); ctx.kv.set('retired', rest);
+    ctx.json(res, a);
   });
   ctx.route('POST', '/skills', (req, res, { body, owner }) => {
     if (!owner) return ownerOnly(res);

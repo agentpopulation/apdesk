@@ -198,3 +198,27 @@ test('a scheduled run whose turn did not do its work ends failed with its reason
     assert.match(text, /\*\*Did not finish since yesterday \(1\)\*\*\n- Run now: .*: did not finish: The document was not saved, /);
   } finally { await t.close(); }
 });
+
+const PLACES = {
+  US: { country: 'US', currency: 'USD', timeZone: 'America/New_York', locale: 'en-US', time: /^\w{3}, \w{3} \d{1,2}, \d{1,2}:\d{2} (AM|PM)$/, eight: /, 8:00 AM \(America\/New_York\)$/ },
+  IN: { country: 'IN', currency: 'INR', timeZone: 'Asia/Kolkata', locale: 'en-IN', time: /^\w{3}, \d{1,2} \w{3}, \d{1,2}:\d{2} (am|pm)$/, eight: /, 8:00 am \(Asia\/Kolkata\)$/ },
+};
+for (const [name, p] of Object.entries(PLACES)) {
+  test(`brief and schedule times follow the owner's zone and locale (${name})`, async () => {
+    assert.equal(briefMod.zonedTime('2026-11-20T12:00:00Z', 'America/New_York', 'en-US'), 'Fri, Nov 20, 7:00 AM');
+    assert.equal(briefMod.zonedTime('2026-11-20T12:00:00Z', 'Asia/Kolkata', 'en-IN'), 'Fri, 20 Nov, 5:30 pm');
+    const t = await testDesk({ modules: ['tasks', 'flows'], script: () => 'x' });
+    try {
+      for (const k of ['country', 'currency', 'timeZone', 'locale']) t.core.settings.set(k, p[k]);
+      const j = await t.core.jobs.start({ kind: 'tasks.run', title: 'Compare suppliers', agentId: 'scout', run: async () => ({ summary: 'ok' }) }); await t.core.jobs.wait(j.id, 5000);
+      const ctx = { settings: t.core.settings, jobs: t.core.jobs, approval: { listPending: () => [] }, agents: t.core.agents, modules: { api: () => null } };
+      const facts = await gatherBrief(ctx, {});
+      const text = composeBrief({ facts });
+      const at = text.match(/Compare suppliers: done \(Scout\), finished ([^.]+)\./)?.[1];
+      assert.match(at || '', p.time, text);
+      assert.ok(text.endsWith(`Times are in ${p.timeZone}.`));
+      const s = await t.core.modules.runTool('schedule_create', { when: 'every day at 8', prompt: 'check the stock sheet' }, { agentId: 'coordinator' });
+      assert.match(s.next, p.eight, s.next);
+    } finally { await t.close(); }
+  });
+}
