@@ -2,12 +2,13 @@
 // replaces a core one with the same id (the Safety, Backup, Store, Vault and other modules do that).
 import { ROLES } from '/ui/pages/home.js';
 import { arrangeMenu, cleanMenu, movePlace, firstPlace, MENU_KEY, NAME_MAX, ALWAYS_SHOWN } from '/ui/menus.js';
+import { peopleSettings } from '/ui/people.js';
 
 export const ABOUT_MAX = 600;
 export const ABOUT_HELP = 'What you sell, who buys it, and where. Your agents use this for leads, drafts and research.';
 
-const ORDER = ['general', 'appearance', 'menu', 'security', 'modules', 'accounts', 'keys', 'channels', 'payments', 'network', 'memory', 'backup'];
-const TITLES = { general: 'General', appearance: 'Appearance', menu: 'Menu', security: 'Security', modules: 'Modules', accounts: 'Accounts and lock', keys: 'Keys and logins', channels: 'Channels and mail', payments: 'Payments and spend', network: 'Network', memory: 'Memory', backup: 'Backup' };
+const ORDER = ['general', 'appearance', 'people', 'menu', 'security', 'modules', 'accounts', 'keys', 'channels', 'payments', 'network', 'memory', 'backup'];
+const TITLES = { general: 'General', appearance: 'Appearance', people: 'People', menu: 'Menu', security: 'Security', modules: 'Modules', accounts: 'Accounts and lock', keys: 'Keys and logins', channels: 'Channels and mail', payments: 'Payments and spend', network: 'Network', memory: 'Memory', backup: 'Backup' };
 const NEEDS = { accounts: 'accounts', keys: 'vault', channels: 'channels', payments: 'payments', network: 'network', memory: 'memory', backup: 'backup' };
 
 /** The desk's address with a Copy button: the same words in General and under Show code. */
@@ -88,6 +89,7 @@ export const coreSettingsSections = {
     el.append(card(h('h3', null, 'Look'), line('Theme', 'White or black. The sun or moon at the top right does the same.', seg(['White', 'Black'], document.documentElement.dataset.theme === 'dark' ? 1 : 0, (_, i) => ui.setTheme(i === 1))),
       line('Window', 'The desk always fills the window.', h('span', { class: 'val' }, 'Full window'))));
   } },
+  people: { title: 'People', render(el, ui) { return peopleSettings(el, ui); } },
   menu: { title: 'Menu', render(el, ui) {
     const { h, btn, sw, card, line, toast } = ui;
     const mark = h('span', { class: 'saved', role: 'status', 'aria-live': 'polite' });

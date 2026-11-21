@@ -1,5 +1,11 @@
 // The shell kit. Every module page gets this object as `ui`. Plain DOM, no framework.
-const SESSION = document.querySelector('meta[name="apd-session"]')?.content || '';
+// The window's token. In the open desk (one person, no PIN) the page is served with it in the meta tag; otherwise a
+// window gets its token by entering (People chooser), and we keep it for this window alone in sessionStorage so a reload
+// stays with the same person. It is read at call time, so entering, switching or locking takes effect at once.
+let SESSION = document.querySelector('meta[name="apd-session"]')?.content || '';
+try { if (!SESSION) SESSION = sessionStorage.getItem('apd-session') || ''; } catch {}
+export const session = () => SESSION;
+export const setSession = (t) => { SESSION = t || ''; try { if (SESSION) sessionStorage.setItem('apd-session', SESSION); else sessionStorage.removeItem('apd-session'); } catch {} };
 export const $ = (s, root = document) => root.querySelector(s);
 export const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

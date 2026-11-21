@@ -5,10 +5,11 @@ import { settingsPage, coreSettingsSections, ABOUT_MAX, ABOUT_HELP } from '/ui/p
 import { trackerPage, trackerBody } from '/ui/pages/tracker.js';
 import { MENU_KEY, cleanMenu, arrangeMenu, firstPlace, placeName, tabTitle, cutPlaces, menuEnds } from '/ui/menus.js';
 import { mergeJob, runningCount, needsYou, updateReady, leftWords, popShowsDownloads, whoAsks, jobWho } from '/ui/tracker-data.js';
+import { showChooser, switcherMenu, personAvatar, takeEntryNotice } from '/ui/people.js';
 const { $, $$, h, api, toast } = kit;
 
 const OFFICIAL = [['chat', 'Chat'], ['research', 'Research'], ['tasks', 'Tasks'], ['sales', 'Sales'], ['files', 'Files'], ['agents', 'Agents'], ['models', 'Models'], ['settings', 'Settings']];
-const state = { settings: {}, security: {}, panic: { halted: false }, modules: [], agents: [], jobs: {}, pendingApprovals: [], stoppedApprovals: [], route: { page: 'chat', parts: [], params: {} } };
+const state = { settings: {}, security: {}, panic: { halted: false }, modules: [], agents: [], jobs: {}, pendingApprovals: [], stoppedApprovals: [], route: { page: 'chat', parts: [], params: {} }, me: null, people: [], multi: false };
 const listeners = new Map();          // event type -> Set(fn)
 let pageCleanup = [];                 // unsubscribe + unmount for the page on screen
 const loaded = new Map();             // module id -> ui.js exports
@@ -42,6 +43,12 @@ const ui = {
   /** Open a workspace file in Files (the folder opens with the file selected). The one link format for file cards. */
   openFile(path) { location.hash = '#/files?path=' + encodeURIComponent(String(path || '')); },
   panic: () => panic(true),
+  // People (contracts/PEOPLE.md): the chooser, the switcher, locking and the per-window token.
+  openChooser: (mode) => showChooser(ui, { mode }),
+  closeModal() { const m = document.getElementById('modal'); if (m && typeof m._close === 'function') m._close(undefined); },
+  async lockWindow() { try { await api('people/leave', { method: 'POST' }); } catch {} kit.setSession(''); location.reload(); },
+  switcher: () => switcherMenu(ui),
+  refreshWho: () => refreshWho(),
 };
 window.apd = ui;       // for the console and for acceptance checks
 
@@ -136,6 +143,25 @@ async function setTheme(dark) {
   api('settings', { body: { theme: state.settings.theme } }).catch(() => {});
 }
 ui.setTheme = setTheme;
+
+// ---------- the switcher: a small avatar at the top right, shown only when the desk has more than one person or anyone
+// has a PIN (with one person and no PIN the desk is "open" and no avatar shows, exactly as before).
+async function refreshWho() {
+  try { const r = await api('people'); state.people = r.people; } catch { state.people = []; }
+  state.multi = state.people.length > 1 || state.people.some(p => p.hasPin);
+  try { const r = await api('people/me'); state.me = r.person; } catch { state.me = null; }
+  paintWho();
+}
+function paintWho() {
+  const b = $('#who'); if (!b) return;
+  const show = !!(state.multi && state.me);
+  b.hidden = !show;
+  if (!show) return;
+  b.replaceChildren(personAvatar(state.me, 'bar'));
+  const name = `${state.me.name}${state.me.keeper ? ', keeper of this PC' : ''}. Switch person, lock the window`;
+  b.setAttribute('aria-label', name); b.title = name;
+}
+$('#who').onclick = () => switcherMenu(ui);
 
 // ---------- Panic: one button, every screen
 async function panic(on) {
@@ -597,7 +623,8 @@ async function refresh() {
   paintChrome();
 }
 function connect() {
-  const es = new EventSource('/api/events');
+  // an event stream cannot send a header, so this window's token goes in the address; its space's events only
+  const es = new EventSource('/api/events' + (kit.session() ? '?session=' + encodeURIComponent(kit.session()) : ''));
   es.addEventListener('apd', (ev) => { let m = null; try { m = JSON.parse(ev.data); } catch { return; } if (m?.type) emitLocal(m.type, m.data || {}); });
   es.onerror = () => { /* the browser reconnects on its own */ };
   let opened = false; es.onopen = () => { if (opened) { loadDownloads(); loadJobs(); } opened = true; };   // events missed while away
@@ -655,13 +682,32 @@ for (const type of ['pointerdown', 'keydown']) document.addEventListener(type, o
 document.addEventListener('visibilitychange', ownerHere);
 globalOn('modules', () => { hereAt = 0; ownerHere(); });
 ui.coreSettingsSections = coreSettingsSections;
-await refresh();
-paintOnboarding();
-connect();
-loadDownloads(); loadNet({ calls: true }); loadJobs();
-// the Network module's stored summary, read again now and then while the window is shown (a read on this PC, never a call out)
-setInterval(() => { if (!document.hidden && ui.moduleOn('network')) loadNet(); }, 60000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) loadNet(); });
-bootModules();
-ownerHere();
-if (!location.hash) location.hash = '#/' + openingPlace(); else render();
+
+// The desk opens for a person. In the open desk (one person, no PIN) the page is served with that person's token, so it
+// boots straight away as before. Otherwise this window needs a token: if it holds a live one (this window, kept across a
+// reload) it boots as that person; if not, the chooser asks who is at the desk.
+async function startDesk() {
+  const token = kit.session();
+  let me = null;
+  if (token) { try { me = await api('people/me'); } catch { me = null; } }
+  if (!me) { kit.setSession(''); return showChooser(ui, { mode: 'enter' }); }
+  kit.setSession(token);          // keep this window on this person across a reload
+  state.me = me.person;
+  if (me.theme && me.theme !== document.documentElement.dataset.theme) { document.documentElement.dataset.theme = me.theme; try { localStorage.setItem('apd-theme', me.theme); } catch {} }
+  takeEntryNotice();              // wrong tries or a PIN reset, told once on entry
+  await boot();
+}
+async function boot() {
+  await refresh();
+  await refreshWho();
+  paintOnboarding();
+  connect();
+  loadDownloads(); loadNet({ calls: true }); loadJobs();
+  // the Network module's stored summary, read again now and then while the window is shown (a read on this PC, never a call out)
+  setInterval(() => { if (!document.hidden && ui.moduleOn('network')) loadNet(); }, 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) loadNet(); });
+  bootModules();
+  ownerHere();
+  if (!location.hash) location.hash = '#/' + openingPlace(); else render();
+}
+await startDesk();

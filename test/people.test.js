@@ -318,3 +318,50 @@ test('Files: in a person\'s space the desk\'s whole data folder stays closed, ex
     assert.equal(t.core.houseBackupsDir ?? null, null, 'the keeper\'s own space shields no foreign backups');
   } finally { await t.close(); }
 });
+
+// P3: person 1 (the keeper) keeps the existing data folder as their space, so nothing is moved. Backup and restore work
+// per person: a person other than the keeper backs up their own space into their own backups folder, "loses" their data,
+// and restores it, with the keeper's space untouched throughout (ask 17, back up / delete data / restore, for a non-keeper).
+test('backup per person: a non-keeper backs up, loses their data and restores it; the keeper\'s space is untouched', async () => {
+  const t = await testDesk({ modules: ['chat', 'backup'] });
+  try {
+    const B = await withB(t);
+    const a = as(t, t.desk.session), b = as(t, B.token);
+    const cB = t.desk.spaceOf(B.id).core;
+    // the keeper's space is the data folder itself; a new person's space is data/people/<id>/work (nothing was moved)
+    assert.equal(t.core.storage.dataDir, t.dataDir, 'person 1 keeps the existing data folder as their space: no move');
+    assert.equal(cB.storage.dataDir, path.join(t.dataDir, 'people', B.id, 'work'));
+
+    // B's own data: a chat row and a workspace file; the keeper has their own, kept apart
+    assert.equal((await b('/api/m/chat/chats', { body: { title: 'B backup chat' } })).status, 200);
+    assert.equal((await a('/api/m/chat/chats', { body: { title: 'Keeper chat stays' } })).status, 200);
+    const bFile = path.join(cB.storage.dataDir, 'workspace', 'b-note.md');
+    fs.mkdirSync(path.dirname(bFile), { recursive: true }); fs.writeFileSync(bFile, 'B wrote this');
+
+    // B backs up: the zip lands in B's own backups folder, not the keeper's
+    const made = (await b('/api/m/backup/now', { body: {} })).json;
+    assert.match(made.name, /^apd-\d{4}-\d{2}-\d{2}-\d{6}\.zip$/, made.name || JSON.stringify(made));
+    const bBackups = path.join(t.dataDir, 'people', B.id, 'backups');
+    assert.ok(fs.existsSync(path.join(bBackups, made.name)), 'B\'s backup is in B\'s own backups folder');
+    assert.ok(!fs.existsSync(path.join(t.core.storage.backupsDir, made.name)), 'B\'s backup is not in the keeper\'s backups');
+    assert.equal((await a('/api/m/backup/list')).json.items.find(x => x.name === made.name), undefined, 'the keeper does not see B\'s backup');
+
+    // B loses their data: the chat row and the file are gone
+    cB.storage.run("DELETE FROM m_chat_chats WHERE title = 'B backup chat'");
+    fs.rmSync(bFile, { force: true });
+    assert.ok(!(await b('/api/m/chat/chats')).json.chats.some(c => c.title === 'B backup chat'), 'B\'s chat is gone');
+
+    // B restores from their own backup (a preview is the approval), and it all comes back
+    const prev = (await b(`/api/m/backup/preview/${made.name}`)).json;
+    assert.equal(prev.madeHere, true);
+    assert.equal((await b(`/api/m/backup/restore/${made.name}`, { body: {} })).status, 409, 'no restore without the preview');
+    const r = (await b(`/api/m/backup/restore/${made.name}`, { body: { previewId: prev.previewId } })).json;
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.ok((await b('/api/m/chat/chats')).json.chats.some(c => c.title === 'B backup chat'), 'B\'s chat is back');
+    assert.equal(fs.readFileSync(bFile, 'utf8'), 'B wrote this', 'B\'s workspace file is back');
+
+    // the keeper's space was never touched by any of this
+    assert.ok((await a('/api/m/chat/chats')).json.chats.some(c => c.title === 'Keeper chat stays'));
+    assert.ok(!(await a('/api/m/chat/chats')).json.chats.some(c => c.title === 'B backup chat'), 'the keeper never sees B\'s chat');
+  } finally { await t.close(); }
+});
