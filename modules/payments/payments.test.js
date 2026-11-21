@@ -17,6 +17,8 @@ test('the spend page names today\'s calls whose cost cannot be known, counted to
     const src = fs.readFileSync(new URL('./ui.js', import.meta.url), 'utf8');
     assert.match(src, /cost the desk cannot know/, 'the Today line names the unknown part');
     assert.match(src, /counted toward your daily limit/);
+    // the Spent box must not feed a bare null to replaceChildren (it would render the word "null" on screen when no call has an unknown cost)
+    assert.match(src, /spentBox\.replaceChildren\(\s*\.\.\.\[[\s\S]*?\]\.filter\(Boolean\)\)/, 'the Spent box drops empty children instead of rendering "null"');
   } finally { await t.close(); }
 });
 

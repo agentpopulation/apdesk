@@ -39,9 +39,11 @@ export const settings = {
           // some of today's model calls may have a cost the desk cannot know; they still count toward the limit at list price
           const unk = r.unknownToday || { minor: 0, calls: 0 };
           spentBox.replaceChildren(
-            line('Today', `${fmt.money(s.spentToday, cur)} of ${fmt.money(l.perDay, cur)}`, meter(l.perDay ? s.spentToday / l.perDay : 0, { style: { maxWidth: '220px' } })),
-            line('This month', `${fmt.money(s.spentMonth, cur)} of ${fmt.money(l.perMonth, cur)}`, meter(l.perMonth ? s.spentMonth / l.perMonth : 0, { style: { maxWidth: '220px' } })),
-            unk.calls ? h('p', { class: 'sub', 'data-apd': 'unknown-spend' }, `${unk.calls} call${unk.calls === 1 ? '' : 's'} today had a cost the desk cannot know. About ${fmt.money(unk.minor, cur)} at the providers' list price is counted toward your daily limit for ${unk.calls === 1 ? 'it' : 'them'}, so no limit is passed unseen.`) : null);
+            ...[
+              line('Today', `${fmt.money(s.spentToday, cur)} of ${fmt.money(l.perDay, cur)}`, meter(l.perDay ? s.spentToday / l.perDay : 0, { style: { maxWidth: '220px' } })),
+              line('This month', `${fmt.money(s.spentMonth, cur)} of ${fmt.money(l.perMonth, cur)}`, meter(l.perMonth ? s.spentMonth / l.perMonth : 0, { style: { maxWidth: '220px' } })),
+              unk.calls ? h('p', { class: 'sub', 'data-apd': 'unknown-spend' }, `${unk.calls} call${unk.calls === 1 ? '' : 's'} today had a cost the desk cannot know. About ${fmt.money(unk.minor, cur)} at the providers' list price is counted toward your daily limit for ${unk.calls === 1 ? 'it' : 'them'}, so no limit is passed unseen.`) : null,
+            ].filter(Boolean));
           logBox.replaceChildren(table([
             { key: 'at', label: 'When', render: (x) => fmt.when(x.at) },
             { key: 'what', label: 'What', render: (x) => x.url ? h('a', { href: x.url, target: '_blank', rel: 'noopener noreferrer' }, x.what) : x.what },

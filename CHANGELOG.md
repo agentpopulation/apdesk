@@ -198,6 +198,7 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - The PIN wait only ever turns a wrong PIN away: the right PIN enters even during a wait, so one person cannot lock another out. The pairing code and the paid-models switch are the keeper's alone, each person's spend limits stay their own, and one person's file browser cannot reach another's data or the keeper's backups.
 - The README now shows the measured test and check counts as of 21 Nov 2026 (762 of 762 tests), and says plainly that the 17 acceptance asks have not been re-run since 15 Nov.
 - Build housekeeping: temporary agent worktrees under `.claude/` are ignored by git, so they can never be caught by a commit.
+- The Payments page no longer shows a stray "null" under the Spent heading on a day when no call has an unknown cost.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.
