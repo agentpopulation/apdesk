@@ -407,6 +407,80 @@
    ],
    "title": "Moonlight Sonata",
    "fact": "The Moonlight Sonata is a piano sonata by Ludwig van Beethoven, finished in 1801."
+  },
+  {
+   "id": 46,
+   "q": "Who won the 2022 FIFA World Cup final?",
+   "answers": [
+    "Argentina won"
+   ],
+   "title": "2022 FIFA World Cup final",
+   "fact": "Argentina won the final on penalties after a three all draw with France at Lusail Stadium.",
+   "page": "messy",
+   "extra": "Australia reached the round of sixteen at the tournament and lost to the eventual winners."
+  },
+  {
+   "id": 47,
+   "q": "How high is Mount Everest in metres?",
+   "answers": [
+    "8,849 metres"
+   ],
+   "title": "Mount Everest",
+   "fact": "The official height of Mount Everest is 8,849 metres above sea level, as agreed in 2020.",
+   "page": "messy"
+  },
+  {
+   "id": 48,
+   "q": "What is photosynthesis?",
+   "answers": [
+    "light energy into chemical energy"
+   ],
+   "title": "Photosynthesis",
+   "fact": "Photosynthesis is the process by which plants turn light energy into chemical energy stored in sugar.",
+   "page": "messy"
+  },
+  {
+   "id": 49,
+   "q": "Who won the 2030 Ocean Cup final?",
+   "answers": [
+    "Portugal winning"
+   ],
+   "title": "2030 Ocean Cup final",
+   "fact": "The match ended in the last minute of extra time, with Portugal winning the cup for the third time.",
+   "page": "messy",
+   "lead": true,
+   "decoys": [
+    "Brazil won two to one in the semi-final to reach their second Ocean Cup final in a row.",
+    "Brazil had won the Ocean Cup twice before and lost two other finals, the last of them at home."
+   ]
+  },
+  {
+   "id": 50,
+   "q": "How high is Mount Talven in metres?",
+   "answers": [
+    "6,214 metres"
+   ],
+   "title": "Mount Talven",
+   "fact": "Mount Talven rises 6,214 metres above sea level, by the survey of its summit snow.",
+   "page": "messy",
+   "lead": true,
+   "decoys": [
+    "Mount Talven hosts several weather stations that record high-altitude winds. The highest of them sits at about 5,900 metres, just below the summit."
+   ]
   }
- ]
+ ],
+ "absent": {
+  "note": "Asked of the library only, after the messy pages above were read: no kept page answers these, and the pages read must still answer their own questions.",
+  "after": [
+   46,
+   47,
+   48,
+   49,
+   50
+  ],
+  "questions": [
+   "What is the capital of Australia?",
+   "How high is Mount Kilimanjaro?"
+  ]
+ }
 }

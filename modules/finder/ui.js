@@ -53,18 +53,14 @@ export const pages = {
         go.disabled = true; list.replaceChildren(empty(libraryOnly ? 'Searching your library…' : 'Asking the search providers and reading the best pages…'));
         try {
           const r = await api(`/api/m/finder/find?q=${encodeURIComponent(q)}${libraryOnly ? '&library=1' : ''}`);
-          const notes = (r.notes || []).filter((n) => n !== r.nothing).map((n) => h('p', { class: 'sub' }, n));
+          const notes = (r.libraryOnly && !r.passages.length ? [] : (r.notes || []).filter((n) => n !== r.nothing)).map((n) => h('p', { class: 'sub' }, n));
+          const byTitle = (r.sources || []).filter((x) => x.byTitle);
+          const titled = byTitle.length ? card(h('h3', null, 'Pages whose title matches'), ...byTitle.map((x) => h('div', { class: 'fin-src' }, h('b', null, x.title), link(x.url), h('span', null, 'read ' + (x.readAt ? fmt.when(x.readAt) : 'not checked')), x.from === 'library' ? pill('from your library') : null))) : null;
           const asked = r.asked?.length ? h('details', null, h('summary', null, `Asked ${one(new Set(r.asked.map((a) => a.provider)).size, 'provider')} with ${one(new Set(r.asked.map((a) => a.query)).size, 'wording')}; read ${one(r.read.filter((x) => x.ok).length, 'page')}`),
             h('ul', null, r.asked.map((a) => h('li', null, `${a.provider}, “${a.query}”: ${a.ok ? a.n + ' results' : a.note}`)), r.read.map((x) => h('li', null, `${x.url}: ${x.ok ? (x.note || 'read') : x.note}`)))) : null;
-          list.replaceChildren(...notes, ...(r.passages.length ? r.passages.map(passage) : [empty(nextStep(r))]), asked || '');
+          list.replaceChildren(...notes, ...(r.passages.length ? r.passages.map(passage) : [empty(r.nothing || 'No page read answers this. Try other words, or fewer of them.')]), titled || '', asked || '');
         } catch (e) { list.replaceChildren(empty(e.message)); }
         finally { go.disabled = false; loadSide(); }
-      }
-      // nothing answered: say so once, and what to do next
-      function nextStep(r) {
-        if (!r.libraryOnly) return 'No page read answered this. Try other words, or fewer of them.';
-        if (offline || r.notes?.some((n) => /offline/i.test(n))) return 'Nothing in your library answers this yet. Pages are kept each time Finder reads the web, so search again once the desk is online.';
-        return 'Nothing in your library answers this yet. Switch off "Search my library only" to search the web; the pages read are kept here for next time.';
       }
       async function loadSide() {
         let s; try { s = await api('/api/m/finder/library'); } catch (e) { side.replaceChildren(card(h('p', { class: 'sub' }, e.message))); return; }

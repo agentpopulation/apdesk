@@ -76,3 +76,10 @@ test('a library kept before the index change is indexed again on start and still
   const lib = createLibrary(db, kv);
   assert.match(lib.search('water boil')[0]?.text || '', /Water boils at 100/);
 });
+
+test('a question the library holds no answer to gets nothing back, not passages that share one word', () => {
+  const { db, kv } = memoryDoor(); const lib = createLibrary(db, kv);
+  lib.keep(page('https://a.example/cup', long('Australia reached the round of sixteen at the 2022 World Cup and lost to Argentina.')));
+  assert.deepEqual(lib.search('What is the capital of Australia?'), []);
+  assert.match(lib.search('How did Australia do at the 2022 World Cup?')[0].text, /round of sixteen/);
+});

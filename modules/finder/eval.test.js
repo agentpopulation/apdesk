@@ -1,6 +1,6 @@
 // The measure itself: a fixed set, stand-in pages only, and Finder must not score below the old path on it.
 import test from 'node:test'; import assert from 'node:assert/strict';
-import { SET, corpus, standInFetch, score, oldPath, finderPath } from './eval.mjs';
+import { SET, corpus, standInFetch, score, absentScore, oldPath, finderPath } from './eval.mjs';
 
 test('40 to 50 questions, each answer said by its own page and by no decoy', () => {
   assert.ok(SET.questions.length >= 40 && SET.questions.length <= 50);
@@ -26,4 +26,20 @@ test('both paths run without the network, and Finder scores at least as well as 
   assert.equal(old.n, SET.questions.length);
   assert.ok(fin.short >= old.short, `Finder ${fin.short} vs old ${old.short}`);
   assert.ok(fin.short >= Math.round(0.8 * fin.n), `Finder ${fin.short}/${fin.n} on stand-ins`);
+});
+
+test('messy pages: the answer is in the first two passages; the library says plainly when it holds no answer', async () => {
+  const messy = SET.questions.filter((x) => x.page === 'messy');
+  assert.ok(messy.length >= 3 && SET.absent.questions.length >= 2);
+  const c = corpus();
+  for (const x of messy) for (const [u, html] of c.pages) if (u.endsWith('/' + encodeURIComponent(x.title.replace(/ /g, '_'))) || u === `https://notes.example/${x.title.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`) {
+    assert.match(html, /<div id="toc">/); assert.match(html, /Retrieved/);
+    assert.equal(html.split(x.answers[0]).length, 2, `the answer is said once, in its fact: ${x.id}`);
+  }
+  const f = standInFetch(c);
+  const fin = await score(finderPath, SET, f);
+  assert.equal(fin.messy.two, fin.messy.n, 'answer in the top two on every messy page');
+  const a = await absentScore(SET, f);
+  assert.equal(a.right, a.n, a.misses.join(' | '));
+  assert.equal(a.held.two, a.held.n, `the library answers the questions it holds in the first two passages: misses ${a.held.misses}`);
 });

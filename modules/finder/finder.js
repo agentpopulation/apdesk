@@ -3,7 +3,7 @@
 // question. Every page read is kept in the private library, which is searched first and alone while Offline.
 // Page text is untrusted data: it is only quoted, never followed.
 import { rewordings, assign } from './rewrite.js';
-import { rankPassages, splitPassages } from './rank.js';
+import { rankPassages, splitPassages, pageText, tokens } from './rank.js';
 import { normUrl } from '../search/providers.js';
 
 const stopped = () => Object.assign(new Error('Stopped'), { code: 'aborted' });
@@ -28,7 +28,7 @@ export function createFinder({ library, providers, searchOne, read, canOpen = ()
     const kept = library.search(q, { limit: 12, allowed: allowedHost });
     if (libraryOnly || offline) {
       if (offline && !libraryOnly) notes.push('The desk is offline, so only your library was searched.');
-      return finish(q, kept, { top, perPage, notes, asked, readLog, libraryOnly: true });
+      return finish(q, kept, { top, perPage, notes, asked, readLog, libraryOnly: true, offline });
     }
     // 1. wordings to providers, all at once, within one budget
     let extra = null;
@@ -67,7 +67,7 @@ export function createFinder({ library, providers, searchOne, read, canOpen = ()
       picks.push(r);
     }
     const deadline = AbortSignal.any([signal, AbortSignal.timeout(readBudgetMs)].filter(Boolean));
-    const fresh = [];
+    const fresh = []; const titles = [];
     // a kept copy stands in only when this caller may see both the site asked for and the site it led to without asking
     // the owner; otherwise the read runs, so an ask-first site is asked about
     const mayUse = (c, url) => !!c && allowedHost(c.host) && allowedHost(c.openedHost) && allowedHost(hostOf(url));
@@ -77,8 +77,10 @@ export function createFinder({ library, providers, searchOne, read, canOpen = ()
       try {
         const p = await read(r.url, deadline);
         const url = p.finalUrl || p.url || r.url; const readAt = p.fetchedAt || new Date(now()).toISOString();
-        library.keep({ ...p, url: r.url, finalUrl: url, fetchedAt: readAt });
-        for (const s of splitPassages(p.text)) fresh.push({ text: s.text, pos: s.pos, url, title: p.title || r.title, host: hostOf(url), readAt, from: 'web' });
+        const text = pageText(p);                                     // the page's blocks kept apart
+        library.keep({ ...p, text, url: r.url, finalUrl: url, fetchedAt: readAt });
+        if (p.title || r.title) titles.push({ url, title: p.title || r.title, readAt, from: 'web' });
+        for (const s of splitPassages(text)) fresh.push({ text: s.text, pos: s.pos, start: s.start, url, title: p.title || r.title, host: hostOf(url), readAt, from: 'web' });
         readLog.push({ url, ok: true, note: '' });
       } catch (e) {
         if (signal?.aborted) throw stopped();
@@ -88,23 +90,31 @@ export function createFinder({ library, providers, searchOne, read, canOpen = ()
     if (signal?.aborted) throw stopped();
     // pages taken from the library for this question count with their stored passages
     const fromLib = [...kept];
-    for (const r of picks) { const c = library.get(r.url); if (mayUse(c, r.url) && !fresh.some((f) => normUrl(f.url) === normUrl(c.url))) for (const s of splitPassages(c.text)) fromLib.push({ text: s.text, pos: s.pos, url: c.url, title: c.title, host: c.host, readAt: c.readAt, from: 'library' }); }
+    for (const r of picks) { const c = library.get(r.url); if (mayUse(c, r.url) && !fresh.some((f) => normUrl(f.url) === normUrl(c.url))) { if (c.title) titles.push({ url: c.url, title: c.title, readAt: c.readAt, from: 'library' }); for (const s of splitPassages(c.text)) fromLib.push({ text: s.text, pos: s.pos, start: s.start, url: c.url, title: c.title, host: c.host, readAt: c.readAt, from: 'library' }); } }
     if (!ranked.length && ids.length) notes.push('No page came back from the search providers.');
-    return finish(q, [...fresh, ...fromLib], { top, perPage, notes, asked, readLog, libraryOnly: false });
+    return finish(q, [...fresh, ...fromLib], { top, perPage, notes, asked, readLog, libraryOnly: false, titles });
   }
 
-  function finish(q, candidates, { top, perPage, notes, asked, readLog, libraryOnly }) {
+  // nothing answered: one plain line, with what to do next
+  const nothingLine = ({ libraryOnly, offline }) => (!libraryOnly ? 'No page read answers this. Try other words, or fewer of them.'
+    : offline ? 'Nothing in your library answers this. Search again once the desk is online; the pages read then are kept here.'
+      : 'Nothing in your library answers this. Switch off "Search my library only" to search the web.');
+  // a page read whose title carries most of the question's words: shown as a source with its title
+  const titleAnswers = (q, title) => { const k = [...new Set(tokens(q))]; const t = new Set(tokens(title)); return k.length > 0 && k.filter((w) => t.has(w)).length * 2 > k.length; };
+
+  function finish(q, candidates, { top, perPage, notes, asked, readLog, libraryOnly, offline = false, titles = [] }) {
     const seen = new Set(); const uniq = [];
     for (const c of candidates) { const k = c.text.replace(/\s+/g, ' ').trim().toLowerCase(); if (!seen.has(k)) { seen.add(k); uniq.push(c); } }
     const per = new Map(); const passages = [];
-    for (const p of rankPassages(q, uniq)) {
+    for (const p of rankPassages(q, uniq, { strict: libraryOnly })) {
       const k = normUrl(p.url); const n = per.get(k) || 0; if (n >= perPage) continue;
       per.set(k, n + 1); passages.push({ text: p.text, url: p.url, title: p.title || '', readAt: p.readAt, from: p.from, score: p.score });
       if (passages.length >= top) break;
     }
-    const nothing = passages.length ? null : libraryOnly ? 'No page in your library answered this.' : 'No page read answered this.';
-    if (nothing) notes.push(nothing);
-    const sources = []; for (const p of passages) if (!sources.some((s) => s.url === p.url)) sources.push({ url: p.url, title: p.title, readAt: p.readAt, from: p.from });
+    const nothing = passages.length ? null : nothingLine({ libraryOnly, offline });
+    if (nothing) { if (libraryOnly) notes.length = 0; notes.push(nothing); }
+    const sources = []; for (const p of passages) if (!sources.some((s) => s.url === p.url)) sources.push({ url: p.url, title: p.title, readAt: p.readAt, from: p.from, ...(p.title && titleAnswers(q, p.title) ? { byTitle: true } : {}) });
+    for (const t of [...titles, ...candidates]) if (t.title && titleAnswers(q, t.title) && !sources.some((s) => normUrl(s.url) === normUrl(t.url))) sources.push({ url: t.url, title: t.title, readAt: t.readAt, from: t.from, byTitle: true });
     return { question: q, passages, sources, asked, read: readLog, notes, nothing, libraryOnly };
   }
   return { find };

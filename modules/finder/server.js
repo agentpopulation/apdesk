@@ -104,7 +104,7 @@ export async function activate(ctx) {
       const who = { agentId: call.agentId || null, chatId: call.chatId || null };
       try {
         const r = await find(args.question, { who, libraryOnly: args.library_only === true, signal: call.signal });
-        return { note: NOTE, passages: r.passages.map(forAgent), notes: r.notes, providers: r.asked.map((a) => `${a.provider}: ${a.ok ? a.n + ' results' : a.note}`), not_read: r.read.filter((x) => !x.ok).map((x) => `${x.url}: ${x.note}`) };
+        return { note: NOTE, passages: r.passages.map(forAgent), pages_whose_title_matches: r.sources.filter((x) => x.byTitle).map((x) => ({ title: x.title, source: x.url, read: when(x.readAt) })), notes: r.notes, providers: r.asked.map((a) => `${a.provider}: ${a.ok ? a.n + ' results' : a.note}`), not_read: r.read.filter((x) => !x.ok).map((x) => `${x.url}: ${x.note}`) };
       } catch (e) { return { error: e.message, passages: [] }; }
     },
   });
@@ -114,7 +114,7 @@ export async function activate(ctx) {
     async run(args, call) {
       const who = { agentId: call.agentId || null, chatId: call.chatId || null };
       const ps = library.search(String(args.query || ''), { limit: Math.max(1, Math.min(20, Number(args.count) || 8)), allowed: allowedFor(who) });
-      return { note: NOTE, passages: ps.map(forAgent), ...(ps.length ? {} : { notes: ['No page in the library answered this.'] }) };
+      return { note: NOTE, passages: ps.map(forAgent), ...(ps.length ? {} : { notes: ['Nothing in your library answers this.'] }) };
     },
   });
   ctx.expose({

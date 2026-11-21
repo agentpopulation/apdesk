@@ -1,7 +1,7 @@
 // The private library: every page Finder reads is kept here (unless its site is on the "never keep" list), split into
 // passages and indexed with SQLite FTS5, so it can be searched first and while Offline. Oldest pages go first past the
 // size limit. Stored page text is untrusted web data; it is only ever returned as text.
-import { splitPassages, keywords } from './rank.js';
+import { splitPassages, keywords, tokens, rankPassages } from './rank.js';
 import { normUrl } from '../search/providers.js';
 import { ruleDomain, cleanHost } from '../network/rules.js';
 
@@ -89,7 +89,7 @@ export function createLibrary(db, kv) {
    * (the website rules). Returns [{ text, url, title, host, readAt, pos, score, from: 'library' }].
    */
   function search(question, { limit = 8, allowed = () => true } = {}) {
-    const words = keywords(question).slice(0, 12); if (!words.length) return [];
+    const words = [...new Set([...keywords(question), ...tokens(question)])].slice(0, 16); if (!words.length) return [];   // the folded form too: "won" finds "winning"
     const match = words.map((w) => '"' + w.replace(/"/g, '""') + '"').join(' OR ');
     let rows;
     try {
@@ -101,10 +101,10 @@ export function createLibrary(db, kv) {
       if (!pages.has(r.page_id)) pages.set(r.page_id, db.get('SELECT url, norm, title, host, text, read_at FROM m_finder_pages WHERE id = ?', r.page_id) || null);
       const p = pages.get(r.page_id); if (!p) continue;
       if (!allowed(p.host) || !allowed(hostOf(p.norm))) continue;      // the site that was opened and the site it led to
-      out.push({ text: p.text.slice(r.start, r.end), url: p.url, title: p.title, host: p.host, readAt: p.read_at, pos: r.pos, score: Math.round(-r.rank * 1000) / 1000, from: 'library' });
-      if (out.length >= limit) break;
+      out.push({ text: p.text.slice(r.start, r.end), url: p.url, title: p.title, host: p.host, readAt: p.read_at, pos: r.pos, start: r.start, from: 'library' });
     }
-    return out;
+    // only passages that answer: they read as sentences and have the question's key words (strict: not found for it)
+    return rankPassages(question, out, { strict: true }).slice(0, limit);
   }
   function stats() {
     const r = db.get('SELECT COUNT(*) AS pages, COALESCE(SUM(bytes), 0) AS bytes, MIN(read_at) AS oldest FROM m_finder_pages');

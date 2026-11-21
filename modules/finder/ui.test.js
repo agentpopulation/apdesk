@@ -44,14 +44,26 @@ const swNamed = (el, id) => all(el, (n) => n.attrs.class === 'sw' && n.attrs['ar
 
 test('an empty library says so once, with what to do next', async () => {
   for (const online of [true, false]) {
-    const { el } = await page({ online, find: () => ({ passages: [], asked: [], read: [], libraryOnly: true, nothing: 'No page in your library answered this.', notes: online ? ['No page in your library answered this.'] : ['The desk is offline, so only your library was searched.', 'No page in your library answered this.'] }) });
+    const line = online ? 'Nothing in your library answers this. Switch off "Search my library only" to search the web.' : 'Nothing in your library answers this. Search again once the desk is online; the pages read then are kept here.';
+    const { el } = await page({ online, find: () => ({ passages: [], sources: [], asked: [], read: [], libraryOnly: true, nothing: line, notes: [line] }) });
     if (online) await swNamed(el, 'fin-only').press();
     const box = all(el, (n) => n.tag === 'input' && n.attrs.type === 'search')[0]; box.value = 'Everest';
     all(el, (n) => n.tag === 'form')[0].attrs.onsubmit({ preventDefault() {} }); await tick(); await tick();
     const list = all(el, (n) => n.attrs.class === 'fin-list')[0]; const t = text(list);
     assert.equal((t.match(/answer/g) || []).length, 1, t);
     assert.match(t, online ? /Switch off "Search my library only"/ : /once the desk is online/);
+    assert.equal(t.trim(), line, 'one plain line');
   }
+});
+
+test('a page whose title answers is shown as a source with its title and read time', async () => {
+  const { el } = await page({ find: () => ({ passages: [{ text: 'Argentina won the final on penalties.', url: 'https://a.example/final', title: 'Final', readAt: '2026-03-01T10:00:00.000Z', from: 'web' }],
+    sources: [{ url: 'https://a.example/final', title: 'Final' }, { url: 'https://news.example/won', title: 'Argentina win the 2022 World Cup final', readAt: '2026-03-01T10:00:00.000Z', from: 'web', byTitle: true }], asked: [], read: [], notes: [] }) });
+  const box = all(el, (n) => n.tag === 'input' && n.attrs.type === 'search')[0]; box.value = 'Who won the 2022 World Cup final?';
+  all(el, (n) => n.tag === 'form')[0].attrs.onsubmit({ preventDefault() {} }); await tick(); await tick();
+  const t = text(all(el, (n) => n.attrs.class === 'fin-list')[0]);
+  assert.match(t, /Argentina win the 2022 World Cup final/); assert.match(t, /https:\/\/news\.example\/won/); assert.match(t, /read 1 Mar 2026/);
+  assert.equal((t.match(/https:\/\/a\.example\/final/g) || []).length, 1, 'a page already quoted is not listed again');
 });
 
 test('each button that changes something says what it did', async () => {
