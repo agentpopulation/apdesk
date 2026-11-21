@@ -1,0 +1,17 @@
+{
+  "id": "tables",
+  "number": 35,
+  "name": "Tables",
+  "description": "Watch a list on a public page, such as an event's attendee list. Find the table once, then refresh only that table and keep the CRM up to date. Nothing is sent from here.",
+  "kind": "switch-on",
+  "defaultOn": false,
+  "menu": [{ "id": "tables", "label": "Tables", "order": 119 }],
+  "pages": ["tables"],
+  "settings": [],
+  "agentTabs": [],
+  "tools": ["read_saved_table"],
+  "requires": ["search", "sales"],
+  "npm": {},
+  "attribution": [],
+  "status": "partial"
+}

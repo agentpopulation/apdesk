@@ -1,7 +1,7 @@
 // Sales CRM (module 13): leads with sources, a four-stage pipeline, outreach drafts that wait for the owner.
 // Nothing is sent from here: an approved draft is handed to Mail, which asserts the send.person approval right before sending.
 import { SalesStore, STAGES, CHANNELS, stageId, stageLabel } from './store.js';
-import { CrmStore, LAWFUL } from './crm.js';
+import { CrmStore, LAWFUL, TYPED } from './crm.js';
 import { parseDraftReply } from './parse.js';
 import { findLeads, closingLine, leadCounts, groupLine, cutWords, purposeLine } from './find.js';
 import { companyKey, sameCompany, askCountry, buyerAsk, textNames } from './rules.js';
@@ -400,6 +400,7 @@ export async function activate(ctx) {
   ctx.route('POST', '/offer', (req, res, { body, owner }) => { if (ownerOnly(res, owner)) return; ctx.kv.set('offer', clip(body?.offer, 600)); ctx.json(res, { offer: ctx.kv.get('offer', '') }); });
   ctx.route('POST', '/coach', async (req, res, { owner }) => { if (ownerOnly(res, owner)) return; try { ctx.json(res, await coach()); } catch (e) { ctx.json(res, { error: e.message }, e.code === 'halted' ? 503 : 502); } });
 
+  const otherSource = (from) => { const f = clip(from, 500); if (!f || f === TYPED) throw Object.assign(new Error('Say which source the row came from.'), { status: 400 }); return f; };
   ctx.expose({
     listLeads: () => store.listLeads(),
     offer: () => ctx.kv.get('offer', ''),
@@ -417,6 +418,10 @@ export async function activate(ctx) {
     },
     sameCompany: (a, b) => sameCompany(a, b),
     customers: () => crm.customers(),
+    // The CRM for other modules (Tables): the same merge rules; `from` is the page or file the row came from, `at` when it was read.
+    addCompany: (x, { from, at } = {}) => crm.upsertCompany(x, { from: otherSource(from), at: at || new Date().toISOString(), fresh: true }),
+    addContact: (x, { from, at } = {}) => crm.upsertContact(x, { from: otherSource(from), at: at || new Date().toISOString(), fresh: true }),
+    removeSource: (from) => crm.removeSource(otherSource(from)),
     pageNames: (text, company) => textNames(text, company),
   });
   return { async deactivate() { for (const ac of waiting.values()) ac.abort('module off'); waiting.clear(); } };

@@ -61,7 +61,25 @@ function csvRecords(text) {
 }
 const fileLabel = (f) => clip(String(f || '').split(/[\\/]/).pop(), 120) || 'a file you gave';
 
-function addSource(list, from, at) { const out = [...list]; if (!out.some(s => s.from === from)) out.push({ from, at }); return out.slice(-20); }
+function addSource(list, from, at, fresh = false) {
+  const out = list.map(s => (fresh && s.from === from ? { from, at } : s));   // fresh: a later read of the same source moves its date forward
+  if (!out.some(s => s.from === from)) out.push({ from, at }); return out.slice(-20);
+}
+// A source other than the owner also keeps what it gave and which empty fields it filled, so taking the source off
+// takes back what it filled (or puts back what another source gave).
+function markSource(list, from, at, fresh, gave, filled) {
+  const out = addSource(list, from, at, fresh);
+  if (from === TYPED) return out;
+  return out.map(s => {
+    if (s.from !== from) return s;
+    const g = { ...(s.gave || {}) }; for (const [k, v] of Object.entries(gave)) if (v) g[k] = v;
+    const f = [...new Set([...(s.filled || []), ...filled])];
+    return { ...s, ...(Object.keys(g).length ? { gave: g } : {}), ...(f.length ? { filled: f } : {}) };
+  });
+}
+/** The owner typed these fields: no source filled them any more. */
+const ownFields = (list, fields) => list.map(s => (s.filled ? { ...s, filled: s.filled.filter(f => !fields.includes(f)) } : s));
+const plainSources = (list) => list.map(({ from, at }) => ({ from, at }));
 
 export class CrmStore {
   constructor(db, { currency = () => '', timeZone = () => '', kv = null, emit = () => {} } = {}) {
@@ -91,7 +109,7 @@ export class CrmStore {
   companyOut(r) {
     if (!r) return null;
     const unchecked = j(r.unchecked, []);
-    return { id: r.id, name: r.name, site: r.site || '', host: r.host || '', customer: !!r.customer, notes: r.notes || '', sources: j(r.sources, []),
+    return { id: r.id, name: r.name, site: r.site || '', host: r.host || '', customer: !!r.customer, notes: r.notes || '', sources: plainSources(j(r.sources, [])),
       notChecked: [...(r.site ? [] : ['Site']), ...unchecked], created: r.created, updated: r.updated };
   }
   companies() { return this.db.all('SELECT * FROM m_sales_companies ORDER BY name COLLATE NOCASE').map(r => this.companyOut(r)); }
@@ -101,7 +119,7 @@ export class CrmStore {
     return (host && list.find(c => c.host === host)) || list.find(c => nameKey(c.name) === nameKey(name) && (!host || !c.host)) || null;
   }
   /** Add or merge one company. from: where it came from; at: when. */
-  upsertCompany(x, { from = TYPED, at = now() } = {}) {
+  upsertCompany(x, { from = TYPED, at = now(), fresh = false } = {}) {
     const name = clip(x?.name, 160); if (!name) throw bad('A company needs a name.');
     const site = clip(x.site, 300); const host = siteHost(site);
     const unchecked = (Array.isArray(x.unchecked) ? x.unchecked : []).map(u => clip(u, 60)).filter(Boolean);
@@ -109,7 +127,8 @@ export class CrmStore {
     const t = now();
     if (hit) {
       const row = this.db.get('SELECT * FROM m_sales_companies WHERE id = ?', hit.id);
-      const sources = addSource(j(row.sources, []), from, at);
+      const gave = { site: host ? site : '', notes: clip(x.notes, 2000) };
+      const sources = markSource(j(row.sources, []), from, at, fresh, gave, Object.keys(gave).filter(k => gave[k] && !row[k]));
       const un = [...new Set([...j(row.unchecked, []), ...unchecked])];
       this.db.run('UPDATE m_sales_companies SET site = ?, host = ?, customer = ?, notes = ?, sources = ?, unchecked = ?, updated = ? WHERE id = ?',
         row.site || (host ? site : null), row.host || host || null, row.customer || (x.customer ? 1 : 0), row.notes || clip(x.notes, 2000) || null, JSON.stringify(sources), JSON.stringify(un), t, hit.id);
@@ -118,7 +137,7 @@ export class CrmStore {
     }
     const id = rid('co_');
     this.db.run('INSERT INTO m_sales_companies (id, name, site, host, customer, notes, sources, unchecked, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      id, name, host ? site : null, host || null, x.customer ? 1 : 0, clip(x.notes, 2000) || null, JSON.stringify([{ from, at }]), JSON.stringify(unchecked), t, t);
+      id, name, host ? site : null, host || null, x.customer ? 1 : 0, clip(x.notes, 2000) || null, JSON.stringify(markSource([], from, at, false, { site: host ? site : '', notes: clip(x.notes, 2000) }, ['site', 'notes'].filter(k => k === 'site' ? host : clip(x.notes, 2000)))), JSON.stringify(unchecked), t, t);
     this.emit({ change: 'crm' });
     return this.getCompany(id);
   }
@@ -134,7 +153,8 @@ export class CrmStore {
     if ('notes' in p) { sets.push('notes = ?'); vals.push(clip(p.notes, 2000) || null); }
     if ('customer' in p) { sets.push('customer = ?'); vals.push(p.customer ? 1 : 0); }
     if (!sets.length) return this.getCompany(id);
-    if (typed) { sets.push('sources = ?'); vals.push(JSON.stringify(addSource(j(row.sources, []), TYPED, now()))); }
+    const owned = ['site', 'notes'].filter(k => k in p);
+    if (typed || owned.length) { sets.push('sources = ?'); vals.push(JSON.stringify(ownFields(typed ? addSource(j(row.sources, []), TYPED, now()) : j(row.sources, []), owned))); }
     sets.push('updated = ?'); vals.push(now());
     this.db.run(`UPDATE m_sales_companies SET ${sets.join(', ')} WHERE id = ?`, ...vals, id);
     this.emit({ change: 'crm' });
@@ -152,7 +172,7 @@ export class CrmStore {
   contactOut(r) {
     if (!r) return null;
     const unchecked = j(r.unchecked, []);
-    return { id: r.id, name: r.name || '', email: r.email || '', role: r.role || '', phone: r.phone || '', companyId: r.company_id || null, notes: r.notes || '', sources: j(r.sources, []),
+    return { id: r.id, name: r.name || '', email: r.email || '', role: r.role || '', phone: r.phone || '', companyId: r.company_id || null, notes: r.notes || '', sources: plainSources(j(r.sources, [])),
       notChecked: [...(r.name ? [] : ['Name']), ...(r.email ? [] : ['Mail address']), ...(r.role ? [] : ['Role']), ...unchecked], created: r.created, updated: r.updated };
   }
   contacts() { return this.db.all('SELECT * FROM m_sales_contacts ORDER BY name COLLATE NOCASE').map(r => this.contactOut(r)); }
@@ -161,7 +181,7 @@ export class CrmStore {
     const m = mailKey(email);
     return (m && list.find(c => mailKey(c.email) === m)) || (name && companyId && list.find(c => c.companyId === companyId && nameKey(c.name) === nameKey(name) && (!m || !c.email))) || null;
   }
-  upsertContact(x, { from = TYPED, at = now() } = {}) {
+  upsertContact(x, { from = TYPED, at = now(), fresh = false } = {}) {
     const name = clip(x?.name, 120); const email = clip(x?.email, 200);
     if (!name && !email) throw bad('A contact needs a name or a mail address.');
     if (email && !okMail(email)) throw bad('That mail address does not look right.');
@@ -171,14 +191,17 @@ export class CrmStore {
     const t = now();
     if (hit) {
       const row = this.db.get('SELECT * FROM m_sales_contacts WHERE id = ?', hit.id);
+      const gave = { name, email, role, phone, company_id: companyId || '' };
+      const sources = markSource(j(row.sources, []), from, at, fresh, gave, Object.keys(gave).filter(k => gave[k] && !row[k]));
       this.db.run('UPDATE m_sales_contacts SET name = ?, email = ?, role = ?, phone = ?, company_id = ?, sources = ?, updated = ? WHERE id = ?',
-        row.name || name || null, row.email || email || null, row.role || role || null, row.phone || phone || null, row.company_id || companyId, JSON.stringify(addSource(j(row.sources, []), from, at)), t, hit.id);
+        row.name || name || null, row.email || email || null, row.role || role || null, row.phone || phone || null, row.company_id || companyId, JSON.stringify(sources), t, hit.id);
       this.emit({ change: 'crm' });
       return { ...this.getContact(hit.id), merged: true };
     }
     const id = rid('ct_');
     this.db.run('INSERT INTO m_sales_contacts (id, name, email, role, phone, company_id, notes, sources, unchecked, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      id, name || null, email || null, role || null, phone || null, companyId, clip(x.notes, 2000) || null, JSON.stringify([{ from, at }]), '[]', t, t);
+      id, name || null, email || null, role || null, phone || null, companyId, clip(x.notes, 2000) || null,
+      JSON.stringify((() => { const gave = { name, email, role, phone, company_id: companyId || '' }; return markSource([], from, at, false, gave, Object.keys(gave).filter(k => gave[k])); })()), '[]', t, t);
     this.emit({ change: 'crm' });
     return this.getContact(id);
   }
@@ -192,7 +215,8 @@ export class CrmStore {
     if (!sets.length) return this.getContact(id);
     const name = 'name' in p ? clip(p.name, 120) : row.name; const email = 'email' in p ? clip(p.email, 200) : row.email;
     if (!name && !email) throw bad('A contact needs a name or a mail address.');
-    if (typed) { sets.push('sources = ?'); vals.push(JSON.stringify(addSource(j(row.sources, []), TYPED, now()))); }
+    const owned = [['name', 'name'], ['email', 'email'], ['role', 'role'], ['phone', 'phone'], ['companyId', 'company_id']].filter(([k]) => k in p).map(([, f]) => f);
+    if (typed || owned.length) { sets.push('sources = ?'); vals.push(JSON.stringify(ownFields(typed ? addSource(j(row.sources, []), TYPED, now()) : j(row.sources, []), owned))); }
     sets.push('updated = ?'); vals.push(now());
     this.db.run(`UPDATE m_sales_contacts SET ${sets.join(', ')} WHERE id = ?`, ...vals, id);
     this.emit({ change: 'crm' });
@@ -202,6 +226,38 @@ export class CrmStore {
     this.db.run('UPDATE m_sales_deals SET contact_id = NULL WHERE contact_id = ?', id);
     this.db.run('UPDATE m_sales_crm_links SET contact_id = NULL WHERE contact_id = ?', id);
     this.db.run('DELETE FROM m_sales_contacts WHERE id = ?', id); this.emit({ change: 'crm' });
+  }
+
+  // ---- one source taken off: its mark leaves every company and contact, and the fields it filled are taken back (or
+  // given the value another remaining source gave). A row left with no source is removed, except a company or a contact
+  // on a deal (the owner's own work): it stays without the mark and without the source's data, a contact keeping its name.
+  removeSource(from) {
+    let companies = 0, contacts = 0, kept = 0;
+    const strip = (table, remove, onDeal) => {
+      for (const r of this.db.all(`SELECT * FROM ${table}`)) {
+        const list = j(r.sources, []); const mine = list.find(s => s.from === from); if (!mine) continue;
+        const rest = list.filter(s => s.from !== from);
+        if (!rest.length && !onDeal(r.id)) { remove(r.id); continue; }
+        const set = {};
+        for (const f of mine.filled || []) {
+          const other = rest.find(s => s.gave?.[f]);
+          set[f] = other ? other.gave[f] : null;
+          if (other) other.filled = [...new Set([...(other.filled || []), f])];
+        }
+        if (table === 'm_sales_contacts' && !('name' in set ? set.name : r.name) && !('email' in set ? set.email : r.email)) { if (r.name) delete set.name; else delete set.email; }
+        if ('site' in set) set.host = set.site ? siteHost(set.site) || null : null;
+        if ('company_id' in set && set.company_id && !this.getCompany(set.company_id)) set.company_id = null;
+        const cols = Object.keys(set);
+        this.db.run(`UPDATE ${table} SET ${cols.map(c => c + ' = ?, ').join('')}sources = ?, updated = ? WHERE id = ?`, ...cols.map(c => set[c]), JSON.stringify(rest), now(), r.id);
+        kept++;
+      }
+    };
+    this.db.transaction(() => {
+      strip('m_sales_contacts', (id) => { this.removeContact(id); contacts++; }, (id) => !!this.db.get('SELECT id FROM m_sales_deals WHERE contact_id = ?', id));
+      strip('m_sales_companies', (id) => { this.removeCompany(id); companies++; }, (id) => !!this.db.get('SELECT id FROM m_sales_deals WHERE company_id = ?', id));
+    });
+    this.emit({ change: 'crm' });
+    return { companies, contacts, kept };
   }
 
   // ---- a lead becomes a company and a contact

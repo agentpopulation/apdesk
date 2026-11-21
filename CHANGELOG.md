@@ -146,6 +146,9 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - A lead goes into the CRM with one press (Add to CRM). Duplicates merge by site, mail address or name, and the merge keeps both sources.
 - Deals have a board and a list, stages you can rename, a value in your currency and a next-step date in your time zone.
 - You can mark companies as customers, import your customers from a CSV with a preview of every row before anything is saved, and export contacts, companies and deals as CSV.
+- Tables, a new module (off until you switch it on): give a public page address, pick the list on it and say what each column is. The desk keeps that one list, and its companies and contacts in the CRM, up to date with the page address and the date read on every row.
+- A refresh reads only the saved address and says plainly when the table changed, moved or is gone, keeping the last good copy. Lists split over pages are followed on the same site up to a page limit you can see.
+- Every page read honours robots.txt and your website rules, on redirects too; no sign-in, no form, no bot check is attempted; nothing is ever sent. "Remove everything from this source" takes back its rows and what it filled in. Checked on stand-in pages only, not yet on a real event site.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.
