@@ -25,6 +25,8 @@ export async function localConnection(si, { servers = () => dns.getServers() } =
     linkMbps: speed,
     signal: w ? { ssid: w.ssid || null, dBm: Number.isFinite(Number(w.signalLevel)) ? Number(w.signalLevel) : null, quality: Number.isFinite(Number(w.quality)) ? Number(w.quality) : null, txMbps: Number(w.txRate) > 0 ? Number(w.txRate) : null } : null,
     localIPv4: main?.ip4 || null, subnet: main?.ip4subnet || null, localIPv6: main?.ip6 || null, mac: main?.mac || null,
+    mtu: main && Number(main.mtu) > 0 ? Number(main.mtu) : null,
+    dhcp: typeof main?.dhcp === 'boolean' ? main.dhcp : null,
     gateway: typeof gateway === 'string' && gateway ? gateway : null,
     dnsServers,
     others: up.filter(i => i !== main).slice(0, 6).map(i => ({ adapter: i.ifaceName || i.iface, address: i.ip4 || i.ip6, kind: i.type === 'wireless' ? 'wifi' : i.type === 'wired' ? 'cable' : i.type || 'other' })),

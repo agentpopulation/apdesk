@@ -119,6 +119,13 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - When the desk runs hidden, the six-digit code for pairing another browser is shown under "Show code" in Settings, Security, not written to the log; you can also install the desk as an app.
 - The agent's browser now checks every request at every hop (redirects, frames, images, scripts, fetch, WebSockets, WebRTC) through a small guard on this PC, which looks names up itself, so nothing a page does can reach this PC or your home network.
 - A redirect into an "ask first" site now waits for your yes just like a direct open, and "never" sites stay blocked on every hop.
+- The Network page now shows a status strip along the top: agents online, mid-task, idle and in error, messages a minute, the task queue, open issues, new devices and a heartbeat light, with a dash where the desk has no number yet.
+- A new API connection health section times each known provider endpoint, with its last latency, last check and 24-hour error rate; the check runs only on your button or a schedule you turn on.
+- Your public and local IP addresses are now kept with a change history, and your public address is recorded each time you look it up.
+- For your own domains the desk can resolve A, AAAA, MX, NS and TXT records on a schedule you choose and keep a log of what changed.
+- The network operator (ASN) behind your public address and your domains is tracked and flagged when it changes.
+- A single network issues list gathers certificate expiry, DNS failures, high latency and packet loss, each with a severity, and any of them can be muted.
+- The Connection view gains an active-connection detail with the adapter, signal, gateway, subnet, DNS servers and MTU, and names the fields this PC does not report.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

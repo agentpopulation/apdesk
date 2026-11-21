@@ -4,11 +4,14 @@
 // Every outbound request goes through ctx.fetch (Offline and Panic refuse it) after the address guard, and only on the
 // owner's click or a schedule he switched on. Web results are data: stored and shown as plain text, never as markup.
 import os from 'node:os';
+import fs from 'node:fs';
+import path from 'node:path';
 import si from 'systeminformation';
 import { runSpeedTest, runLatency, SPEEDTEST_HOST, FULL_TEST_BYTES, LATENCY_TEST_BYTES } from './speed.js';
 import { interfaces, arpTable, tcpOpen, subnetTargets, pool, isPrivate, inOwnSubnet } from './lan.js';
 import { lookupDns, lookupRdap, lookupHeaders, lookupTls, lookupRobots, lookupCompany, normalizeDomain } from './lookup.js';
-import { localConnection, publicAddress, PUBLIC_IP_SOURCES } from './conn.js';
+import { localConnection, publicAddress, signalWords, PUBLIC_IP_SOURCES } from './conn.js';
+import { statusStrip, diffAddresses, diffDns, issuesFrom, apiHealthFrom, severityRank } from './health.js';
 import { siteUrl, clampEvery, checkOnce, nextCheckAt, transition, textHash, diffSummary, keepText, robotsAllows, UA as WATCH_UA, DEFAULT_SLOW_MS, DEFAULT_CHANGE_MIN, MIN_EVERY_MIN } from './watch.js';
 import { knock, systemResolves, verdict, WELL_KNOWN, PUBLIC_RESOLVER } from './diagnose.js';
 import { listening } from './ports.js';
@@ -47,6 +50,14 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
     CREATE TABLE IF NOT EXISTS m_network_bytes (day TEXT, host TEXT, sent INTEGER DEFAULT 0, received INTEGER DEFAULT 0, PRIMARY KEY (day, host));
     CREATE TABLE IF NOT EXISTS m_network_cache (k TEXT PRIMARY KEY, at INTEGER, value TEXT);
     CREATE TABLE IF NOT EXISTS m_network_ptests (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, provider TEXT, label TEXT, ok INTEGER, ms INTEGER, note TEXT);`);
+  ctx.db.migrate(3, `
+    CREATE TABLE IF NOT EXISTS m_network_api (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, provider TEXT, label TEXT, url TEXT, ok INTEGER, status INTEGER, ms INTEGER, note TEXT);
+    CREATE INDEX IF NOT EXISTS m_network_api_p ON m_network_api (provider, id);
+    CREATE TABLE IF NOT EXISTS m_network_ip (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, scope TEXT, family TEXT, old_value TEXT, new_value TEXT, trigger_ TEXT);
+    CREATE TABLE IF NOT EXISTS m_network_dns (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, domain TEXT, type TEXT, old_value TEXT, new_value TEXT);
+    CREATE INDEX IF NOT EXISTS m_network_dns_d ON m_network_dns (domain, id);
+    CREATE TABLE IF NOT EXISTS m_network_asn (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, scope TEXT, asn INTEGER, operator TEXT, old_asn INTEGER, old_operator TEXT, trigger_ TEXT);
+    CREATE TABLE IF NOT EXISTS m_network_issues (key TEXT PRIMARY KEY, kind TEXT, severity TEXT, title TEXT, detail TEXT, first_at TEXT, last_at TEXT, muted INTEGER DEFAULT 0, resolved INTEGER DEFAULT 0);`);
   const jobIds = new Set();
   const kv = (k, d) => ctx.kv.get(k, d);
   const online = () => ctx.settings.get('online') !== false;
@@ -116,6 +127,7 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
     needNet();
     const r = { ...(await publicAddress(fx(12000))), trigger };
     ctx.kv.set('publicIp', r); ctx.kv.set('publicIp.lastAt', clock());
+    recordPublicIp(r, trigger);
     setNet(true);
     return r;
   }
@@ -403,6 +415,167 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
     return { online: onlineNow, viaLastCheckAt: last?.at || null, latencyMs: last?.latencyMs ?? null, down, note };
   }
 
+  // ================= N. status strip: the numbers across the top of the page, from state the desk already holds.
+  // No outbound call; a count whose source is not present is left null and the page shows a dash.
+  function statusStripData() {
+    const agents = ctx.agents.list();
+    const runningJobs = ctx.jobs.list({ status: 'running', limit: 100 });
+    const jobSummary = ctx.jobs.summary();
+    const failedAgentIds = ctx.db.all("SELECT DISTINCT agent_id FROM jobs WHERE status = 'failed' AND agent_id IS NOT NULL AND finished >= ?", new Date(clock() - DAY).toISOString()).map(r => r.agent_id);
+    const issues = currentIssues();
+    const newDevices = ctx.db.get('SELECT COUNT(*) AS n FROM m_network_devices WHERE known = 0')?.n || 0;
+    let messagesPerMin = null;
+    // No count yet: Chat's tables belong to Chat (contracts/STORAGE.md). The strip shows a dash until the desk offers a counter.
+    const last = kv('lastNet', null);
+    const net = !online() ? { ok: false, at: last?.at || null } : last ? { ok: !!last.ok, at: last.at } : null;
+    return { at: nowIso(), online: online(), ...statusStrip({ agents, runningJobs, jobSummary, failedAgentIds, issues, newDevices, messagesPerMin, net }) };
+  }
+
+  // ================= O. API connection health: ping each known provider endpoint on a cadence (default off), store each
+  // check, and read status, last latency, last checked and the 24h error rate back from storage. Reachability only
+  // (no key is sent); the provider board in section F still holds the speed of real model calls.
+  const PROVIDERS = (() => { try { return JSON.parse(fs.readFileSync(path.join(ctx.root, 'app', 'core', 'providers.json'), 'utf8')).providers || {}; } catch { return {}; } })();
+  const API_EVERY = { off: 0, '60s': 60_000, '5m': 5 * 60_000, '15m': 15 * 60_000 };
+  async function apiEndpoints() {
+    const act = await ctx.model.active().catch(() => []);
+    const seen = new Set(); const list = [];
+    for (const a of act) { const def = PROVIDERS[a.provider]; if (!def?.baseUrl || seen.has(a.provider)) continue; seen.add(a.provider); list.push({ provider: a.provider, label: a.label || def.name || a.provider, url: def.baseUrl.replace(/\/$/, '') + '/models' }); }
+    return list;
+  }
+  async function pingApis({ trigger = 'schedule' } = {}) {
+    needNet();
+    const eps = await apiEndpoints();
+    for (const e of eps) {
+      if (ctx.panic.halted || !online()) break;
+      const t0 = Date.now(); let ok = 0, status = null, note = null, ms = null;
+      try { const r = await fx(8000)(e.url, { method: 'GET' }); status = r.status; ok = r.status < 500 ? 1 : 0; ms = Date.now() - t0; try { await r.body?.cancel(); } catch {} }
+      catch (err) { if (err.code === 'offline' || err.code === 'halted') throw err; note = String(err.message || '').slice(0, 160); }
+      ctx.db.run('INSERT INTO m_network_api (at, provider, label, url, ok, status, ms, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', nowIso(), e.provider, e.label, e.url, ok, status, ms, note);
+    }
+    ctx.db.run('DELETE FROM m_network_api WHERE id <= (SELECT MAX(id) - 5000 FROM m_network_api)');
+    ctx.kv.set('api.lastAt', clock());
+    return apiHealth();
+  }
+  function apiHealth() {
+    const rows = ctx.db.all('SELECT provider, label, url, ok, status, ms, at FROM m_network_api WHERE at >= ? ORDER BY id DESC LIMIT 5000', new Date(clock() - DAY).toISOString()).map(r => ({ ...r, ok: !!r.ok }));
+    return { at: nowIso(), providers: apiHealthFrom(rows, clock()), every: kv('api.every', 'off'), online: online() };
+  }
+
+  // ================= P. IP tracking: the local addresses (read here, no outbound) and the public address (recorded when
+  // the public lookup in section A runs). Every change is logged old -> new.
+  const observeLocal = () => interfaces().filter(i => i.address).map(i => ({ scope: 'local', family: i.family, value: i.address }));
+  function snapLocalIp(trigger = 'schedule') {
+    const cur = observeLocal(); const prev = kv('ip.local', null);
+    if (prev) { const changes = diffAddresses(prev, cur); for (const c of changes) ctx.db.run('INSERT INTO m_network_ip (at, scope, family, old_value, new_value, trigger_) VALUES (?, ?, ?, ?, ?, ?)', nowIso(), c.scope, c.family, c.old, c.new, trigger);
+      if (changes.length) notice('ip.change', 'Your local network address changed.', changes.map(c => `${c.family}: ${c.old || 'none'} → ${c.new || 'none'}`).join('; ')); }
+    ctx.kv.set('ip.local', cur); ctx.kv.set('ip.localAt', clock());
+    return cur;
+  }
+  function recordPublicIp(r, trigger = 'owner') {
+    if (!r?.ip) return;
+    const fam = r.ip.includes(':') ? 'IPv6' : 'IPv4';
+    const prev = kv('ip.public', null) || {}; const prevVal = prev[fam] || null;
+    if (prevVal !== r.ip) {
+      ctx.db.run('INSERT INTO m_network_ip (at, scope, family, old_value, new_value, trigger_) VALUES (?, ?, ?, ?, ?, ?)', nowIso(), 'public', fam, prevVal, r.ip, trigger);
+      if (prevVal) notice('ip.change', 'Your public address changed.', `${fam}: ${prevVal} → ${r.ip}`);
+      ctx.kv.set('ip.public', { ...prev, [fam]: r.ip });
+    }
+    if (r.asn != null) recordAsn('public', r.asn, r.operator, trigger);   // from the data already fetched, no extra call
+  }
+  function ipView() {
+    return { at: nowIso(), local: observeLocal(), public: kv('ip.public', null), lastPublicAt: kv('publicIp.lastAt', 0) ? new Date(kv('publicIp.lastAt', 0)).toISOString() : null,
+      history: ctx.db.all('SELECT at, scope, family, old_value AS old, new_value AS new, trigger_ AS trigger FROM m_network_ip ORDER BY id DESC LIMIT 200') };
+  }
+
+  // ================= Q. DNS tracking: resolve A/AAAA/MX/NS/TXT for the owner's own domains (section H) on a cadence
+  // (default off), keep a change log old -> new, and remember which types failed (fed into the issues list).
+  const DNS_EVERY = { off: 0, '15m': 15 * 60_000, '1h': HOUR, '6h': 6 * HOUR, daily: DAY };
+  const DNS_TYPES = ['A', 'AAAA', 'MX', 'NS', 'TXT'];
+  async function dnsSnapshot(domain, { trigger = 'schedule' } = {}) {
+    needNet();
+    const res = await lookupDns(fx(12000), domain, DNS_TYPES);
+    const cur = (res.records || []).map(r => ({ type: r.type, data: r.data }));
+    const fails = DNS_TYPES.filter(t => (res.errors || []).some(e => e.startsWith(t + ':')));
+    const prev = kv('dns.snap:' + domain, null);
+    let changes = [];
+    if (prev) { changes = diffDns(prev, cur); for (const c of changes) ctx.db.run('INSERT INTO m_network_dns (at, domain, type, old_value, new_value) VALUES (?, ?, ?, ?, ?)', nowIso(), domain, c.type, c.old, c.new);
+      if (changes.length) notice('dns.change', `DNS changed for ${domain}.`, changes.map(c => `${c.type}: ${c.old || 'none'} → ${c.new || 'none'}`).join('; ')); }
+    ctx.kv.set('dns.snap:' + domain, cur); ctx.kv.set('dns.at:' + domain, clock()); ctx.kv.set('dns.fails:' + domain, fails);
+    return { domain, records: cur, changes, fails, errors: res.errors || [] };
+  }
+  function dnsView() {
+    const domains = ctx.db.all('SELECT domain FROM m_network_domains ORDER BY added').map(d => ({ domain: d.domain, records: kv('dns.snap:' + d.domain, null),
+      checkedAt: kv('dns.at:' + d.domain, 0) ? new Date(kv('dns.at:' + d.domain, 0)).toISOString() : null, fails: kv('dns.fails:' + d.domain, []) }));
+    return { at: nowIso(), every: kv('dns.every', 'off'), domains, changes: ctx.db.all('SELECT at, domain, type, old_value AS old, new_value AS new FROM m_network_dns ORDER BY id DESC LIMIT 300'), online: online() };
+  }
+
+  // ================= R. ASN tracking: the AS number and operator for the public address and the owner's domains, from
+  // RIPEstat (keyless, the source section A already uses). Public updates whenever the public lookup runs; a refresh
+  // every 6 hours (default off) and the owner's button cover the domains. Every change is flagged.
+  const ASN_EVERY = { off: 0, '6h': 6 * HOUR, daily: DAY };
+  function recordAsn(scope, asn, operator, trigger = 'schedule') {
+    if (asn == null) return;
+    const prev = ctx.db.get('SELECT asn, operator FROM m_network_asn WHERE scope = ? ORDER BY id DESC LIMIT 1', scope);
+    if (prev && Number(prev.asn) === Number(asn) && (prev.operator || '') === (operator || '')) { ctx.kv.set('asn.at:' + scope, clock()); return; }
+    ctx.db.run('INSERT INTO m_network_asn (at, scope, asn, operator, old_asn, old_operator, trigger_) VALUES (?, ?, ?, ?, ?, ?, ?)', nowIso(), scope, Number(asn), operator || null, prev?.asn ?? null, prev?.operator ?? null, trigger);
+    ctx.kv.set('asn.at:' + scope, clock());
+    if (prev) notice('asn.change', `The network operator for ${scope === 'public' ? 'your public address' : scope} changed.`, `AS${prev.asn} ${prev.operator || ''} → AS${asn} ${operator || ''}`);
+  }
+  async function asnForIp(ip) {
+    const n = await (await fx(12000)(`https://stat.ripe.net/data/network-info/data.json?resource=${encodeURIComponent(ip)}`)).json();
+    const asn = (n?.data?.asns || [])[0]; if (!asn || !/^\d+$/.test(String(asn))) return null;
+    const o = await (await fx(12000)(`https://stat.ripe.net/data/as-overview/data.json?resource=AS${Number(asn)}`)).json();
+    return { asn: Number(asn), operator: typeof o?.data?.holder === 'string' ? o.data.holder.slice(0, 120) : null, prefix: typeof n?.data?.prefix === 'string' ? n.data.prefix : null };
+  }
+  async function refreshAsn({ trigger = 'schedule' } = {}) {
+    needNet();
+    const pub = kv('ip.public', null) || {}; const ip = pub.IPv4 || pub.IPv6;
+    if (ip) { try { const a = await asnForIp(ip); if (a) recordAsn('public', a.asn, a.operator, trigger); } catch (e) { if (e.code === 'halted') throw e; } }
+    for (const d of ctx.db.all('SELECT domain FROM m_network_domains')) {
+      if (ctx.panic.halted || !online()) break;
+      try { const a = (await lookupDns(fx(10000), d.domain, ['A'])).records.find(r => r.type === 'A'); if (!a) continue; const info = await asnForIp(a.data); if (info) recordAsn(d.domain, info.asn, info.operator, trigger); }
+      catch (e) { if (e.code === 'halted' || e.code === 'offline') throw e; }
+    }
+    ctx.kv.set('asn.lastAt', clock());
+    return asnView();
+  }
+  function asnView() {
+    const cur = (scope) => ctx.db.get('SELECT asn, operator, at FROM m_network_asn WHERE scope = ? ORDER BY id DESC LIMIT 1', scope);
+    return { at: nowIso(), every: kv('asn.every', 'off'), public: cur('public') || null,
+      domains: ctx.db.all('SELECT domain FROM m_network_domains ORDER BY added').map(d => ({ domain: d.domain, ...(cur(d.domain) || { asn: null, operator: null, at: null }) })),
+      history: ctx.db.all('SELECT at, scope, asn, operator, old_asn AS oldAsn, old_operator AS oldOperator, trigger_ AS trigger FROM m_network_asn ORDER BY id DESC LIMIT 200'), online: online() };
+  }
+
+  // ================= S. network issues: one list that gathers the cert expiry, DNS failures, high latency and packet
+  // loss already measured elsewhere, each with a severity and a mute. The probes are not re-run here; gatherIssues reads
+  // what sections H/K and the diagnose probe stored.
+  function gatherIssues() {
+    const siteCerts = ctx.db.all("SELECT host, cert_to FROM m_network_sites WHERE enabled = 1 AND cert_to IS NOT NULL").map(s => ({ host: s.host, certTo: s.cert_to }));
+    const domainCerts = ctx.db.all('SELECT domain, cert_to FROM m_network_domains WHERE cert_to IS NOT NULL').map(d => ({ domain: d.domain, certTo: d.cert_to }));
+    const hist = speedHistory(50).filter(h => h.pingMs != null);
+    const latency = hist[0]?.pingMs ?? null;
+    const baseline = hist.length ? median(hist.slice(0, 20).map(h => h.pingMs)) : null;
+    const dnsFails = []; for (const d of ctx.db.all('SELECT domain FROM m_network_domains')) for (const f of kv('dns.fails:' + d.domain, [])) dnsFails.push(d.domain);
+    const loss = kv('issues.loss', []);
+    const found = issuesFrom({ sites: siteCerts, domains: domainCerts, latency, baseline, dnsFails, loss, now: clock() });
+    const now = nowIso(); const keys = new Set();
+    for (const i of found) { keys.add(i.key);
+      ctx.db.run('INSERT INTO m_network_issues (key, kind, severity, title, detail, first_at, last_at, muted, resolved) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0) ON CONFLICT(key) DO UPDATE SET kind = excluded.kind, severity = excluded.severity, title = excluded.title, detail = excluded.detail, last_at = excluded.last_at, resolved = 0', i.key, i.kind, i.severity, i.title, i.detail, now, now); }
+    for (const row of ctx.db.all('SELECT key FROM m_network_issues WHERE resolved = 0')) if (!keys.has(row.key)) ctx.db.run('UPDATE m_network_issues SET resolved = 1, last_at = ? WHERE key = ?', now, row.key);
+    return currentIssues();
+  }
+  const issueRow = (r) => ({ key: r.key, kind: r.kind, severity: r.severity, title: r.title, detail: r.detail, firstAt: r.first_at, lastAt: r.last_at, muted: !!r.muted, resolved: !!r.resolved });
+  function currentIssues() { try { return ctx.db.all('SELECT * FROM m_network_issues WHERE resolved = 0 ORDER BY key').map(issueRow).sort((a, b) => (a.muted - b.muted) || (severityRank(a.severity) - severityRank(b.severity))); } catch { return []; } }
+  function issuesView() { gatherIssues(); return { at: nowIso(), issues: currentIssues(), muted: ctx.db.all('SELECT * FROM m_network_issues WHERE resolved = 0 AND muted = 1').map(issueRow) }; }
+
+  // ================= T. active connection detail (extends section A): the adapter in use with its type, signal, gateway,
+  // subnet, DNS servers, MTU and the fields this PC does not report shown as not available.
+  async function activeConnection() {
+    const c = await localConnection(siLib);
+    return { at: nowIso(), ...c, signalWords: c.signal ? signalWords(c.signal.dBm) : null,
+      leaseEnd: null, linkUpAt: null, note: 'The DHCP lease end and the link-up time are not reported by this PC.' };
+  }
+
   // ================= schedules: one timer; nothing runs while Panic is on; outbound work waits while Offline
   let ticking = false;
   async function tick(now = clock()) {
@@ -414,6 +587,8 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
       if (now - lastPurge > 6 * HOUR) { ctx.db.run('DELETE FROM m_network_visits WHERE at < ?', new Date(now - retention() * DAY).toISOString()); ctx.kv.set('purgedAt', now); did.push('purge'); }
       remindDomains();
       if (kv('devices.every', 'off') === 'hourly' && now - (kv('devices.at', 0)) >= HOUR) { ctx.kv.set('devices.at', now); await readDevices().catch(() => {}); did.push('devices'); }
+      if (now - kv('ip.localAt', 0) >= 5 * 60_000) { try { snapLocalIp('schedule'); did.push('ip'); } catch {} }   // local only, no outbound
+      try { gatherIssues(); did.push('issues'); } catch {}                                                        // reads stored facts, no outbound
       if (!online()) return { offline: true, did };
       const sp = speedSettings(); const every = SPEED_EVERY[sp.every] || 0;
       if (every && now - kv('speed.lastAuto', 0) >= every) { ctx.kv.set('speed.lastAuto', now); try { await speedTest({ kind: sp.kind === 'full' ? 'full' : 'latency', trigger: 'schedule' }); did.push('speed'); } catch (e) { if (e.code === 'over_cap') ctx.kv.set('speed.skipped', { at: new Date(now).toISOString(), why: e.message }); } }
@@ -422,6 +597,13 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
       const ch = ctx.db.get('SELECT id FROM m_network_sites WHERE enabled = 1 AND change_min > 0 AND (next_change_at IS NULL OR next_change_at <= ?) ORDER BY next_change_at LIMIT 1', now);
       if (ch && !ctx.panic.halted) { try { await changeCheck(ch.id); did.push('change'); } catch {} }
       for (const d of ctx.db.all('SELECT domain, checked_at FROM m_network_domains WHERE daily = 1')) { if (ctx.panic.halted || !online()) break; if (!d.checked_at || now - Date.parse(d.checked_at) >= DAY) { try { await checkDomain(d.domain); did.push('domain'); } catch {} } }
+      // the schedules the owner turned on (all off by default): API health, DNS and ASN
+      const apiEvery = API_EVERY[kv('api.every', 'off')] || 0;
+      if (apiEvery && now - kv('api.lastAt', 0) >= apiEvery) { try { await pingApis({ trigger: 'schedule' }); did.push('api'); } catch {} }
+      const dnsEvery = DNS_EVERY[kv('dns.every', 'off')] || 0;
+      if (dnsEvery) for (const d of ctx.db.all('SELECT domain FROM m_network_domains')) { if (ctx.panic.halted || !online()) break; if (now - kv('dns.at:' + d.domain, 0) >= dnsEvery) { try { await dnsSnapshot(d.domain, { trigger: 'schedule' }); did.push('dns'); } catch {} } }
+      const asnEvery = ASN_EVERY[kv('asn.every', 'off')] || 0;
+      if (asnEvery && now - kv('asn.lastAt', 0) >= asnEvery) { try { await refreshAsn({ trigger: 'schedule' }); did.push('asn'); } catch {} }
       return { did };
     } finally { ticking = false; }
   }
@@ -496,6 +678,27 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
 
   R('GET', '/summary', () => summary());
   R('GET', '/notices', () => ({ notices: notices() }));
+  // N status strip
+  R('GET', '/status', () => statusStripData());
+  // O API connection health
+  R('GET', '/api-health', () => apiHealth());
+  R('POST', '/api-health/check', jobRoute('network.apihealth', 'Check API connections', () => pingApis({ trigger: 'owner' })), { owner: true });
+  R('POST', '/api-health/settings', ({ body }) => { const v = Object.hasOwn(API_EVERY, body?.every) ? body.every : 'off'; ctx.kv.set('api.every', v); return { every: v }; }, { owner: true });
+  // P IP tracking
+  R('GET', '/ip', () => ipView());
+  // Q DNS tracking
+  R('GET', '/dns', () => dnsView());
+  R('POST', '/dns/:domain/check', ({ params }) => dnsSnapshot(normalizeDomain(params.domain), { trigger: 'owner' }), { owner: true });
+  R('POST', '/dns/settings', ({ body }) => { const v = Object.hasOwn(DNS_EVERY, body?.every) ? body.every : 'off'; ctx.kv.set('dns.every', v); return { every: v }; }, { owner: true });
+  // R ASN tracking
+  R('GET', '/asn', () => asnView());
+  R('POST', '/asn/refresh', jobRoute('network.asn', 'Refresh network operators', () => refreshAsn({ trigger: 'owner' })), { owner: true });
+  R('POST', '/asn/settings', ({ body }) => { const v = Object.hasOwn(ASN_EVERY, body?.every) ? body.every : 'off'; ctx.kv.set('asn.every', v); return { every: v }; }, { owner: true });
+  // S network issues
+  R('GET', '/issues', () => issuesView());
+  R('POST', '/issues/:key/mute', ({ params, body }) => { const key = String(params.key); if (!ctx.db.get('SELECT 1 AS x FROM m_network_issues WHERE key = ?', key)) throw bad('No such issue.', 404); ctx.db.run('UPDATE m_network_issues SET muted = ? WHERE key = ?', body?.muted ? 1 : 0, key); return issuesView(); }, { owner: true });
+  // T active connection detail
+  R('GET', '/active', () => activeConnection());
   // A
   R('GET', '/connection', ({ query }) => connection({ check: query.check === '1' }));
   R('GET', '/interfaces', () => ({ interfaces: interfaces() }));
@@ -596,6 +799,7 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
     speedTest: () => speedTest({ trigger: 'module' }), lanScan: async ({ agentId } = {}) => { const d = await ctx.approval.request({ ...LAN_ASK, agentId }); if (!d.ok) return { ok: false, reason: d.reason }; return lanScan({ signal: ctx.panic.child() }); },
     connection, modelTest, lookup, interfaces, summary, logVisit, recordBytes, rules: () => listRules(), tick,
     rememberDevices: (list, opts) => rememberDevices(Array.isArray(list) ? list : [], opts),
+    recordPublicIp, snapLocalIp, gatherIssues, statusStrip: statusStripData,
   });
   return { async deactivate() { clearInterval(timer); offBytes?.(); clearRules(); for (const id of jobIds) { const x = ctx.jobs.get(id); if (x && ['running', 'waiting'].includes(x.status)) ctx.jobs.stop(id); } } };
 }

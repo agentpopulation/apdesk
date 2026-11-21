@@ -3,14 +3,21 @@
 import { lineModel, barModel, drawLine, drawBars, legend } from './ui-chart.js';
 
 const SECTIONS = [
-  ['connection', 'Connection'], ['speed', 'Speed and latency'], ['watch', 'Websites to watch'], ['visits', 'Where the agents went'],
+  ['connection', 'Connection'], ['active', 'Active connection'], ['apis', 'API health'], ['tracking', 'IP, DNS and ASN'],
+  ['issues', 'Network issues'], ['speed', 'Speed and latency'], ['watch', 'Websites to watch'], ['visits', 'Where the agents went'],
   ['diagnose', 'Is it me or them?'], ['ai', 'AI provider speed'], ['devices', 'Devices'], ['domain', 'Your domain'],
   ['rules', 'Website rules'], ['ports', 'What listens here'], ['lookup', 'Look up a domain'], ['data', 'Desk data use'],
 ];
 const NEEDS_NET = new Set(['speed', 'watch', 'diagnose', 'domain', 'lookup']);
 const CSS = `
-.view.netv{padding:0;gap:0;height:100%;min-height:0}
-.netp{display:grid;grid-template-columns:200px minmax(0,1fr);gap:0;height:100%;min-height:0}
+.view.netv{padding:0;gap:0;height:100%;min-height:0;display:flex;flex-direction:column}
+.netp-strip{display:flex;gap:8px;flex-wrap:wrap;padding:9px 16px;border-bottom:1px solid var(--line);overflow-x:auto;flex:0 0 auto}
+.netp-strip .nchip{display:flex;flex-direction:column;align-items:center;min-width:62px;padding:3px 10px;border-radius:var(--r-s);background:var(--bubble);font-size:10.5px;color:var(--dim);line-height:1.25;white-space:nowrap}
+.netp-strip .nchip b{font-size:15px;color:var(--fg)}
+.netp-strip .nchip.ok b{color:var(--ok)}.netp-strip .nchip.warn b{color:var(--warn)}.netp-strip .nchip.down b{color:var(--stop)}.netp-strip .nchip.idle b{color:var(--dim)}
+.netp{display:grid;grid-template-columns:200px minmax(0,1fr);gap:0;flex:1 1 auto;min-height:0}
+.netp .sev{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;vertical-align:middle}
+.netp .sev.critical{background:var(--stop)}.netp .sev.warn{background:var(--warn)}.netp .sev.info{background:var(--dim)}
 .netp-nav{padding:14px 10px;border-right:1px solid var(--line);overflow:auto;min-height:0}
 .netp-nav .nav{width:100%;padding:7px 10px;font-size:13.5px}
 .netp-body{overflow:auto;min-height:0;padding:16px 22px 28px;display:flex;flex-direction:column;gap:14px}
@@ -46,8 +53,23 @@ export const pages = {
       const offline = ui.state.settings?.online === false;
       const body = h('div', { class: 'netp-body' });
       const nav = h('nav', { class: 'netp-nav list', 'aria-label': 'Network sections' }, SECTIONS.map(([id, label]) => h('button', { class: 'nav', type: 'button', 'aria-current': id === cur ? 'page' : null, onclick: () => ui.go('network', id) }, label)));
-      el.replaceChildren(h('div', { class: 'netp' }, nav, body));
+      const strip = h('div', { class: 'netp-strip', role: 'status', 'aria-label': 'Network status' }, h('span', { class: 'sub' }, 'Loading status…'));
+      el.replaceChildren(strip, h('div', { class: 'netp' }, nav, body));
       requestAnimationFrame(() => { const b = nav.querySelector('[aria-current]'); if (b && nav.scrollWidth > nav.clientWidth) nav.scrollLeft = b.offsetLeft - (nav.clientWidth - b.offsetWidth) / 2; });
+      (async () => {
+        try {
+          const s = await api('m/network/status'); const a = s.agents; const hb = s.heartbeat;
+          const chip = (value, label, tone) => h('div', { class: 'nchip' + (tone ? ' ' + tone : '') }, h('b', null, String(value)), h('span', null, label));
+          put(strip,
+            chip(a.online, 'agents', a.online ? 'ok' : 'idle'), chip(a.midTask, 'mid-task', a.midTask ? 'ok' : 'idle'),
+            chip(a.idle, 'idle', 'idle'), chip(a.error, 'errors', a.error ? 'down' : 'idle'),
+            chip(s.messagesPerMin == null ? '—' : s.messagesPerMin, 'msgs/min', 'idle'),
+            chip(s.queue, 'queue', s.queue ? 'warn' : 'idle'),
+            chip(s.openIssues, 'issues', s.openIssues ? 'warn' : 'ok'),
+            chip(s.newDevices, 'new devices', s.newDevices ? 'warn' : 'idle'),
+            chip(hb == null ? '—' : hb.ok ? 'up' : 'down', 'heartbeat', hb == null ? 'idle' : hb.ok ? 'ok' : 'down'));
+        } catch (e) { put(strip, h('span', { class: 'sub' }, 'Status unavailable: ' + e.message)); }
+      })();
       const title = SECTIONS.find(s => s[0] === cur)[1];
       const head = h('div', { class: 'row' }, h('h2', null, title), h('span', { class: 'grow' }));
       put(body, head, offline && NEEDS_NET.has(cur) ? h('div', { class: 'banner', role: 'status' }, 'The desk is offline. This section needs the internet; what was stored before is shown.') : null);
@@ -103,6 +125,88 @@ const SECTION_RENDER = {
     };
     put(box, card(local), card(pub), card(desk));
     await Promise.all([paintLocal(), paintPub(), paintDesk(false)]);
+  },
+
+  // ---------------- T active connection detail
+  async active({ h, api, card, kv, box, put }) {
+    const c = await api('m/network/active');
+    put(box, card(h('h3', null, 'The connection in use'),
+      c.connected ? kv([
+        ['Connected by', c.kind === 'wifi' ? `Wi-Fi${c.signal?.ssid ? ' (' + c.signal.ssid + ')' : ''}` : c.kind === 'cable' ? 'Cable' : c.kind === 'virtual' ? 'A virtual adapter' : 'Another kind of link'],
+        ['Adapter', c.adapter], ['Link speed', c.linkMbps ? `${c.linkMbps} Mbps` : null],
+        c.kind === 'wifi' ? ['Signal', c.signal?.dBm != null ? `${c.signal.dBm} dBm (${c.signalWords || 'unknown'})` : null] : null,
+        ['Local IPv4', c.localIPv4], ['Local IPv6', c.localIPv6], ['Subnet mask', c.subnet],
+        ['Router (gateway)', c.gateway], ['DNS servers', c.dnsServers.length ? c.dnsServers.join(', ') : null],
+        ['MTU', c.mtu ? `${c.mtu} bytes` : null], ['Hardware address', c.mac],
+        ['DHCP lease end', c.leaseEnd], ['Link up since', c.linkUpAt],
+        c.others.length ? ['Other adapters', c.others.map(o => `${o.adapter} ${o.address}`).join(', ')] : null,
+      ]) : h('p', { class: 'sub' }, 'No network adapter is connected.'),
+      h('p', { class: 'sub', style: { marginTop: '8px' } }, c.note + ' Read from this PC, refreshed when you open this section. Nothing was sent anywhere.')));
+  },
+
+  // ---------------- O API connection health
+  async apis({ h, api, card, btn, box, put, busy, waitJob, kv, select, ms, toast, offline, pill, fmt }) {
+    const out = h('div');
+    const paint = async () => {
+      const d = await api('m/network/api-health');
+      const check = btn('Check now', { kind: 'ghost', disabled: offline, onClick: () => busy(check, 'Checking…', async () => { const { jobId } = await api('m/network/api-health/check', { body: {} }); const jx = await waitJob(jobId); if (jx.status !== 'done') toast(jx.error || jx.status, 'err'); await paint(); }) });
+      const every = select([['off', 'Off'], ['60s', 'Every minute'], ['5m', 'Every 5 min'], ['15m', 'Every 15 min']], d.every, async (v) => { await api('m/network/api-health/settings', { body: { every: v } }); toast('Saved', 'ok'); }, 'How often to check the APIs');
+      put(out, h('div', { class: 'row' }, h('span', { class: 'sub grow' }, 'Reachability of each known provider endpoint. No key is sent; this only times the connection.'), every, check),
+        d.providers.length ? h('div', { class: 'stack', style: { marginTop: '10px' } }, ...d.providers.map(p => card(
+          h('div', { class: 'row' }, h('b', null, p.label), pill(p.status === 'up' ? 'Reachable' : p.status === 'slow' ? 'Slow' : 'Down', p.status === 'up' ? 'ok' : p.status === 'slow' ? 'wait' : 'stop'), h('span', { class: 'grow' }), h('span', { class: 'sub' }, p.lastAt ? 'checked ' + fmt.when(p.lastAt) : 'not checked yet')),
+          kv([['Endpoint', p.url], ['Last latency', p.lastMs != null ? ms(p.lastMs) : null], ['Last answer', p.lastStatus != null ? String(p.lastStatus) : null], ['Errors in 24h', p.errorRate24h == null ? null : `${Math.round(p.errorRate24h * 100)}% of ${p.checks24h} checks`]]))))
+          : h('p', { class: 'sub', style: { marginTop: '10px' } }, 'No checks yet. Press Check now, or turn on a schedule.'));
+    };
+    put(box, card(out)); await paint();
+  },
+
+  // ---------------- P/Q/R IP, DNS and ASN tracking
+  async tracking({ h, api, card, btn, box, put, busy, waitJob, kv, select, ui, toast, offline, fmt }) {
+    const ipC = h('div'), dnsC = h('div'), asnC = h('div');
+    const paintIp = async () => {
+      const d = await api('m/network/ip');
+      put(ipC, h('h3', null, 'IP addresses'),
+        kv([['Public IPv4', d.public?.IPv4 || null], ['Public IPv6', d.public?.IPv6 || null], ['Local', d.local.map(x => x.value).join(', ') || null]]),
+        d.history.length ? h('details', null, h('summary', null, `Change history (${d.history.length})`), ui.table([{ label: 'When', render: r => fmt.when(r.at) }, { label: 'What', render: r => `${r.scope} ${r.family}` }, { label: 'From', render: r => r.old || 'none' }, { label: 'To', render: r => r.new || 'none' }], d.history, { empty: 'No changes.' })) : h('p', { class: 'sub' }, 'No address change recorded yet. The public address is recorded when you look it up on the Connection page.'));
+    };
+    const paintDns = async () => {
+      const d = await api('m/network/dns');
+      const every = select([['off', 'Off'], ['15m', 'Every 15 min'], ['1h', 'Every hour'], ['6h', 'Every 6 hours'], ['daily', 'Once a day']], d.every, async (v) => { await api('m/network/dns/settings', { body: { every: v } }); toast('Saved', 'ok'); }, 'How often to resolve DNS');
+      put(dnsC, h('div', { class: 'row' }, h('h3', { class: 'grow' }, 'DNS records'), every),
+        d.domains.length ? h('div', { class: 'stack' }, ...d.domains.map(dm => {
+          const check = btn('Resolve now', { kind: 'ghost sm', disabled: offline, onClick: () => busy(check, 'Resolving…', async () => { await api(`m/network/dns/${encodeURIComponent(dm.domain)}/check`, { body: {} }); await paintDns(); }) });
+          return card(h('div', { class: 'row' }, h('b', null, dm.domain), h('span', { class: 'sub' }, dm.checkedAt ? 'resolved ' + fmt.when(dm.checkedAt) : 'not resolved yet'), h('span', { class: 'grow' }), check),
+            dm.records ? h('div', null, ...dm.records.map(r => h('div', { class: 'mono' }, `${String(r.type).padEnd(5)} ${r.data}`))) : h('p', { class: 'sub' }, 'Press Resolve now.'));
+        })) : h('p', { class: 'sub' }, 'Add a domain on the "Your domain" section first.'),
+        d.changes.length ? h('details', null, h('summary', null, `DNS change log (${d.changes.length})`), ui.table([{ label: 'When', render: r => fmt.when(r.at) }, { label: 'Domain', key: 'domain' }, { label: 'Type', key: 'type' }, { label: 'From', render: r => r.old || 'none' }, { label: 'To', render: r => r.new || 'none' }], d.changes, { empty: 'No changes.' })) : null);
+    };
+    const paintAsn = async () => {
+      const d = await api('m/network/asn');
+      const every = select([['off', 'Off'], ['6h', 'Every 6 hours'], ['daily', 'Once a day']], d.every, async (v) => { await api('m/network/asn/settings', { body: { every: v } }); toast('Saved', 'ok'); }, 'How often to refresh operators');
+      const go = btn('Refresh now', { kind: 'ghost sm', disabled: offline, onClick: () => busy(go, 'Refreshing…', async () => { const { jobId } = await api('m/network/asn/refresh', { body: {} }); const jx = await waitJob(jobId); if (jx.status !== 'done') toast(jx.error || jx.status, 'err'); await paintAsn(); }) });
+      put(asnC, h('div', { class: 'row' }, h('h3', { class: 'grow' }, 'Network operator (ASN)'), every, go),
+        kv([['Your public address', d.public ? `AS${d.public.asn} ${d.public.operator || ''}` : null]]),
+        d.domains.length ? ui.table([{ label: 'Domain', key: 'domain' }, { label: 'Operator', render: r => r.asn ? `AS${r.asn} ${r.operator || ''}` : 'Not looked up' }], d.domains, { empty: 'No domains.' }) : null,
+        d.history.length ? h('details', null, h('summary', null, `Operator change log (${d.history.length})`), ui.table([{ label: 'When', render: r => fmt.when(r.at) }, { label: 'For', key: 'scope' }, { label: 'From', render: r => r.oldAsn ? `AS${r.oldAsn}` : 'none' }, { label: 'To', render: r => `AS${r.asn}` }], d.history, { empty: 'No changes.' })) : null);
+    };
+    put(box, card(ipC), card(dnsC), card(asnC));
+    await Promise.all([paintIp(), paintDns(), paintAsn()]);
+  },
+
+  // ---------------- S network issues
+  async issues({ h, api, card, btn, box, put, fmt }) {
+    const out = h('div');
+    const paint = async () => {
+      const d = await api('m/network/issues');
+      const all = [...d.issues, ...d.muted.filter(m => !d.issues.some(i => i.key === m.key))];
+      const render = (i) => card(h('div', { class: 'row' }, h('span', { class: i.muted ? 'grey' : '' }, h('span', { class: 'sev ' + i.severity }), h('b', null, i.title)), h('span', { class: 'grow' }),
+        btn(i.muted ? 'Unmute' : 'Mute', { kind: 'ghost sm', onClick: async () => { await api(`m/network/issues/${encodeURIComponent(i.key)}/mute`, { body: { muted: !i.muted } }); paint(); } })),
+        i.detail ? h('p', { class: 'sub' }, i.detail) : null,
+        h('p', { class: 'sub' }, `${i.severity}${i.muted ? ' · muted' : ''}${i.lastAt ? ' · updated ' + fmt.when(i.lastAt) : ''}`));
+      put(out, all.length ? h('div', { class: 'stack' }, ...all.map(render)) : h('p', { class: 'sub' }, 'No network issues right now.'));
+    };
+    put(box, card(h('p', { class: 'sub' }, 'Certificate expiry, DNS failures, high latency and packet loss, gathered from the checks on this page. Warnings turn amber; serious ones turn red. Mute one to set it aside.')), out);
+    await paint();
   },
 
   // ---------------- B
