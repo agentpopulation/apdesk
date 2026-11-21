@@ -9,6 +9,44 @@ const ORDER = ['general', 'appearance', 'security', 'modules', 'accounts', 'keys
 const TITLES = { general: 'General', appearance: 'Appearance', security: 'Security', modules: 'Modules', accounts: 'Accounts and lock', keys: 'Keys and logins', channels: 'Channels and mail', payments: 'Payments and spend', network: 'Network', memory: 'Memory', backup: 'Backup' };
 const NEEDS = { accounts: 'accounts', keys: 'vault', channels: 'channels', payments: 'payments', network: 'network', memory: 'memory', backup: 'backup' };
 
+/** The desk's address with a Copy button: the same words in General and under Show code. */
+export function copyButton(ui, text, label = 'Copy') {
+  const b = ui.btn(label, { kind: 'ghost sm', 'aria-label': 'Copy the address', onClick: async () => {
+    let ok = false;
+    try { await navigator.clipboard.writeText(text); ok = true; } catch {
+      try { const t = ui.h('textarea', { style: { position: 'fixed', opacity: '0' } }); t.value = text; document.body.append(t); t.select(); ok = document.execCommand('copy'); t.remove(); } catch {}
+    }
+    b.textContent = ok ? 'Copied' : 'Select and copy it'; setTimeout(() => { b.textContent = label; }, 2000);
+  } });
+  return b;
+}
+const addressLine = (ui) => ui.line('Address', 'Open this address in Chrome or Edge on this PC. To keep it handy, install it as an app from the browser\'s menu.',
+  ui.h('span', { class: 'field' }, ui.h('code', { class: 'val', id: 'desk-address' }, location.origin), copyButton(ui, location.origin)));
+
+/** Settings › Security: the code that opens the desk in another browser, shown for 60 seconds in this window only. */
+export function pairCard(ui) {
+  const { h, api, card, line, btn } = ui;
+  const box = h('div', { id: 'pair-code', 'aria-live': 'polite' });
+  let timer = null;
+  const hide = () => { clearInterval(timer); timer = null; box.replaceChildren(); show.hidden = false; };
+  const show = btn('Show code', { kind: 'ghost sm', onClick: async () => {
+    try {
+      const r = await api('security/pair-code', { method: 'POST' });
+      const end = Date.now() + (r.seconds || 60) * 1000; const count = h('span', { class: 'sub' });
+      const tick = () => { const left = Math.ceil((end - Date.now()) / 1000); if (left <= 0) return hide(); count.textContent = `Hidden again in ${left} s.`; };
+      show.hidden = true;
+      box.replaceChildren(h('div', { class: 'paircode' },
+        h('div', null, h('span', { class: 'sub' }, 'Code'), h('b', { class: 'code' }, `${r.code.slice(0, 3)} ${r.code.slice(3)}`)),
+        h('div', null, h('span', { class: 'sub' }, 'Address'), h('span', { class: 'row', style: { gap: '6px' } }, h('code', null, r.address), copyButton(ui, r.address))),
+        h('p', { class: 'sub' }, 'Open the address in the other browser on this PC and type the code there.'),
+        h('div', { class: 'row' }, count, h('span', { class: 'grow' }), btn('Hide', { kind: 'ghost sm', onClick: hide }))));
+      tick(); timer = setInterval(tick, 1000);
+    } catch (e) { box.replaceChildren(h('p', { class: 'sub' }, e.message)); }
+  } });
+  ui.onLeave(() => clearInterval(timer));
+  return card({ 'data-apd': 'pair' }, line('Open the desk in another browser', 'A browser that has not opened this desk before asks for a six-digit code. It is shown here, for one minute.', show), box);
+}
+
 export const coreSettingsSections = {
   general: { title: 'General', render(el, ui) {
     const { h, api, card, line } = ui; const s = ui.state.settings;
@@ -36,15 +74,17 @@ export const coreSettingsSections = {
     about.value = s['business.about'] || '';
     const aboutBox = h('div', { class: 'line about' }, h('div', null, h('b', null, 'What you do'), h('span', { class: 'd' }, ABOUT_HELP), about, h('span', { class: 'field' }, aboutMark)));
     // how long answers should be: kept by the Chat module (its own routes), saved on change like the fields above
-    const lengthLine = () => { const m = mark(); const sel = h('select', { id: 'answer-length', 'aria-label': 'How long answers should be', onchange: async (e) => { try { await api('m/chat/answer-length', { method: 'PUT', body: { value: e.target.value || null } }); m.textContent = 'Saved'; m.className = 'saved ok'; clearTimeout(m._t); m._t = setTimeout(() => { m.textContent = ''; }, 2000); } catch (err) { clearTimeout(m._t); m.textContent = 'Not saved: ' + err.message; m.className = 'saved err'; } } }, [['', 'Not chosen'], ['short', 'Short'], ['detailed', 'Detailed']].map(([v, n]) => h('option', { value: v }, n))); api('m/chat/answer-length').then(r => { sel.value = r.value || ''; }).catch(() => {}); return line('How long answers should be', 'How your agents write their answers to you', h('span', { class: 'field' }, sel, m)); };
+    const lengthLine = () => { const m = mark(); const sel = h('select', { id: 'answer-length', 'aria-label': 'How long answers should be', disabled: true, onchange: async (e) => { try { await api('m/chat/answer-length', { method: 'PUT', body: { value: e.target.value || null } }); m.textContent = 'Saved'; m.className = 'saved ok'; clearTimeout(m._t); m._t = setTimeout(() => { m.textContent = ''; }, 2000); } catch (err) { clearTimeout(m._t); m.textContent = 'Not saved: ' + err.message; m.className = 'saved err'; } } }, [['…', 'Reading…'], ['', 'Not chosen'], ['short', 'Short'], ['detailed', 'Detailed']].map(([v, n]) => h('option', { value: v, hidden: v === '…' }, n))); sel.value = '…';
+      // the Chat module answers this; while it is slow the field says so and the rest of the page is already there
+      api('m/chat/answer-length').then(r => { sel.value = r.value || ''; }).catch(() => { sel.value = ''; m.textContent = 'Could not read it now'; m.className = 'saved'; }).finally(() => { sel.disabled = false; }); return line('How long answers should be', 'How your agents write their answers to you', h('span', { class: 'field' }, sel, m)); };
     el.append(h('p', { class: 'sub', id: 'saves-note' }, 'Changes are saved when you leave a field.'),
       card(h('h3', null, 'You'), line('Your name', 'Agents use it when they write for you', text('ownerName', 'Your name')), line('Your business', 'Agents use it when they write in its name', text('companyName', 'Business name')), line('What you mainly use the desk for', 'Renames some places and changes the suggestions', h('span', { class: 'field' }, roleSel, roleMark)), ui.moduleOn('chat') ? lengthLine() : null),
-      card(h('h3', null, 'This desk'), line('Name of this desk', 'Shown in the top bar and the window title', text('appName', 'AP Desk')), aboutBox, line('About', 'AP Desk is short for Agent Population Desk. On X: @agentpopulation', h('span', { class: 'val' }, '@agentpopulation')), line('Tell me when a job finishes', 'A notice, a count on the menu place and, when the window is in the background, a desktop notification. ' + perm, h('span', { class: 'field' }, notifySw, notifyMark))),
+      card(h('h3', null, 'This desk'), line('Name of this desk', 'Shown in the top bar and the window title', text('appName', 'AP Desk')), aboutBox, addressLine(ui), line('About', 'AP Desk is short for Agent Population Desk. On X: @agentpopulation', h('span', { class: 'val' }, '@agentpopulation')), line('Tell me when a job finishes', 'A notice, a count on the menu place and, when the window is in the background, a desktop notification. ' + perm, h('span', { class: 'field' }, notifySw, notifyMark))),
       card(h('h3', null, 'Where you are'), line('Country', 'Two-letter code', text('country', 'US')), line('Currency', 'Money is shown in this currency', text('currency', 'USD')), line('Time zone', 'Times are shown in this zone', text('timeZone', 'Europe/London')), line('Number and date style', 'For example en-GB, en-US', text('locale', 'en-US'))));
   } },
   appearance: { title: 'Appearance', render(el, ui) {
     const { h, card, line, seg } = ui;
-    el.append(card(h('h3', null, 'Look'), line('Theme', 'White or black. The toggle at the top right does the same.', seg(['White', 'Black'], document.documentElement.dataset.theme === 'dark' ? 1 : 0, (_, i) => ui.setTheme(i === 1))),
+    el.append(card(h('h3', null, 'Look'), line('Theme', 'White or black. The sun or moon at the top right does the same.', seg(['White', 'Black'], document.documentElement.dataset.theme === 'dark' ? 1 : 0, (_, i) => ui.setTheme(i === 1))),
       line('Window', 'The desk always fills the window.', h('span', { class: 'val' }, 'Full window'))));
   } },
   security: { title: 'Security', render(el, ui) {
@@ -66,8 +106,8 @@ export const coreSettingsSections = {
   modules: { title: 'Modules', render(el, ui) {
     const { h, api, card, sw, pill, toast } = ui;
     const list = h('div');
-    const paint = () => list.replaceChildren(...ui.state.modules.map(m => h('div', { class: 'line' }, h('div', null, h('b', null, `${m.number ?? ''} ${m.name}`.trim()), h('span', { class: 'd' }, m.description + (m.error ? ` · ${m.error}` : ''))),
-      m.kind === 'core' ? pill('Core', 'ok') : m.kind === 'parked' ? pill('Parked') : sw(m.on, m.name, async (on) => { await api(`modules/${m.id}/${on ? 'on' : 'off'}`, { method: 'POST' }); await ui.refresh(); toast(`${m.name} is ${on ? 'on' : 'off'}`, 'ok'); }))));
+    const paint = () => list.replaceChildren(...ui.state.modules.map(m => h('div', { class: 'line', 'data-card': m.id }, h('div', null, h('b', null, `${m.number ?? ''} ${m.name}`.trim()), h('span', { class: 'd' }, m.description + (m.error ? ` · ${m.error}` : ''))),
+      m.kind === 'core' ? pill('Core', 'ok') : m.kind === 'parked' ? pill('Parked') : sw(m.on, m.name, async (on) => { await api(`modules/${m.id}/${on ? 'on' : 'off'}`, { method: 'POST' }); await ui.refresh(); toast(`${m.name} is ${on ? 'on' : 'off'}`, 'ok'); paint(); }, { 'data-module': m.id }))));
     el.append(card(h('h3', null, 'Modules'), h('p', { class: 'sub' }, 'Core modules stay on. Switch the others on when you want them.'), list));
     paint(); ui.on('modules', async () => { await ui.refresh(); paint(); });
   } },
@@ -77,22 +117,46 @@ export async function settingsPage(el, ui) {
   const { h } = ui;
   el.classList.add('scroll');
   // sections: core, then every on module's `settings` export (same id replaces the core one)
-  const sections = { ...coreSettingsSections };
-  for (const m of ui.state.modules) {
-    if (!m.on || !m.hasUi || !(m.settings || []).length) continue;
-    const mod = await ui.moduleUi(m.id);
-    for (const s of m.settings) if (mod.settings?.[s.id]) sections[s.id] = { title: s.label || mod.settings[s.id].title, render: mod.settings[s.id].render, module: m.id };
-  }
-  const ids = [...ORDER, ...Object.keys(sections).filter(k => !ORDER.includes(k))];
+  const collect = async () => {
+    const sections = { ...coreSettingsSections };
+    for (const m of ui.state.modules) {
+      if (!m.on || !m.hasUi || !(m.settings || []).length) continue;
+      const mod = await ui.moduleUi(m.id);
+      for (const s of m.settings) if (mod.settings?.[s.id]) sections[s.id] = { title: s.label || mod.settings[s.id].title, render: mod.settings[s.id].render, module: m.id };
+    }
+    return sections;
+  };
+  let sections = await collect();
   const want = ui.state.route.parts[0] || 'general';
   const menu = h('div', { class: 'list' }), body = h('div', { class: 'stack' });
   el.append(h('h2', null, 'Settings'), h('div', { class: 'split' }, menu, body));
-  menu.replaceChildren(...ids.map(id => h('button', { class: 'nav', 'aria-current': id === want ? 'page' : null, onclick: () => ui.go('settings', id) }, sections[id]?.title || TITLES[id] || id)));
+  const paintMenu = () => {
+    const ids = [...ORDER, ...Object.keys(sections).filter(k => !ORDER.includes(k))];
+    menu.replaceChildren(...ids.map(id => h('button', { class: 'nav', 'data-section': id, 'aria-current': id === want ? 'page' : null, onclick: () => ui.go('settings', id) }, sections[id]?.title || TITLES[id] || id)));
+  };
+  paintMenu();
+  const shownBy = sections[want]?.module || (sections[want] ? 'core' : null);
+  // A module switched on or off: the menu is redrawn in place and the section on screen stays (its own listener
+  // updates its cards). Only when the section on screen changes hands is it drawn again.
+  el._onModules = async () => {
+    sections = await collect();
+    const now = sections[want]?.module || (sections[want] ? 'core' : null);
+    if (now !== shownBy) return 'render';
+    paintMenu(); return 'kept';
+  };
   const sec = sections[want];
   if (sec) await sec.render(body, ui);
   else {
     const need = NEEDS[want]; const m = ui.state.modules.find(x => x.id === need);
     body.append(h('div', { class: 'card' }, h('h3', null, TITLES[want] || want), h('p', { class: 'sub' }, m ? (m.on ? `${m.name} is on but has not added its settings.` : `${m.name} is switched off. Switch it on in Modules to use this.`) : 'This part is not installed.'),
-      m && !m.on && m.kind !== 'core' ? ui.btn(`Switch on ${m.name}`, { onClick: async () => { try { await ui.api(`modules/${m.id}/on`, { method: 'POST' }); await ui.refresh(); location.reload(); } catch (e) { ui.toast(e.message, 'err'); } } }) : null));
+      m && !m.on && m.kind !== 'core' ? ui.btn(`Switch on ${m.name}`, { onClick: async () => { try { await ui.api(`modules/${m.id}/on`, { method: 'POST' }); await ui.refresh(); ui.render(); } catch (e) { ui.toast(e.message, 'err'); } } }) : null));
+  }
+  // Security: the code for another browser, whoever draws the rest of the section
+  if (want === 'security') { const c = pairCard(ui); body.children[1] ? body.insertBefore(c, body.children[1]) : body.append(c); }   // under the security level
+  // #/settings/modules?module=network: straight to that module's card, its switch focused
+  const target = ui.state.route.params.module;
+  if (target) {
+    const card = body.querySelector(`[data-card="${CSS.escape(target)}"]`);
+    if (card) { card.scrollIntoView({ block: 'center' }); (card.querySelector('[data-module]') || card).focus({ preventScroll: true }); card.classList.add('flash'); setTimeout(() => card.classList.remove('flash'), 1600); }
   }
 }

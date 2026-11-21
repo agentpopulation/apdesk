@@ -112,6 +112,12 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - A built-in agent left out at first start or retired later shows under "Not on your team" on the Agents page, and one click hires it back as it was, with its chats and rooms.
 - Briefs, schedules, calendar dates, lead values and spend amounts follow your own zone, locale and currency; nothing falls back to India any more.
 
+### 21 Nov 2026
+- The top bar shows small icons instead of words: a sun or moon for the theme, a network light (green up, red no internet, grey off by choice), and a download count with a live list.
+- Switching a module on or off in Settings keeps your place on the page instead of jumping to the top.
+- First start can download a local model in the background, only after you press Save and allow each download.
+- When the desk runs hidden, the six-digit code for pairing another browser is shown under "Show code" in Settings, Security, not written to the log; you can also install the desk as an app.
+
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.
 - In the agent's browser, a page that redirects to an address on this PC or the home network is not stopped by the address guard yet.
@@ -119,7 +125,6 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - The local model engine was run for real on Linux only (a 1 GB model answered through the desk on 21 Nov 2026). Windows and macOS builds are chosen by rule and have not been run.
 - The Windows installer, the background mode, the start page and the update step have been tested on Linux and by static checks only; none has run on Windows yet.
 - Bench mode's later stages (customers, funding, market report) have not been run with a real model, and its early findings are of mixed quality.
-- When the desk runs hidden on Windows, the six-digit code for pairing another browser is written to `data\desk.log`.
 - With no key and no local model, the free hosts are often busy: on 20 Nov 2026 a first "Hello" got no answer within 150 seconds in one test run. A free key or a local model in Models avoids this.
 - A real local Ollama model has still not been run through the full set of checks.
 - No run of the 17 acceptance asks has passed every ask. Results vary with the free model that answers.

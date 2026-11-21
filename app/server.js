@@ -19,7 +19,10 @@ import { ServiceKeys } from './core/service-keys.js';
 
 const APP = path.dirname(fileURLToPath(import.meta.url));     // <install>/app: the shell and the doors
 const ROOT = path.dirname(APP);                               // <install>: app, modules, vendor, node_modules, setup, data, backups
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.map': 'application/json', '.txt': 'text/plain; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.wasm': 'application/wasm' };
+const MIME = { '.webmanifest': 'application/manifest+json; charset=utf-8', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.map': 'application/json', '.txt': 'text/plain; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.wasm': 'application/wasm' };
+
+const MANIFEST = { id: '/', name: 'AP Desk', short_name: 'AP Desk', description: 'Your desk of agents, on this PC.', start_url: '/', scope: '/', display: 'standalone', background_color: '#f1f2f4', theme_color: '#16171a',
+  icons: [{ src: '/icons/apdesk.png', sizes: '256x256', type: 'image/png', purpose: 'any' }, { src: '/icons/apdesk.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }] };
 
 function readVersion() { for (const f of [path.join(APP, 'version.json'), path.join(ROOT, 'package.json')]) { try { const v = JSON.parse(fs.readFileSync(f, 'utf8')).version; if (v) return v; } catch {} } return '0.0.0'; }
 
@@ -70,7 +73,7 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
   const pairCode = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
   const pairTries = { wrong: 0, lockedUntil: 0 };
   const rememberBrowser = (res) => { const c = crypto.randomBytes(32).toString('base64url'); settings.set('security.browsers', [...knownBrowsers(), sha(c)].slice(-20)); res.setHeader('set-cookie', `apd_owner=${c}; HttpOnly; SameSite=Strict; Path=/; Max-Age=315360000`); };
-  const pairPage = (note) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AP Desk</title><style>body{margin:0;height:100vh;display:grid;place-items:center;background:#f1f2f4;color:#16171a;font:15px -apple-system,"Segoe UI",system-ui,sans-serif}form{background:#fff;border:1px solid #e1e3e8;border-radius:16px;padding:26px;max-width:420px;display:flex;flex-direction:column;gap:12px}h1{font-size:20px;margin:0}p{margin:0;color:#5d626e}input{font:inherit;font-size:22px;letter-spacing:.2em;padding:10px 14px;border:1px solid #e1e3e8;border-radius:10px;text-align:center}button{font:inherit;background:#0a5fd6;color:#fff;border:0;border-radius:10px;padding:10px;cursor:pointer}.n{color:#c8261c}</style></head><body><form method="post" action="/pair"><h1>Open the desk in this browser</h1><p>This browser has not opened your desk before. Type the six-digit code shown in the desk's own window (the one start.bat opened).</p>${note ? `<p class="n">${note}</p>` : ''}<input name="code" inputmode="numeric" autocomplete="off" maxlength="7" autofocus aria-label="Code"><button>Open the desk</button><p>Panic still works without the code: stop.bat, or the Panic button in a browser you already use.</p></form></body></html>`;
+  const pairPage = (note) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AP Desk</title><style>body{margin:0;height:100vh;display:grid;place-items:center;background:#f1f2f4;color:#16171a;font:15px -apple-system,"Segoe UI",system-ui,sans-serif}form{background:#fff;border:1px solid #e1e3e8;border-radius:16px;padding:26px;max-width:420px;display:flex;flex-direction:column;gap:12px}h1{font-size:20px;margin:0}p{margin:0;color:#5d626e}input{font:inherit;font-size:22px;letter-spacing:.2em;padding:10px 14px;border:1px solid #e1e3e8;border-radius:10px;text-align:center}button{font:inherit;background:#0a5fd6;color:#fff;border:0;border-radius:10px;padding:10px;cursor:pointer}.n{color:#c8261c}</style></head><body><form method="post" action="/pair"><h1>Open the desk in this browser</h1><p>This browser has not opened your desk before. Type the six-digit code shown in the desk's own window (the one start.bat opened), or under Show code in Settings › Security in a browser that already opens the desk.</p>${note ? `<p class="n">${note}</p>` : ''}<input name="code" inputmode="numeric" autocomplete="off" maxlength="7" autofocus aria-label="Code"><button>Open the desk</button><p>Panic still works without the code: stop.bat, or the Panic button in a browser you already use.</p></form></body></html>`;
   const allowedHosts = () => new Set([`127.0.0.1:${core.port}`, `localhost:${core.port}`, `[::1]:${core.port}`]);
 
   const state = () => ({
@@ -78,7 +81,20 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
     modules: modules.list(), agents: agents.list(), jobs: jobs.summary(), pendingApprovals: approval.listPending(), tools: [...modules.tools.values()].map(t => ({ name: t.name, module: t.module, description: t.description })),
   });
 
+  // Home's Finished tile: only work the owner asked for. A quiet job (the desk's own upkeep) is marked in its input record.
+  const ownerDone = () => storage.get("SELECT COUNT(*) AS c FROM jobs WHERE status = 'done' AND COALESCE(CASE WHEN json_valid(input) THEN json_extract(input, '$.quiet') END, 0) != 1").c;
+  // The code that pairs another browser, for the owner's own window only (Settings › Security, Show code): the paired
+  // browser's session, and a browser's own same-origin fetch. Another program, a module's server code, a frame or a
+  // page on another site never gets it. The global checks before this already need the session and a paired browser.
+  const pageFetch = (req) => req.headers['sec-fetch-site'] === 'same-origin' && req.headers['sec-fetch-mode'] === 'cors' && req.headers['sec-fetch-dest'] === 'empty';
   const routes = {
+    'POST /api/security/pair-code': (req, res) => {
+      if (!sessionOk(req) || !browserOk(req) || !pageFetch(req)) return sendJson(res, { error: 'The code is shown only in Settings › Security in a browser that already opens this desk.' }, 403);
+      if (!pairing) return sendJson(res, { error: 'This desk does not ask for a code: pairing is off.' }, 409);
+      approval.activity({ action: 'security.code', title: 'The code to pair another browser was shown in Settings', how: 'owner' });
+      res.setHeader('cache-control', 'no-store');
+      sendJson(res, { code: pairCode, address: `http://${host}:${core.port}`, seconds: 60 });
+    },
     'GET /api/state': (req, res) => sendJson(res, state()),
     'GET /api/events': (req, res) => events.handle(req, res),
     'GET /api/panic': (req, res) => sendJson(res, panic.state()),
@@ -125,7 +141,7 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
     'GET /api/keys/services': (req, res) => sendJson(res, { services: services.list(), note: services.catalog().alsoAudio }),
     'POST /api/keys/services/:id': (req, res, { params, body }) => { if (!sessionOk(req)) return sendJson(res, { error: 'Keys are added at this desk.' }, 403); if (typeof body?.enabled === 'boolean' && !body.value) services.toggle(params.id, body.enabled); else services.set(params.id, body?.value); sendJson(res, { services: services.list() }); },
     'DELETE /api/keys/services/:id': (req, res, { params }) => { if (!sessionOk(req)) return sendJson(res, { error: 'Keys are removed at this desk.' }, 403); services.remove(params.id); sendJson(res, { services: services.list() }); },
-    'GET /api/home': (req, res) => sendJson(res, { jobs: { running: jobs.list({ status: 'running', limit: 10 }), waiting: jobs.list({ status: 'waiting', limit: 10 }), done: jobs.list({ status: 'done', limit: 8 }), summary: jobs.summary() }, approvals: approval.listPending(), agents: agents.list().length, recent: modules.api('chat')?.recent?.(6) || [] }),
+    'GET /api/home': (req, res) => sendJson(res, { jobs: { running: jobs.list({ status: 'running', limit: 10 }), waiting: jobs.list({ status: 'waiting', limit: 10 }), done: jobs.list({ status: 'done', limit: 8 }), summary: { ...jobs.summary(), done: ownerDone() } }, approvals: approval.listPending(), agents: agents.list().length, recent: modules.api('chat')?.recent?.(6) || [] }),
     ...settingsRoutes(core, sessionOk),
     ...(await import('./core/downloads-routes.js')).downloadRoutes(core, sessionOk),
   };
@@ -222,6 +238,10 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
         if (!m || !modules.isOn(id) || !(rel === 'ui.js' || rel.startsWith('ui/') || /^ui[\w.-]*\.(js|css)$/.test(rel))) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('Module is off'); }
         const f = inside(m.dir, rel); return f ? serveFile(res, f) : (res.writeHead(404), res.end());
       }
+      // Install as app (Chrome, Edge): the manifest and its icons hold nothing private, so they need no session or paired
+      // browser (a browser fetches a manifest without cookies). The installed window opens "/" like any tab: pairing holds there.
+      if (p === '/manifest.webmanifest') { res.writeHead(200, { 'content-type': MIME['.webmanifest'], 'cache-control': 'no-cache' }); return res.end(JSON.stringify(MANIFEST)); }
+      if (p === '/icons/apdesk.svg' || p === '/icons/apdesk.png') return serveFile(res, path.join(ROOT, 'setup', 'assets', path.basename(p)));
       if (p === '/favicon.ico') { res.writeHead(204); return res.end(); }
       res.writeHead(404, { 'content-type': 'text/plain' }); res.end('Not found');
     } catch (e) {
@@ -239,7 +259,8 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
       core.port = server.address().port;
       log(`AP Desk ${core.version} on http://${host}:${core.port}  data: ${dataDir}`);
-      if (pairing) console.log(`\n  To open the desk in another browser, type this code there: ${pairCode.slice(0, 3)} ${pairCode.slice(3)}\n`);
+      // run hidden (setup/background.mjs), these lines go to data\desk.log, which any program of this user can read: the code stays out
+      if (pairing) console.log(env.APD_BACKGROUND === '1' ? '\n  To open the desk in another browser, use Show code in Settings › Security.\n' : `\n  To open the desk in another browser, type this code there: ${pairCode.slice(0, 3)} ${pairCode.slice(3)}\n`);
       try { fs.writeFileSync(path.join(dataDir, 'desk.pid'), String(process.pid)); } catch {}
       return desk;
     },

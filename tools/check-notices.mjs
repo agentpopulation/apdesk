@@ -1,8 +1,10 @@
-// Shell and core checks in a real browser: finished-job badge and notice, desk name, Offline held in the process.
+// Shell and core checks in a real browser: finished-job badge and notice, a finished download's one notice, desk name,
+// Offline held in the process.
 // Run from the repository root, no model keys needed:  node tools/check-notices.mjs [screenshot dir]
 import { createRequire } from 'node:module';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { testDesk } from '../test/helpers/desk.js';
+import { startDownloadHost, sha, autoApprove } from '../test/helpers/download-host.js';
 const { chromium } = createRequire(import.meta.url)('playwright');
 const SHOTS = process.argv[2] || path.join(os.tmpdir(), 'apd-shell-checks'); fs.mkdirSync(SHOTS, { recursive: true });
 const t = await testDesk({ modules: ['chat', 'sales', 'tasks', 'research', 'search'] });
@@ -21,6 +23,18 @@ try {
   await p.screenshot({ path: path.join(SHOTS, 'finished_badge_1366x768.png') });
   await p.evaluate(() => { location.hash = '#/research'; }); await p.waitForTimeout(700);
   check('the count clears when the owner opens that place', await p.evaluate(() => !document.querySelector('.nav[data-v="research"] .badge')));
+  // a download: one notice when it finishes while the window is open, none for one that finished before
+  { const body = Buffer.alloc(40 * 1024, 5); const host = await startDownloadHost({ '/a': { body }, '/b': { body, slowMs: 60, chunk: 4096 } }); const ok = autoApprove(t.core);
+    try {
+      const spec = (n) => ({ title: 'Notice file ' + n, url: host.url('/' + n), allowHosts: ['127.0.0.1'], size: body.length, sha256: sha(body), to: path.join(t.dataDir, 'dl', n + '.bin'), kind: 'check' });
+      const a = await t.core.downloads.start(spec('a')); await t.core.downloads.whenDone(a.id);
+      await p.reload(); await p.waitForSelector('#menu .nav'); await p.waitForTimeout(800);
+      const b2 = await t.core.downloads.start(spec('b')); await t.core.downloads.whenDone(b2.id); await p.waitForTimeout(700);
+      t.core.events.emit('downloads', { download: t.core.downloads.out(t.core.downloads.get(b2.id)), summary: t.core.downloads.summary() }); await p.waitForTimeout(400);   // the same news twice
+      const n = await p.evaluate(() => [...document.querySelectorAll('.toast')].map(x => x.textContent));
+      check('a finished download gives one notice; one finished before the window opened gives none', n.filter(x => x === 'Downloaded: Notice file b').length === 1 && !n.some(x => /Notice file a/.test(x)), n.join(' | '));
+      await p.screenshot({ path: path.join(SHOTS, 'download_notice_1366x768.png') });
+    } finally { ok.stop(); await host.close(); } }
   // desk name
   await p.evaluate(() => { location.hash = '#/settings/general'; }); await p.waitForTimeout(800);
   const field = p.locator('input[placeholder="AP Desk"]'); await field.fill('Example Traders Desk'); await field.dispatchEvent('change'); await p.waitForTimeout(900);

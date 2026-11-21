@@ -21,6 +21,7 @@ const ui = {
   agent: (id) => state.agents.find(a => a.id === id) || null,
   label: (page, fallback) => roleLabel(page, fallback),
   refresh: () => refresh(),
+  render: () => render(),
   async setLevel(level) { state.security = await api('settings/security', { body: { level } }); paintChrome(); return state.security; },
   async setAutoApprove(window) { state.security = await api('settings/auto-approve', { body: { window } }); paintChrome(); return state.security; },
   async setOnline(online) { await api('settings', { body: { online } }); state.settings.online = online; emitLocal('settings', { online }); return online; },
@@ -71,9 +72,23 @@ function paintMenu() {
   $('#menu').replaceChildren(...menuItems().map(it => h('button', { class: 'nav', 'data-v': it.id, 'aria-current': it.id === state.route.page ? 'page' : null, disabled: off.includes(it.id), title: off.includes(it.id) ? 'Off for this role. Switch it on in Settings.' : null, onclick: () => ui.go(it.id) }, it.label, badges.get(it.id) ? h('span', { class: 'badge', title: 'Finished since you last looked' }, String(badges.get(it.id))) : null)));
   fitMenu();
 }
+// ---------- small top bar icons: thin outlines in the text colour (the theme and download icons stay dull until hovered)
+const svg = (d, extra = '') => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}${extra}</svg>`;
+const ICON = {
+  sun: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>'),
+  moon: svg('<path d="M20 14.6A8.2 8.2 0 1 1 9.4 4a6.6 6.6 0 0 0 10.6 10.6z"/>'),
+  down: svg('<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/>'),
+  wifi: (cut) => svg('<path d="M2.5 9.2a14 14 0 0 1 19 0M5.6 12.6a9.4 9.4 0 0 1 12.8 0M8.7 16a5 5 0 0 1 6.6 0"/><circle cx="12" cy="19.3" r=".9" fill="currentColor"/>', cut ? '<path d="M4 3.5 20 20.5"/>' : ''),
+};
+function paintTheme() {
+  // the icon shows what a press switches to: a sun while the black theme is on, a moon while the white theme is on
+  const dark = document.documentElement.dataset.theme === 'dark', b = $('#theme');
+  const name = dark ? 'Switch to the light theme' : 'Switch to the dark theme';
+  if (b.dataset.icon !== (dark ? 'sun' : 'moon')) { b.innerHTML = dark ? ICON.sun : ICON.moon; b.dataset.icon = dark ? 'sun' : 'moon'; }
+  b.setAttribute('aria-label', name); b.title = name;
+}
 function paintChrome() {
-  const dark = document.documentElement.dataset.theme === 'dark';
-  $('#theme').textContent = dark ? 'White theme' : 'Black theme';
+  paintTheme(); paintDownloads(); paintNet();
   const nameEl = document.querySelector('.bar .name'); if (nameEl && nameEl.textContent !== appName()) nameEl.textContent = appName();
   if (!document.hidden && document.title !== appName()) document.title = appName();
   const halted = !!state.panic.halted;
@@ -105,7 +120,7 @@ $('#home').onclick = () => ui.go('home');
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && e.shiftKey) panic(true); });
 
 // ---------- approvals: the badge, the list, the decision
-async function refreshApprovals() { const r = await api('approvals'); state.pendingApprovals = r.pending; await refreshStopped(); paintChrome(); if (!$('#pop').hidden) showApprovals(true); }
+async function refreshApprovals() { const r = await api('approvals'); state.pendingApprovals = r.pending; await refreshStopped(); paintChrome(); if (popKind() === 'approvals') paintPop(); }
 // ---------- approvals Panic cancelled: listed until the owner dismisses them. They cannot be approved: the work was stopped.
 async function refreshStopped() {
   try { state.stoppedApprovals = ui.moduleOn('safety') ? (await api('m/safety/stopped')).items : []; } catch { state.stoppedApprovals = []; }
@@ -139,12 +154,134 @@ function approvalCard(a) {
 }
 const ACTION_WORDS = { 'file.write': 'Write a file', 'file.delete': 'Delete a file', 'file.read.outside': 'Open a folder', 'shell.run': 'Run a command', 'browser.open': 'Open a site', 'browser.act': 'Act in the browser', 'net.post': 'Send data', 'send.person': 'Send to a person', spend: 'Spend money', 'module.toggle': 'Switch a module', install: 'Install', login: 'Sign in', 'calendar.write': 'Change the calendar', custom: 'Action' };
 ui.approvalCard = approvalCard; ui.ACTION_WORDS = ACTION_WORDS;
-function showApprovals(open) {
-  const pop = $('#pop'); pop.hidden = !open; if (!open) return;
-  pop.replaceChildren(h('div', { class: 'row', style: { marginBottom: '8px' } }, h('h3', null, 'Waiting for you'), h('span', { class: 'grow' }), kit.btn('Close', { kind: 'ghost sm', onClick: () => showApprovals(false) })),
-    ...(state.pendingApprovals.length ? state.pendingApprovals.map(approvalCard) : [kit.empty('Nothing is waiting.')]), stoppedSection());
+// ---------- one pop-up under the top bar: what waits for the owner, the downloads, or the network
+const POP_BUTTON = { approvals: 'waiting', downloads: 'dl', network: 'net' };
+const popKind = () => $('#pop').hidden ? null : $('#pop').dataset.kind;
+function showPop(kind, open) {
+  const pop = $('#pop');
+  if (!open) { if (kind && popKind() !== kind) return; const was = popKind(); pop.hidden = true; delete pop.dataset.kind; paintExpanded(); return was; }
+  pop.dataset.kind = kind; pop.hidden = false; paintPop(); paintExpanded();
 }
-$('#waiting').onclick = () => showApprovals($('#pop').hidden);
+function paintExpanded() { for (const [k, id] of Object.entries(POP_BUTTON)) { const b = document.getElementById(id); if (b) { b.setAttribute('aria-expanded', String(popKind() === k)); b.setAttribute('aria-controls', 'pop'); } } }
+const popHead = (title, kind) => h('div', { class: 'row', style: { marginBottom: '8px' } }, h('h3', null, title), h('span', { class: 'grow' }), kit.btn('Close', { kind: 'ghost sm', onClick: () => closePop(kind) }));
+function closePop(kind) { const was = showPop(kind, false); if (was && POP_BUTTON[was]) document.getElementById(POP_BUTTON[was])?.focus({ preventScroll: true }); }
+function paintPop() {
+  const pop = $('#pop'), kind = pop.dataset.kind;
+  // redrawn on every live update: a focused button inside keeps the focus (same row, same words)
+  const f = pop.contains(document.activeElement) ? document.activeElement : null;
+  const key = f ? [f.closest('[data-dl]')?.dataset.dl || '', f.textContent] : null;
+  drawPop(pop, kind);
+  if (key) { const n = [...pop.querySelectorAll('button')].find(x => (x.closest('[data-dl]')?.dataset.dl || '') === key[0] && x.textContent === key[1]); (n || pop.querySelector('button'))?.focus({ preventScroll: true }); }
+}
+function drawPop(pop, kind) {
+  if (kind === 'approvals') pop.replaceChildren(popHead('Waiting for you', kind), ...(state.pendingApprovals.length ? state.pendingApprovals.map(approvalCard) : [kit.empty('Nothing is waiting.')]), stoppedSection());
+  else if (kind === 'downloads') pop.replaceChildren(popHead('Downloads', kind), ...downloadRows());
+  else if (kind === 'network') pop.replaceChildren(popHead('Network', kind), ...netRows());
+}
+function showApprovals(open) { if (open) showPop('approvals', true); else showPop('approvals', false); }
+const togglePop = (kind) => popKind() === kind ? closePop(kind) : showPop(kind, true);
+$('#waiting').onclick = () => togglePop('approvals');
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !e.shiftKey && popKind() && document.getElementById('modal')?.hidden !== false) closePop(); });
+// a press anywhere else closes the downloads and network pop-ups (the approvals list stays until Close)
+document.addEventListener('pointerdown', (e) => { const k = popKind(); if (k === 'downloads' || k === 'network') { if (!e.target.closest?.('#pop, #dl, #net')) showPop(k, false); } }, true);
+
+// ---------- downloads in the top bar: shown while any is not finished, live from the desk's 'downloads' events
+const dls = { list: [], summary: { active: 0, total: 0 }, told: new Set(), loaded: false };
+const OPEN_DL = new Set(['waiting', 'queued', 'running', 'paused']);
+function dlWords(d) {
+  if (d.state === 'paused') return /panic/i.test(d.reason || '') ? 'Paused by Panic' : /offline|internet/i.test(d.reason || '') ? 'Waiting for the internet' : 'Paused';
+  return { waiting: 'Waiting for you to approve', queued: 'Waiting to start', running: 'Downloading', done: 'Done', failed: 'Did not finish', cancelled: 'Cancelled' }[d.state] || d.state;
+}
+const leftWords = (s) => s < 60 ? 'under a minute left' : s < 3600 ? `about ${Math.ceil(s / 60)} min left` : `about ${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min left`;
+async function loadDownloads() {
+  try {
+    const r = await api('downloads'); dls.list = r.downloads || []; dls.summary = r.summary || dls.summary;
+    if (!dls.loaded) { for (const d of dls.list) if (!OPEN_DL.has(d.state)) dls.told.add(d.id); dls.loaded = true; }
+  } catch {}
+  paintDownloads();
+}
+function paintDownloads() {
+  const b = $('#dl'); if (!b) return;
+  const { active = 0, total = 0 } = dls.summary || {};
+  b.hidden = total === 0;
+  if (b.hidden) { if (popKind() === 'downloads') paintPop(); return; }
+  const text = `${active} of ${total}`;
+  if (b.dataset.text !== text) { b.innerHTML = ICON.down; b.append(h('span', null, text)); b.dataset.text = text; }
+  const name = `Downloads: ${active} of ${total} moving. Show the list`;
+  b.setAttribute('aria-label', name); b.title = name;
+  if (popKind() === 'downloads') paintPop();
+}
+function downloadRows() {
+  const recent = (d) => d.finished && Date.now() - new Date(d.finished).getTime() < 15 * 60000;
+  const list = dls.list.filter(d => OPEN_DL.has(d.state) || recent(d));
+  if (!list.length) return [kit.empty('Nothing is downloading.')];
+  const act = (d, what) => api(`downloads/${encodeURIComponent(d.id)}/${what}`, { method: 'POST' }).then(loadDownloads).catch(e => toast(e.message, 'err'));
+  return list.map(d => {
+    const open = OPEN_DL.has(d.state), p = d.total ? d.done / d.total : 0;
+    const bits = [`${d.doneText} of ${d.totalText}`]; if (d.state === 'running' && d.speedText) bits.push(d.speedText); if (d.state === 'running' && d.secondsLeft != null) bits.push(leftWords(d.secondsLeft));
+    return h('div', { class: 'card dlrow', 'data-dl': d.id, style: { marginBottom: '8px' } },
+      h('div', { class: 'row' }, h('b', { style: { minWidth: 0, overflowWrap: 'anywhere' } }, d.title), h('span', { class: 'grow' }), kit.pill(dlWords(d), d.state === 'running' ? 'run' : d.state === 'done' ? 'ok' : d.state === 'failed' ? 'stop' : d.state === 'cancelled' ? '' : 'wait')),
+      kit.meter(p, { live: d.state === 'running', style: { margin: '8px 0 4px' } }),
+      h('div', { class: 'sub' }, bits.join(' · ')),
+      d.reason && d.state !== 'waiting' ? h('div', { class: 'sub' }, d.reason) : null,
+      open ? h('div', { class: 'row', style: { marginTop: '6px' } }, h('span', { class: 'grow' }),
+        d.state === 'waiting' ? kit.btn('Review', { kind: 'ghost sm', onClick: () => showApprovals(true) }) : null,
+        ['running', 'queued', 'waiting'].includes(d.state) ? kit.btn('Pause', { kind: 'ghost sm', onClick: () => act(d, 'pause') }) : null,
+        d.state === 'paused' ? kit.btn('Resume', { kind: 'sm', onClick: () => act(d, 'resume') }) : null,
+        kit.btn('Cancel', { kind: 'ghost sm', onClick: () => act(d, 'cancel') })) : null);
+  });
+}
+$('#dl').onclick = () => togglePop('downloads');
+
+// ---------- the network icon: green online, red no internet, grey when the owner set the desk Offline.
+// What it knows costs nothing outside: the browser's own online state, the model door's last real calls, and, with the
+// Network module on, that module's stored summary (it never calls out to answer).
+const net = { summary: null, lastCall: null };
+const NET_FAIL = /fetch failed|network|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|timed? ?out|getaddrinfo|socket/i;
+function netState() {
+  if (state.settings.online === false) return 'off';
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'down';
+  if (net.summary && net.summary.online === false) return 'down';
+  if (net.lastCall && !net.lastCall.ok && NET_FAIL.test(net.lastCall.error || '')) return 'down';
+  return 'up';
+}
+const NET_WORDS = { up: 'Online', down: 'No internet', off: 'Offline by your choice' };
+function paintNet() {
+  const b = $('#net'); if (!b) return;
+  const st = netState();
+  if (b.dataset.state !== st) { b.innerHTML = ICON.wifi(st !== 'up'); b.dataset.state = st; }
+  const name = `Network: ${NET_WORDS[st]}. Show details`;
+  b.setAttribute('aria-label', name); b.title = NET_WORDS[st];
+  if (popKind() === 'network') paintPop();
+}
+async function loadNet({ calls = false } = {}) {
+  if (ui.moduleOn('network')) { try { net.summary = await api('m/network/summary'); } catch { net.summary = null; } } else net.summary = null;
+  if (calls) {
+    try {
+      const r = await api('model/active');
+      const lasts = (r.active || []).map(p => p.last).filter(x => x && x.at).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+      net.lastCall = lasts[0] || null;
+    } catch {}
+  }
+  paintNet();
+}
+function netRows() {
+  const st = netState(), s = net.summary, rows = [];
+  const why = st === 'off' ? 'The desk is set to Offline, by your choice. Agents make no outside calls until you switch Online back on.'
+    : st === 'up' ? 'This PC is online.' + (s?.viaLastCheckAt ? ` Last checked ${kit.fmt.ago(s.viaLastCheckAt)}.` : '')
+    : navigator.onLine === false ? 'This PC has no internet connection right now.'
+    : s?.online === false ? 'The last check found no internet.' : `The last call to an outside service did not get through${net.lastCall?.at ? ' (' + kit.fmt.ago(net.lastCall.at) + ')' : ''}.`;
+  rows.push(h('p', { class: 'netstate', 'data-state': st }, h('span', { class: 'ico-dot', 'aria-hidden': 'true' }), h('b', null, NET_WORDS[st] + '. '), why));
+  if (s?.latencyMs != null) rows.push(kit.line('Latency', null, h('span', { class: 'val' }, `${Math.round(s.latencyMs)} ms`)));
+  if (s && s.down != null) rows.push(kit.line('Watched sites down', null, h('span', { class: 'val' }, String(s.down))));
+  const m = state.modules.find(x => x.id === 'network');
+  if (m) rows.push(h('div', { class: 'row', style: { marginTop: '8px' } }, h('span', { class: 'grow' }),
+    !m.on && m.kind !== 'core' ? kit.btn('Switch on Network', { kind: 'ghost sm', onClick: () => { showPop('network', false); location.hash = '#/settings/modules?module=network'; } }) : null,
+    kit.btn('Open Network', { kind: 'sm', onClick: () => { showPop('network', false); ui.go('network'); } })));
+  return rows;
+}
+$('#net').onclick = () => { togglePop('network'); if (popKind() === 'network') loadNet({ calls: true }); };
+window.addEventListener('online', () => paintNet()); window.addEventListener('offline', () => paintNet());
 
 // ---------- routing and pages
 function parseHash() {
@@ -169,9 +306,10 @@ async function render() {
   state.route = parseHash();
   const { page } = state.route;
   badges.delete(page);   // the owner is looking at this place now
+  keptFocus = null;
   // Each render draws into a fresh element, so a slower earlier render can never add to the page on screen.
   const old = $('#view'); const view = document.createElement('section'); view.id = 'view'; view.className = 'view'; old.replaceWith(view);
-  const stale = () => seq !== renderSeq; $('#pane').scrollTop = 0; showApprovals(false);
+  const stale = () => seq !== renderSeq; $('#pane').scrollTop = 0; showPop(null, false);
   paintMenu();
   try {
     if (page === 'home') return await homePage(view, ui);
@@ -188,6 +326,19 @@ async function render() {
     if (def.unmount) pageCleanup.push(() => def.unmount());
   } catch (e) { console.error(e); view.replaceChildren(offNote('This screen hit an error: ' + e.message, null)); }
 }
+// A control that a page redraws in place (a module switch in Settings) keeps the keyboard focus: when the focused
+// element leaves the page and nothing else took the focus, its new copy (same data-module or id) gets it back.
+let keptFocus = null;
+document.addEventListener('focusin', (e) => {
+  const t = e.target; if (!(t instanceof Element) || !t.closest('#view')) { keptFocus = null; return; }
+  const key = t.getAttribute('data-module') ? `[data-module="${CSS.escape(t.getAttribute('data-module'))}"]` : t.id ? '#' + CSS.escape(t.id) : null;
+  keptFocus = key ? { key, el: t } : null;
+});
+new MutationObserver(() => {
+  if (!keptFocus || keptFocus.el.isConnected) return;
+  if (document.activeElement && document.activeElement !== document.body) { keptFocus = null; return; }
+  const n = $('#view')?.querySelector(keptFocus.key); if (n) n.focus({ preventScroll: true });
+}).observe($('#pane'), { childList: true, subtree: true });
 function offNote(text, m) {
   return h('div', { class: 'offnote' }, h('b', null, text), m && m.kind !== 'core' ? kit.btn(`Switch on ${m.name}`, { onClick: async () => { try { await api(`modules/${m.id}/on`, { method: 'POST' }); await refresh(); render(); } catch (e) { toast(e.message, 'err'); } } }) : null, m ? h('span', { class: 'sub' }, 'Modules are switched in Settings › Modules.') : null);
 }
@@ -196,8 +347,16 @@ function fitMenu() {
   const over = menu.scrollWidth > menu.clientWidth + 1;
   menu.classList.toggle('over', over);
   if (over) menu.querySelector('[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  menuEdges();
   placeNotice();
-  if (!menu._wheel) { menu._wheel = true; menu.addEventListener('wheel', (e) => { if (menu.scrollWidth > menu.clientWidth && Math.abs(e.deltaY) > Math.abs(e.deltaX)) { menu.scrollLeft += e.deltaY; e.preventDefault(); } }, { passive: false }); window.addEventListener('resize', fitMenu); }
+  if (!menu._wheel) { menu._wheel = true; menu.addEventListener('wheel', (e) => { if (menu.scrollWidth > menu.clientWidth && Math.abs(e.deltaY) > Math.abs(e.deltaX)) { menu.scrollLeft += e.deltaY; e.preventDefault(); } }, { passive: false }); window.addEventListener('resize', fitMenu); menu.addEventListener('scroll', menuEdges, { passive: true }); }
+}
+/** Which ends of the menu hide places: only those ends fade. */
+function menuEdges() {
+  const menu = $('#menu'); if (!menu) return;
+  const over = menu.classList.contains('over');
+  menu.classList.toggle('fl', over && menu.scrollLeft > 2);
+  menu.classList.toggle('fr', over && menu.scrollLeft + menu.clientWidth < menu.scrollWidth - 2);
 }
 // ---------- notices: in the top bar's free room right of the menu, else one slim line under the bar (the page moves down for it)
 function placeNotice() {
@@ -208,7 +367,8 @@ function placeNotice() {
   const menuRight = Math.min(menu.right, Math.max(menu.left, ...$$('#menu .nav').map(n => n.getBoundingClientRect().right)));
   const ctl = [...$('.bar>div:last-child').children].find(e => e.offsetWidth);
   const ctlLeft = ctl ? ctl.getBoundingClientRect().left : bar.right - 12;
-  const room = Math.min(360, ctlLeft - menuRight - 20);
+  const ownRow = ctl && menu.top >= ctl.getBoundingClientRect().bottom - 1;   // phone width: the menu has its own row, so no room beside it
+  const room = ownRow ? 0 : Math.min(360, ctlLeft - menuRight - 20);
   const ctx = placeNotice.ctx || (placeNotice.ctx = document.createElement('canvas').getContext('2d'));
   ctx.font = '12.5px ' + getComputedStyle(t).fontFamily;
   const side = room >= Math.min(ctx.measureText(t.textContent).width + 26, 220);
@@ -248,6 +408,38 @@ ui.chooseRole = chooseRole;
 async function hasFastModel() {
   try { const r = await api('model/active'); return (r.active || []).some(p => (p.kind === 'keyed' && p.keys) || (p.kind === 'local' && p.ok && (p.models || []).length) || p.kind === 'lan'); } catch { return false; }
 }
+/** The first-start offer of a local model: what /api/local-engine/plan says fits this PC, ticked when it can be had.
+ *  Nothing is fetched here; Save asks the desk to start the downloads, and each one still asks the owner first. */
+function localModelBox() {
+  const cb = h('input', { type: 'checkbox', id: 'onb-local', disabled: true, 'aria-describedby': 'onb-local-d' });
+  const what = h('span', { class: 'd', id: 'onb-local-d' }, 'Checking what fits this PC…');
+  const choose = h('button', { type: 'button', class: 'link', hidden: true, 'aria-expanded': 'false' }, 'Choose another');
+  const list = h('div', { class: 'choices', hidden: true, role: 'radiogroup', 'aria-label': 'Local model' });
+  const box = h('div', { class: 'localbox', 'data-apd': 'local-model' },
+    h('label', { class: 'tick' }, cb, h('span', null, h('b', null, 'Download a local model in the background'), what,
+      h('span', { class: 'd' }, 'It runs on this PC and works without the internet.'))), h('div', { class: 'row', style: { paddingLeft: '22px' } }, choose), list);
+  const pick = { id: null, ok: false };
+  const off = (why) => { cb.checked = false; cb.disabled = true; pick.ok = false; what.textContent = why; choose.hidden = true; list.hidden = true; box.classList.add('off'); };
+  const show = (plan) => {
+    if (state.settings.online === false) return off('Not now: the desk is Offline. Switch it online first, then get it on the Models page.');
+    if (state.panic.halted) return off('Not now: everything is stopped. Press Resume first.');
+    if (!plan.ok || !plan.model) return off(plan.reason || 'No local model fits this PC.');
+    if (!plan.totalBytes) return off(`${plan.model.name} is already on this PC.`);
+    pick.id = plan.model.id; pick.ok = true; box.classList.remove('off');
+    if (cb.disabled) { cb.disabled = false; cb.checked = true; }
+    what.textContent = `${plan.model.name}${plan.engineBytes ? ' and its engine' : ''}, ${plan.totalText}`;
+    const others = (plan.choices || []).filter(c => c.fits);
+    choose.hidden = others.length < 2;
+    list.replaceChildren(...(plan.choices || []).map(c => h('label', { class: 'tick' }, h('input', { type: 'radio', name: 'onb-model', value: c.id, checked: c.id === pick.id, disabled: !c.fits, onchange: () => choice(c.id) }),
+      h('span', null, h('b', null, c.name), h('span', { class: 'd' }, c.fits ? `${c.sizeText}${c.why ? '. ' + c.why[0].toUpperCase() + c.why.slice(1) + '.' : ''}` : `${c.sizeText}. Too large for this PC.`)))));
+  };
+  const read = async (id) => { const [plan, eng] = await Promise.all([api('local-engine/plan' + (id ? '?model=' + encodeURIComponent(id) : '')), api('local-engine').catch(() => null)]); if (eng && eng.on === false) return off('The local engine is switched off on the Models page.'); show(plan); };
+  const choice = (id) => { what.textContent = 'Checking…'; read(id).catch(e => off('Could not check it now: ' + e.message)); };
+  choose.onclick = () => { list.hidden = !list.hidden; choose.setAttribute('aria-expanded', String(!list.hidden)); };
+  read(null).catch(e => off('Could not check what fits this PC: ' + e.message));
+  return { el: box, wanted: () => pick.ok && cb.checked && !cb.disabled ? pick.id : null };
+}
+
 async function firstStep(roleId) {
   const box = $('#onb .card'); const done = () => { $('#onb').hidden = true; paintChrome(); render(); };
   const role = ROLES[roleId];
@@ -261,11 +453,15 @@ async function firstStep(roleId) {
     return h('label', { class: 'tick' }, cb, h('span', null, h('b', null, a.name), h('span', { class: 'd' }, always ? 'Always on. ' + a.role : a.role)));
   });
   const team = ui.moduleOn('agents') && ticks.length > 1 ? h('div', null, h('h3', null, 'Your team'), h('p', { class: 'sub' }, 'Ticked for ' + (role ? role.name.toLowerCase() : 'everything') + '. You can hire or retire agents later on the Agents page.'), h('div', { class: 'ticks' }, ticks)) : null;
+  // the model note comes in when the desk has said whether a fast model is there; the screen does not wait for it
   const noteSeen = !!state.settings['ui.modelNoteSeen'];
-  const note = !noteSeen && !(await hasFastModel()) ? h('div', { class: 'note', id: 'model-note' }, h('span', null, 'Free models answer by default. They need no key but can be slow. For faster answers add a free key or a local model in Models.'),
-    h('span', { class: 'row' }, kit.btn('Open Models', { kind: 'ghost sm', onClick: async () => { await finish(true); ui.go('models'); } }), kit.btn('Got it', { kind: 'ghost sm', onClick: () => { note.remove(); api('settings', { body: { 'ui.modelNoteSeen': true } }).catch(() => {}); } }))) : null;
+  const noteSlot = h('div', { hidden: true });
+  let note = null;
+  const local = localModelBox();
   const err = h('p', { class: 'sub', role: 'status' });
-  async function finish(saveIt) {
+  const skipBtn = kit.btn('Skip for now', { kind: 'ghost', onClick: () => finish(false) }), saveBtn = kit.btn('Save', { onClick: () => finish(true) });
+  async function finish(saveIt, { withLocal = saveIt } = {}) {
+    skipBtn.disabled = saveBtn.disabled = true; err.textContent = saveIt ? 'Saving…' : '';
     try {
       const body = { 'ui.firstStep': saveIt ? 'saved' : 'skipped' };
       if (note) body['ui.modelNoteSeen'] = true;
@@ -275,17 +471,29 @@ async function firstStep(roleId) {
         // an agent left unticked is retired the way the Agents page retires it; the rooms then follow the team
         const off = ticks.map(t => t.querySelector('input')).filter(cb => !cb.checked && !cb.disabled).map(cb => cb.value);
         for (const id of off) await api(`m/agents/agents/${encodeURIComponent(id)}`, { method: 'DELETE' });
-        if (off.length && ui.moduleOn('chat')) await api('m/chat/rooms/fit', { method: 'POST' });
+        if (off.length && ui.moduleOn('chat')) api('m/chat/rooms/fit', { method: 'POST' }).catch(() => {});   // the rooms follow in the background
         if (off.length) state.agents = (await api('agents')).agents;
       }
+      // the local model: only on Save, only when ticked. Each download then asks the owner, as every download does.
+      const modelId = saveIt && withLocal ? local.wanted() : null;
+      if (modelId) {
+        try { await api('local-engine/get', { body: { model: modelId } }); toast('The local model will download in the background once you allow it.', 'ok', 7000); }
+        catch (e) { toast('The local model did not start: ' + e.message, 'err'); }
+      }
       done(); return true;
-    } catch (e) { err.textContent = 'That did not save: ' + e.message; return false; }
+    } catch (e) { err.textContent = 'That did not save: ' + e.message; skipBtn.disabled = saveBtn.disabled = false; return false; }
   }
   box.replaceChildren(
-    h('div', null, h('h2', null, 'What do you do?'), h('p', { class: 'sub' }, help)), about, team, note, err,
-    h('div', { class: 'row' }, h('span', { class: 'grow' }), kit.btn('Skip for now', { kind: 'ghost', onClick: () => finish(false) }), kit.btn('Save', { onClick: () => finish(true) })));
+    h('div', null, h('h2', null, 'What do you do?'), h('p', { class: 'sub' }, help)), about, team, noteSlot, local.el, err,
+    h('div', { class: 'row' }, h('span', { class: 'grow' }), skipBtn, saveBtn));
   box.classList.add('step2');
   about.focus();
+  if (!noteSeen) hasFastModel().then((fast) => {
+    if (fast || !noteSlot.isConnected) return;
+    note = h('div', { class: 'note', id: 'model-note' }, h('span', null, 'Free models answer by default. They need no key but can be slow. For faster answers add a free key or a local model in Models.'),
+      h('span', { class: 'row' }, kit.btn('Open Models', { kind: 'ghost sm', onClick: async () => { if (await finish(true, { withLocal: false })) ui.go('models'); } }), kit.btn('Got it', { kind: 'ghost sm', onClick: () => { note.remove(); api('settings', { body: { 'ui.modelNoteSeen': true } }).catch(() => {}); } })));
+    noteSlot.replaceWith(note);
+  });
 }
 
 // ---------- state and live events
@@ -301,14 +509,33 @@ function connect() {
   const es = new EventSource('/api/events');
   es.addEventListener('apd', (ev) => { let m = null; try { m = JSON.parse(ev.data); } catch { return; } if (m?.type) emitLocal(m.type, m.data || {}); });
   es.onerror = () => { /* the browser reconnects on its own */ };
+  let opened = false; es.onopen = () => { if (opened) loadDownloads(); opened = true; };   // events missed while away
 }
 globalOn('panic', (st) => { if (st && 'halted' in st) { state.panic = st; paintChrome(); if (!st.halted) refreshApprovals().catch(() => {}); } });
 globalOn('approval', (a) => { refreshApprovals().catch(() => {}); if (a?.status === 'pending') toast(`Waiting for you: ${a.title}`); });
-globalOn('modules', async () => { loaded.clear(); await refresh(); bootModules(); const m = ownerOf(state.route.page); if (state.route.page === 'settings' || (m && !m.on) || !m) render(); });
+globalOn('modules', async () => {
+  loaded.clear(); await refresh(); bootModules();
+  // Settings updates in place (its menu, the cards): the owner stays where he was, at the same scroll and focus
+  const v = $('#view');
+  if (state.route.page === 'settings' && typeof v?._onModules === 'function') { try { if (await v._onModules() !== 'render') return; } catch (e) { console.error(e); } }
+  const m = ownerOf(state.route.page); if (state.route.page === 'settings' || (m && !m.on) || !m) render();
+});
 globalOn('agents', () => api('agents').then(r => { state.agents = r.agents; }).catch(() => {}));
 globalOn('security', (s) => { if (s?.level) { state.security = s; paintChrome(); } });
 globalOn('toast', (t) => toast(t.text || String(t), t.kind || ''));
 globalOn('job', jobFinished);
+globalOn('downloads', ({ download, summary } = {}) => {
+  if (download?.id) {
+    const i = dls.list.findIndex(x => x.id === download.id); if (i >= 0) dls.list[i] = download; else dls.list.unshift(download);
+    if (download.state === 'done' && !dls.told.has(download.id)) { dls.told.add(download.id); if (state.settings.notifications !== false) toast(`Downloaded: ${download.title}`, 'ok', 9000); }
+    else if (OPEN_DL.has(download.state)) dls.told.delete(download.id);
+  }
+  if (summary) dls.summary = summary;
+  paintDownloads();
+});
+globalOn('settings', (ch) => { if (ch && 'online' in ch) { state.settings.online = ch.online; paintNet(); } });
+globalOn('network', () => loadNet());
+globalOn('modules', () => loadNet());
 
 /** Modules whose manifest says "boot": true add something to every screen (Voice's mic button, the lock overlay).
  *  Their ui.js is loaded at start and whenever modules change; an exported boot(ui) is called once per load. */
@@ -330,6 +557,10 @@ ui.coreSettingsSections = coreSettingsSections;
 await refresh();
 paintOnboarding();
 connect();
+loadDownloads(); loadNet({ calls: true });
+// the Network module's stored summary, read again now and then while the window is shown (a read on this PC, never a call out)
+setInterval(() => { if (!document.hidden && ui.moduleOn('network')) loadNet(); }, 60000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) loadNet(); });
 bootModules();
 ownerHere();
 if (!location.hash) location.hash = '#/chat'; else render();

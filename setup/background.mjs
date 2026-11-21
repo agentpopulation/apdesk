@@ -25,9 +25,9 @@ export function rollingLog(file, max = LOG_MAX) {
 
 const stamp = () => { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };   // local time
 
-function runOnce(args, log) {
+function runOnce(args, log, env = {}) {
   return new Promise((resolve) => {
-    const p = spawn(process.execPath, args, { cwd: ROOT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    const p = spawn(process.execPath, args, { cwd: ROOT, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     p.stdout.on('data', (d) => log.write(d)); p.stderr.on('data', (d) => log.write(d));
     p.on('error', (e) => { log.write(`Could not start: ${e.message}\n`); resolve(1); });
     p.on('exit', (code) => resolve(code ?? 1));
@@ -39,7 +39,7 @@ export async function runDesk({ log = rollingLog(path.join(DATA, 'desk.log')) } 
     log.write(`\n--- AP Desk starting, ${stamp()} ---\n`);
     const update = path.join(ROOT, 'setup', 'apply-update.mjs');
     if (fs.existsSync(update)) await runOnce([update], log);
-    const code = await runOnce(['--no-warnings', path.join(ROOT, 'app', 'server.js')], log);
+    const code = await runOnce(['--no-warnings', path.join(ROOT, 'app', 'server.js')], log, { APD_BACKGROUND: '1' });   // hidden: the desk keeps the pairing code out of this log
     if (code !== 75) { log.write(`--- AP Desk stopped (code ${code}), ${stamp()} ---\n`); return code; }   // 75: the desk asked to be started again
   }
 }
