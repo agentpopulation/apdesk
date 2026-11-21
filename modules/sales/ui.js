@@ -1,4 +1,6 @@
 // Sales page: totals, the pipeline board (drag and drop or Move), the lead panel, Leads, Outreach, and a coach note.
+// Tabs: Leads (all of the above), Contacts, Companies, Deals (ui-crm.js).
+import { mountCrm, CRM_STYLE } from './ui-crm.js';
 const STAGES = [['new', 'New'], ['researched', 'Researched'], ['drafted', 'Drafted'], ['talks', 'In talks']];
 const S_IDX = Object.fromEntries(STAGES.map(([id], i) => [id, i]));
 const CHANNEL = { email: 'Email draft', linkedin: 'LinkedIn message', whatsapp: 'WhatsApp message', text: 'Text' };
@@ -27,7 +29,8 @@ const STYLE = `
 @media (max-width:860px){.view.salesv{overflow:auto}.salesv .board{grid-template-rows:none}}
 `;
 
-let st = { mode: 0, pick: null, data: null, job: null };
+let st = { mode: 0, pick: null, data: null, job: null, tab: 0 };
+const TABS = ['Leads', 'Contacts', 'Companies', 'Deals'];
 
 /**
  * "Approve and send", from any screen. Fetches the draft as stored now, hands it to onFresh (so a card can repaint),
@@ -59,7 +62,7 @@ export const pages = {
     title: 'Sales',
     async render(el, ui) {
       const { h, btn, pill, fmt, api, toast, card } = ui;
-      if (!document.getElementById('sales-style')) document.head.append(h('style', { id: 'sales-style' }, STYLE));
+      if (!document.getElementById('sales-style')) document.head.append(h('style', { id: 'sales-style' }, STYLE + CRM_STYLE));
       el.classList.add('salesv');
       const title = ui.label('sales', 'Sales');
       const money = (minor, cur) => (minor == null ? 'value not set' : fmt.money(minor, cur));
@@ -74,13 +77,25 @@ export const pages = {
 
       const seg = ui.seg(['Pipeline', 'Leads', 'Outreach'], st.mode, (o, i) => { st.mode = i; paint(); });
       const jobLine = h('span', { class: 'sub' });
-      const head = h('div', { class: 'row' }, h('h2', null, title), seg, jobLine, h('span', { class: 'grow' }),
+      const tabs = ui.seg(TABS, st.tab, (o, i) => { st.tab = i; layout(); });
+      const leadBar = h('div', { class: 'row', style: { flex: '1 1 auto', minWidth: 0 } }, seg, jobLine, h('span', { class: 'grow' }),
         btn('Your offer', { kind: 'ghost', title: 'What you sell: Closer uses it in drafts', onClick: offerDialog }), btn('Find leads', { kind: 'ghost', onClick: findDialog }), btn('Add lead', { onClick: () => leadDialog() }));
+      const head = h('div', { class: 'row' }, h('h2', null, title), tabs, leadBar);
       const tiles = h('div', { class: 'tiles' });
       const coachBox = h('div', { class: 'card coach' });
       const main = h('div', { class: 's-main' });
       const det = h('div', { class: 'card stack s-det' });
-      el.replaceChildren(head, tiles, coachBox, h('div', { class: 'crm' }, main, det));
+      const leadsBody = h('div', { class: 'crm' }, main, det);
+      const crmPane = h('div', { class: 'crm-pane' });
+      const crmTabs = mountCrm(crmPane, ui);
+      el.replaceChildren(head, tiles, coachBox, leadsBody, crmPane);
+      function layout() {
+        const leads = st.tab === 0;
+        for (const x of [leadBar, tiles, coachBox, leadsBody]) x.hidden = !leads;
+        crmPane.hidden = leads;
+        if (!leads) crmTabs.show(['', 'contacts', 'companies', 'deals'][st.tab]);
+      }
+      layout();
 
       async function load() { st.data = await api('m/sales/state'); if (!st.pick || !st.data.leads.some(l => l.id === st.pick)) st.pick = st.data.leads[0]?.id || null; paint(); }
       const draftsFor = (id) => st.data.drafts.filter(d => d.leadId === id);
@@ -132,6 +147,7 @@ export const pages = {
           { label: 'Stage', render: (l) => pill([dot(l.stage), l.stageLabel]) }, { label: 'Value', render: (l) => money(l.value, l.currency) },
           { label: 'Next', render: (l) => l.nextStep || l.need || '' },
           { label: 'Not checked', render: (l) => openText(l) },
+          { label: 'CRM', render: (l) => inCrm(l) ? pill('In the CRM', 'ok') : '' },
           { label: 'Source', render: (l) => l.sources[0] ? h('a', { href: l.sources[0].url, target: '_blank', rel: 'noopener noreferrer', onclick: (e) => e.stopPropagation() }, l.sources[0].title) : 'none' },
         ], checkedFirst(st.data.leads), { onRow: (l) => { st.pick = l.id; paint(); }, empty: 'No leads yet.' })));
       }
@@ -148,7 +164,8 @@ export const pages = {
         const next = STAGES[S_IDX[l.stage] + 1];
         det.replaceChildren(...[
           h('div', { class: 'row' }, h('span', { class: 'av big g' }, ini(l.company)), h('div', { style: { minWidth: 0, flex: 1 } }, h('h3', null, l.company), h('div', { class: 'sub' }, contact(l)))),
-          h('div', { class: 'row' }, pill([dot(l.stage), l.stageLabel]), pill(money(l.value, l.currency)), pill(`${l.sources.length} source${l.sources.length === 1 ? '' : 's'}`)),
+          h('div', { class: 'row' }, pill([dot(l.stage), l.stageLabel]), pill(money(l.value, l.currency)), pill(`${l.sources.length} source${l.sources.length === 1 ? '' : 's'}`), h('span', { class: 'grow' }),
+            inCrm(l) ? pill('In the CRM', 'ok') : btn('Add to CRM', { kind: 'ghost sm', title: 'Save this company and contact in Companies and Contacts', onClick: (e) => addToCrm(l, e.currentTarget) })),
           open(l) ? h('div', { class: 'sub' }, `${openText(l)}: no page read said it.`) : null,
           h('div', null, h('h6', null, 'What Closer found'), h('p', { class: 'sub', style: { margin: 0 } }, l.findings || l.need || 'Nothing yet.')),
           l.email || l.website || l.contactOther ? h('div', { class: 'sub' }, l.email ? 'Mail: ' + l.email + ' · ' : '', l.website ? h('a', { href: l.website, target: '_blank', rel: 'noopener noreferrer' }, l.website.replace(/^https?:\/\//, '')) : '', (() => { const u = (l.contactOther.match(/https?:\/\/\S+/) || [])[0]; return u ? [' · ', h('a', { href: u, target: '_blank', rel: 'noopener noreferrer' }, 'contact page')] : ''; })()) : null,
@@ -168,6 +185,12 @@ export const pages = {
         api(`m/sales/leads/${l.id}`).then(r => { const tl = det.querySelector('.tl'); if (tl) tl.replaceChildren(...(r.activity.length ? r.activity.map(a => ui.line(a.text, `${a.who} · ${fmt.when(a.at)}`)) : [h('span', { class: 'sub' }, 'Nothing yet.')])); }).catch(() => {});
       }
 
+      const inCrm = (l) => (st.data.crmLeads || []).includes(l.id);
+      async function addToCrm(l, b) {
+        b.disabled = true;
+        try { const r = await api(`m/sales/crm/from-lead/${l.id}`, { method: 'POST' }); toast(r.already ? `${l.company} is already in the CRM` : `${r.company.name} added to Companies${r.contact ? ' and Contacts' : ''}`, 'ok'); await load(); crmTabs.refresh(); }
+        catch (e) { toast(e.message, 'err'); b.disabled = false; }
+      }
       async function move(id, stage) { try { await api(`m/sales/leads/${id}/move`, { body: { stage } }); await load(); } catch (e) { toast(e.message, 'err'); } }
       async function draftFor(id) { try { const r = await api('m/sales/draft', { body: { leadIds: [id] } }); toast(r.text || 'Writing the draft'); } catch (e) { toast(e.message, 'err'); } }
       async function approveSend(dr) {
@@ -211,7 +234,7 @@ export const pages = {
           actions: [{ label: 'Cancel' }, { label: 'Start search', kind: '', onClick: async () => { if (!q.value.trim()) return false; try { const r = await api('m/sales/find', { body: { query: q.value.trim(), count: Number(n.value) || 20 } }); if (!r.ok) toast(r.text, 'err'); else { st.job = r.jobId; jobLine.textContent = 'Finding leads…'; } } catch (e) { toast(e.message, 'err'); } } }] });
       }
 
-      ui.on('sales', () => { clearTimeout(st.t); st.t = setTimeout(() => load().catch(() => {}), 250); });
+      ui.on('sales', (d) => { if (d?.change === 'crm') st.crmDirty = true; clearTimeout(st.t); st.t = setTimeout(() => { load().catch(() => {}); if (st.crmDirty) { st.crmDirty = false; crmTabs.refresh(); } }, 250); });
       ui.on('job', (j) => { if (!j || !String(j.kind || '').startsWith('sales.')) return; jobLine.textContent = j.status === 'running' ? `${j.title.split(':')[0]}: ${j.detail || ''}` : j.status === 'done' ? '' : `${j.title.split(':')[0]}: ${j.status}`; if (j.status !== 'running') load().catch(() => {}); });
       ui.on('modules', () => load().catch(() => {}));
       await load();

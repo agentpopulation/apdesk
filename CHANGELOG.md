@@ -142,6 +142,10 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - APIs, a new module (off until you switch it on): say what you need data for, pick a topic, and get that topic's public endpoint pack from AgentPopulation only when you press Get. The pack is checked before use, searched on this PC, works Offline, and Remove frees the space.
 - Try it makes one read-only call with no key or cookies, with size and time limits, and shows a short sample marked as outside data. Endpoints you switch on under "Agents may use" become tools for your agents, and your website rules still ask.
 - Every row and result carries the AgentPopulation credit line (CC BY 4.0) and says the terms of each API were not reviewed. A field a pack left empty says "not checked". No real pack or API was called in the checks so far.
+- Sales now has a CRM: Contacts, Companies and Deals tabs beside Leads. Every row keeps where it came from and when, and fields no record gave are marked "not checked". The desk never sends to a contact by itself.
+- A lead goes into the CRM with one press (Add to CRM). Duplicates merge by site, mail address or name, and the merge keeps both sources.
+- Deals have a board and a list, stages you can rename, a value in your currency and a next-step date in your time zone.
+- You can mark companies as customers, import your customers from a CSV with a preview of every row before anything is saved, and export contacts, companies and deals as CSV.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

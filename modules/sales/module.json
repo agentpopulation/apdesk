@@ -2,7 +2,7 @@
   "id": "sales",
   "number": 13,
   "name": "Sales",
-  "description": "Leads with sources, a four-stage pipeline and outreach drafts that wait for you. Nothing is sent without you.",
+  "description": "Leads with sources, contacts, companies, deals and customers, and outreach drafts that wait for you. Nothing is sent without you.",
   "kind": "core",
   "defaultOn": true,
   "menu": [],

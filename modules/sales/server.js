@@ -1,6 +1,7 @@
 // Sales CRM (module 13): leads with sources, a four-stage pipeline, outreach drafts that wait for the owner.
 // Nothing is sent from here: an approved draft is handed to Mail, which asserts the send.person approval right before sending.
 import { SalesStore, STAGES, CHANNELS, stageId, stageLabel } from './store.js';
+import { CrmStore, LAWFUL } from './crm.js';
 import { parseDraftReply } from './parse.js';
 import { findLeads, closingLine, leadCounts, groupLine, cutWords, purposeLine } from './find.js';
 import { companyKey, sameCompany, askCountry, buyerAsk, textNames } from './rules.js';
@@ -12,6 +13,7 @@ export async function activate(ctx) {
   const currency = () => ctx.settings.get('currency') || '';
   const sysLocale = () => { try { return Intl.DateTimeFormat().resolvedOptions().locale; } catch { return undefined; } };
   const store = new SalesStore(ctx.db, { currency, emit: (d) => ctx.events.emit('sales', d) });
+  const crm = new CrmStore(ctx.db, { currency, timeZone: () => ctx.settings.get('timeZone') || '', kv: ctx.kv, emit: (d) => ctx.events.emit('sales', d) });
   const waiting = new Map();       // draftId -> AbortController of its pending send.person request
   const pendingId = new Map();     // draftId -> approval id still pending in this run
 
@@ -332,7 +334,7 @@ export async function activate(ctx) {
 
   // ---------------- routes (owner-only for anything that changes data)
   const ownerOnly = (res, owner) => { if (!owner) { ctx.json(res, { error: 'Only the owner at this desk can do that.' }, 403); return true; } return false; };
-  const view = () => ({ leads: store.listLeads(), drafts: store.drafts(), totals: store.totals(), stages: STAGES, coach: ctx.kv.get('coach', null), mailOn: !!ctx.modules.api('mail'), offer: ctx.kv.get('offer', ''), searchOn: !!ctx.modules.api('search'), pending: Object.fromEntries(pendingId) });
+  const view = () => ({ leads: store.listLeads(), drafts: store.drafts(), totals: store.totals(), stages: STAGES, coach: ctx.kv.get('coach', null), mailOn: !!ctx.modules.api('mail'), offer: ctx.kv.get('offer', ''), searchOn: !!ctx.modules.api('search'), pending: Object.fromEntries(pendingId), crmLeads: crm.leadIds() });
   ctx.route('GET', '/state', (req, res) => ctx.json(res, view()));
   ctx.route('GET', '/leads', (req, res) => ctx.json(res, { leads: store.listLeads() }));
   ctx.route('GET', '/leads/:id', (req, res, { params }) => { const l = store.getLead(params.id); l ? ctx.json(res, { lead: l, drafts: store.drafts({ leadId: l.id }), activity: store.activity(l.id) }) : ctx.json(res, { error: 'Not found' }, 404); });
@@ -370,6 +372,31 @@ export async function activate(ctx) {
     const id = la?.status === 'pending' && sameItem(la.payload, item) ? live : askToSend(d.id);
     ctx.json(res, { approvalId: id });
   });
+  // ---------------- CRM: contacts, companies, deals, customers. Owner only, every route; nothing here sends anything.
+  const crmView = () => ({ companies: crm.companies(), contacts: crm.contacts(), deals: crm.deals(), stages: crm.stages(), currency: currency(), lawful: LAWFUL });
+  const crmRoute = (method, path, fn) => ctx.route(method, path, async (req, res, arg) => {
+    if (ownerOnly(res, arg.owner)) return;
+    try { const out = await fn(arg); out === null ? ctx.json(res, { error: 'Not found' }, 404) : ctx.json(res, out); }
+    catch (e) { if (e.status) ctx.json(res, { error: e.message }, e.status); else throw e; }
+  });
+  crmRoute('GET', '/crm', () => crmView());
+  crmRoute('POST', '/crm/from-lead/:id', ({ params }) => { const l = store.getLead(params.id); return l ? crm.fromLead(l) : null; });
+  crmRoute('POST', '/crm/companies', ({ body }) => ({ company: crm.upsertCompany(body || {}) }));
+  crmRoute('PATCH', '/crm/companies/:id', ({ params, body }) => { const c = crm.updateCompany(params.id, body || {}); return c && { company: c }; });
+  crmRoute('DELETE', '/crm/companies/:id', ({ params }) => { crm.removeCompany(params.id); return { ok: true }; });
+  crmRoute('POST', '/crm/contacts', ({ body }) => ({ contact: crm.upsertContact(body || {}) }));
+  crmRoute('PATCH', '/crm/contacts/:id', ({ params, body }) => { const c = crm.updateContact(params.id, body || {}); return c && { contact: c }; });
+  crmRoute('DELETE', '/crm/contacts/:id', ({ params }) => { crm.removeContact(params.id); return { ok: true }; });
+  crmRoute('POST', '/crm/deals', ({ body }) => ({ deal: crm.addDeal(body || {}) }));
+  crmRoute('PATCH', '/crm/deals/:id', ({ params, body }) => { const d = crm.updateDeal(params.id, body || {}); return d && { deal: d }; });
+  crmRoute('DELETE', '/crm/deals/:id', ({ params }) => { crm.removeDeal(params.id); return { ok: true }; });
+  crmRoute('PUT', '/crm/stages', ({ body }) => ({ stages: crm.renameStages(body?.labels || {}) }));
+  const csvIn = (body) => { const csv = String(body?.csv || ''); if (!csv.trim()) throw Object.assign(new Error('The file is empty.'), { status: 400 }); if (csv.length > 2_000_000) throw Object.assign(new Error('The file is too large: 2 MB at most.'), { status: 413 }); return csv; };
+  crmRoute('POST', '/crm/import/preview', ({ body }) => ({ rows: crm.plan(csvIn(body)) }));
+  crmRoute('POST', '/crm/import', ({ body }) => { const r = crm.importCsv(csvIn(body), body?.fileName); ctx.activity(`Customers added from ${r.from}`, `${r.saved} saved, ${r.skipped} skipped`); return r; });
+  crmRoute('GET', '/crm/export/:what', ({ params }) => ({ fileName: `${params.what}.csv`, csv: crm.exportCsv(params.what) }));
+  // for other modules (Bench: "already a customer"): customer companies, name and site host only
+  crmRoute('GET', '/customers', () => ({ customers: crm.customers() }));
   ctx.route('POST', '/offer', (req, res, { body, owner }) => { if (ownerOnly(res, owner)) return; ctx.kv.set('offer', clip(body?.offer, 600)); ctx.json(res, { offer: ctx.kv.get('offer', '') }); });
   ctx.route('POST', '/coach', async (req, res, { owner }) => { if (ownerOnly(res, owner)) return; try { ctx.json(res, await coach()); } catch (e) { ctx.json(res, { error: e.message }, e.code === 'halted' ? 503 : 502); } });
 
@@ -389,6 +416,7 @@ export async function activate(ctx) {
       return { leads: r.leads, purpose, label: r.label, pagesRead: r.pagesRead, searches: r.searches, reason: r.reason };
     },
     sameCompany: (a, b) => sameCompany(a, b),
+    customers: () => crm.customers(),
     pageNames: (text, company) => textNames(text, company),
   });
   return { async deactivate() { for (const ac of waiting.values()) ac.abort('module off'); waiting.clear(); } };
