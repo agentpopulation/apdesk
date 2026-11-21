@@ -100,6 +100,47 @@ export async function activate(ctx) {
    *  once true, so clearing messages does not make the desk new again; a desk from before the flag is read from its messages. */
   const deskStarted = () => { if (ctx.kv.get('chat.started', false)) return true; if (!store.exchanged()) return false; ctx.kv.set('chat.started', true); return true; };
 
+  // ---------- how long answers should be: asked once by a card after the desk's third finished exchange (a chat the owner
+  // typed in, never a job's or a schedule's turn); "Ask me later" brings it back once, ten exchanges on. The choice lives in
+  // this module's kv; coordinator.js adds its line to every turn's system prompt.
+  const LENGTHS = ['short', 'detailed'];
+  const askState = () => ({ later: 0, mark: 0, open: null, ...(ctx.kv.get('answerAsk', null) || {}) });
+  const openCard = (st) => {
+    const m = st.open ? store.message(st.open.messageId) : null;
+    const i = m ? m.cards.findIndex(c => c?.kind === 'answer-length' && c.state === 'ask') : -1;
+    return i >= 0 ? { m, i } : null;
+  };
+  /** The open card turns into its one saved line, or goes. */
+  const closeCard = (st, saved) => {
+    const hit = openCard(st); if (!hit) return;
+    const cards = hit.m.cards.slice(); if (saved) cards[hit.i] = { ...cards[hit.i], state: 'saved' }; else cards.splice(hit.i, 1);
+    bus.emitMessage(store.update(hit.m.id, { cards }));
+  };
+  function offerLength(chat, reply) {
+    if (reply?.status !== 'done' || ctx.kv.get('answerLength', null) || !deskStarted()) return;
+    const st = askState(); if (st.later >= 2 || openCard(st)) return;
+    if (store.exchanges(st.mark) < (st.later ? 10 : 3)) return;
+    bus.postCard(chat.id, { kind: 'answer-length', state: 'ask' }, { into: reply.id });
+    ctx.kv.set('answerAsk', { ...st, open: { chatId: chat.id, messageId: reply.id } });
+  }
+  ctx.route('GET', '/answer-length', (req, res) => ctx.json(res, { value: ctx.kv.get('answerLength', null) || null }));
+  ctx.route('PUT', '/answer-length', (req, res, { body, owner }) => {
+    if (!owner) return ctx.json(res, { error: 'Only the owner at this desk can change this.' }, 403);
+    const value = body && typeof body === 'object' && 'value' in body ? body.value : undefined;
+    if (value !== null && !LENGTHS.includes(value)) return ctx.json(res, { error: 'Pick short or detailed.' }, 400);
+    if (value) ctx.kv.set('answerLength', value); else ctx.kv.del('answerLength');
+    // the owner has answered the question, here or in Settings: the card does not come back by itself
+    const st = askState(); closeCard(st, !!value); ctx.kv.set('answerAsk', { ...st, open: null, later: 2 });
+    ctx.json(res, { value: value || null });
+  });
+  ctx.route('POST', '/answer-length/later', (req, res, { owner }) => {
+    if (!owner) return ctx.json(res, { error: 'Only the owner at this desk can change this.' }, 403);
+    const st = askState(); closeCard(st, false);
+    const later = Math.min(2, st.later + 1);
+    ctx.kv.set('answerAsk', { ...st, open: null, later, mark: store.lastId() });
+    ctx.json(res, { ok: true, later });
+  });
+
   const listChats = () => {
     for (const a of ctx.agents.list()) store.direct(a.id);
     return store.list().map(c => ({ ...c, running: co.running.has(c.id) }));
@@ -191,7 +232,7 @@ export async function activate(ctx) {
       return ctx.json(res, { ok: true, chatId: c.id, replyId: q.id, asked: true });
     } else p = co.turn(c.id, text, { speaker: body?.agentId, userMeta: chip ? { chip: true } : {} });
     // the reply that finished the desk's first exchange gets one line under it, once, that points at the suggestions
-    p.then((m) => { if (!first || m?.status !== 'done' || ctx.kv.get('chat.nextShown', false) || !deskStarted()) return; ctx.kv.set('chat.nextShown', true); bus.emitMessage(store.add(c.id, { role: 'system', text: NEXT_LINE, meta: { firstNext: true } })); emit({ type: 'chats' }); }, e => ctx.log('turn failed', e.message));
+    p.then((m) => { offerLength(c, m); if (!first || m?.status !== 'done' || ctx.kv.get('chat.nextShown', false) || !deskStarted()) return; ctx.kv.set('chat.nextShown', true); bus.emitMessage(store.add(c.id, { role: 'system', text: NEXT_LINE, meta: { firstNext: true } })); emit({ type: 'chats' }); }, e => ctx.log('turn failed', e.message));
     await new Promise(r => setImmediate(r));
     ctx.json(res, { ok: true, chatId: c.id, replyId: co.running.get(c.id)?.replyId || null });
   });
@@ -269,6 +310,8 @@ export async function activate(ctx) {
       store.touch(c.id, text || cards?.[0]?.title || ''); bus.emitMessage(m); emit({ type: 'chats' });
       return { chatId: c.id, messageId: m.id };
     },
+    /** Messages since a time, oldest first, for a look back at how turns went (role, status, the again mark, tool steps). Read-only. */
+    messagesSince: (since, limit = 2000) => ctx.db.all('SELECT * FROM m_chat_messages WHERE at >= ? ORDER BY id LIMIT ?', String(since || ''), Math.min(5000, Number(limit) || 2000)).map(r => store.message(r.id)),
     createChat({ title, members } = {}) { const c = store.create({ title, members }); emit({ type: 'chats' }); return c; },
     // what Home shows under "Pick up where you left off": plain words (a value stored before the preview was cleaned is cleaned here)
     recent(n = 6) { return store.list().filter(c => c.last).slice(0, n).map(c => ({ id: c.id, title: c.title || ctx.agents.get(c.members[0])?.name || 'Chat', last: cutAtWord(previewText(c.last), 140), updated: c.updated })); },

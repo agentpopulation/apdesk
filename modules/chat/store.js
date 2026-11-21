@@ -79,6 +79,12 @@ export function makeStore(ctx) {
     },
     /** Has an owner message on this desk been answered by a reply that finished (any chat)? */
     exchanged() { return !!db.get("SELECT 1 AS x FROM m_chat_messages a WHERE a.role = 'assistant' AND a.status = 'done' AND EXISTS (SELECT 1 FROM m_chat_messages u WHERE u.chat_id = a.chat_id AND u.role = 'user' AND u.id < a.id) LIMIT 1"); },
+    /** Finished exchanges on this desk (any chat) whose reply is newer than message `after`: a reply that finished right after
+     *  an owner message (system lines between them do not count). A job's or a schedule's turn is not the owner typing. */
+    exchanges(after = 0) {
+      return db.get("SELECT COUNT(*) AS n FROM m_chat_messages a WHERE a.id > ? AND a.role = 'assistant' AND a.status = 'done' AND json_extract(a.meta, '$.jobOf') IS NULL AND json_extract(a.meta, '$.note') IS NULL AND (SELECT p.role FROM m_chat_messages p WHERE p.chat_id = a.chat_id AND p.id < a.id AND p.role != 'system' ORDER BY p.id DESC LIMIT 1) = 'user'", Number(after) || 0).n;
+    },
+    lastId() { return db.get('SELECT MAX(id) AS n FROM m_chat_messages')?.n || 0; },
     lastOf(chatId) { return msgRow(db.get('SELECT * FROM m_chat_messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1', chatId)); },
   };
   return s;

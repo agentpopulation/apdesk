@@ -1,6 +1,6 @@
 // Chat page: rail of chats, the conversation at full width, the folding panel. Matches the Chat section of the approved preview.
 import { chipsFor, chipText, chipNeedsBusiness } from '/ui/pages/home.js';
-import { cleanReply, uniqueOutputs, previewText, stepChips, footTag, waitLine, hasTable, shortCell, railLine, liveText, PANEL_PREFIXES, BARE_LINES, bareStart, lastAsk, cutAtWord } from '/modules/chat/ui-text.js';
+import { cleanReply, uniqueOutputs, previewText, stepChips, footTag, waitLine, hasTable, shortCell, railLine, liveText, PANEL_PREFIXES, BARE_LINES, bareStart, lastAsk, cutAtWord, LENGTH_ASK } from '/modules/chat/ui-text.js';
 
 const API = 'm/chat/';
 const PRESETS = [['everyone', 'Everyone'], ['sales-room', 'Sales room'], ['build-room', 'Build room']];
@@ -64,7 +64,11 @@ function css() {
 .chatv .msg.me .md a{color:#fff}
 .chatv .msg .waiting{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.chatv .msg .wait{font-size:12px;color:var(--dim)}
 .chatv .chip.main{background:var(--accent);color:var(--on-accent);border-color:var(--accent);font-weight:500}
-.chatv .under a.mini{color:var(--accent);text-decoration:underline;text-underline-offset:2px}`;
+.chatv .under a.mini{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+.chatv .alen .q{margin:2px 0 8px;color:var(--dim)}.chatv .alen .ab{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.chatv .alen .ab>div{border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0}.chatv .alen .ab ul{margin:0;padding-left:18px}
+.chatv .alen .ab b.k{display:block;margin-bottom:4px}.chatv .alen .act{align-items:center}.chatv .alen .act .mini{margin-left:auto}
+@media (max-width:700px){.chatv .alen .ab{grid-template-columns:1fr}}`;
   document.head.append(s);
 }
 
@@ -182,7 +186,7 @@ async function render(el, ui, route) {
     }
     const live = m.status === 'streaming';
     const text = live ? liveText(cleanReply(streaming.get(m.id) ?? m.text), m.meta?.steps) : m.text;
-    const wide = (m.cards || []).some(c => ['table', 'report', 'draft', 'progress', 'sources'].includes(c.kind) || String(c.kind).includes('.'));
+    const wide = (m.cards || []).some(c => ['table', 'report', 'draft', 'progress', 'sources', 'answer-length'].includes(c.kind) || String(c.kind).includes('.'));
     const who = h('span', { class: 'who' }, agentName(m.agentId), m.label ? [' · ', h('span', { class: 'mdl' }, m.label)] : null, m.meta?.note ? ' · ' + m.meta.note : null);
     const steps = (m.meta?.steps || []).filter(s => s.tool);
     const stepsEl = steps.length ? h('div', { class: 'steps' }, stepChips(steps, agentName, m.status).map(t => h('span', null, t))) : null;
@@ -262,9 +266,22 @@ async function render(el, ui, route) {
             c.go || c.path ? btn('Open', { kind: 'sm', onClick: () => { if (c.go) location.hash = c.go; else openFile(c.path); } }) : null),
           c.summary ? h('div', { style: { marginTop: '6px' } }, md(ui, c.summary)) : null);
         case 'actions': return h('div', { class: 'act' }, actionBtns(c.actions));
+        case 'answer-length': return lengthCard(c);
         default: return h('div', { class: 'card' }, md(ui, c.text || c.summary || c.title || ''));
       }
     } catch (e) { console.error(e); return h('div', { class: 'card sub' }, c.title || 'A card that could not be shown.'); }
+  }
+  // "How do you like your answers?": asked once by the desk, the same question answered short (A) and in full (B)
+  function lengthCard(c) {
+    if (c.state === 'saved') return h('div', { class: 'sub', style: { marginTop: '8px' } }, LENGTH_ASK.saved);
+    if (c.state !== 'ask') return h('span');
+    const pick = (value) => async (ev) => { for (const b of ev.currentTarget.parentElement.querySelectorAll('button')) b.disabled = true; try { await api(API + 'answer-length', { method: 'PUT', body: { value } }); } catch (e) { toast(e.message, 'err'); repaintSoon(); } };
+    const later = async () => { try { await api(API + 'answer-length/later', { method: 'POST', body: {} }); } catch (e) { toast(e.message, 'err'); } };
+    return h('div', { class: 'card alen' }, h('b', null, LENGTH_ASK.title), h('div', { class: 'q' }, LENGTH_ASK.question),
+      h('div', { class: 'ab' },
+        h('div', { 'data-sample': 'a' }, h('b', { class: 'k' }, 'A'), h('ul', null, LENGTH_ASK.a.map(x => h('li', null, x)))),
+        h('div', { 'data-sample': 'b' }, h('b', { class: 'k' }, 'B'), md(ui, LENGTH_ASK.b))),
+      h('div', { class: 'act' }, btn('A: short', { kind: 'sm', onClick: pick('short') }), btn('B: detailed', { kind: 'sm', onClick: pick('detailed') }), h('button', { class: 'mini', type: 'button', onclick: later }, 'Ask me later')));
   }
   const renderers = new Map();   // kind -> fn from another module's chatCards
   function moduleCard(c) {

@@ -240,3 +240,18 @@ export function lastAsk(messages = []) {
 }
 /** The one line under the reply that finished the desk's first exchange. */
 export const NEXT_LINE = 'Next, pick one of the suggestions above the message box, or type what you need.';
+
+/** The card that asks, once, how long answers should be: the same everyday question answered short (A) and in full (B). */
+export const LENGTH_ASK = {
+  title: 'How do you like your answers?',
+  question: 'How should I follow up with a customer who went quiet?',
+  a: [
+    'Wait about a week, then send one short, friendly note.',
+    'Bring back the one thing they cared about and ask a question that is easy to answer.',
+    'No reply after two notes: stop, and check in again next quarter.',
+  ],
+  b: 'Give it about a week before you write. Sooner can feel like pressure; much later and they may forget why you spoke.\n\n'
+    + 'Keep the note short and about them, not you. Bring back the one thing they cared about and end with a question that is easy to answer. For example: "Last month you said payroll takes you two days at month end. Is that still a problem, or has it settled down?"\n\n'
+    + 'If there is no reply after two notes, stop for now. People go quiet for reasons that have nothing to do with you, such as a busy month or a budget freeze, and a calm check-in next quarter keeps the door open.',
+  saved: 'Saved. You can change this in Settings › General.',
+};
