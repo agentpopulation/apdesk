@@ -1,12 +1,13 @@
 // Settings frame, owned by the shell. Core sections live here; a module's ui.js `settings` export adds sections or
 // replaces a core one with the same id (the Safety, Backup, Store, Vault and other modules do that).
 import { ROLES } from '/ui/pages/home.js';
+import { arrangeMenu, cleanMenu, movePlace, firstPlace, MENU_KEY, NAME_MAX, ALWAYS_SHOWN } from '/ui/menus.js';
 
 export const ABOUT_MAX = 600;
 export const ABOUT_HELP = 'What you sell, who buys it, and where. Your agents use this for leads, drafts and research.';
 
-const ORDER = ['general', 'appearance', 'security', 'modules', 'accounts', 'keys', 'channels', 'payments', 'network', 'memory', 'backup'];
-const TITLES = { general: 'General', appearance: 'Appearance', security: 'Security', modules: 'Modules', accounts: 'Accounts and lock', keys: 'Keys and logins', channels: 'Channels and mail', payments: 'Payments and spend', network: 'Network', memory: 'Memory', backup: 'Backup' };
+const ORDER = ['general', 'appearance', 'menu', 'security', 'modules', 'accounts', 'keys', 'channels', 'payments', 'network', 'memory', 'backup'];
+const TITLES = { general: 'General', appearance: 'Appearance', menu: 'Menu', security: 'Security', modules: 'Modules', accounts: 'Accounts and lock', keys: 'Keys and logins', channels: 'Channels and mail', payments: 'Payments and spend', network: 'Network', memory: 'Memory', backup: 'Backup' };
 const NEEDS = { accounts: 'accounts', keys: 'vault', channels: 'channels', payments: 'payments', network: 'network', memory: 'memory', backup: 'backup' };
 
 /** The desk's address with a Copy button: the same words in General and under Show code. */
@@ -87,6 +88,46 @@ export const coreSettingsSections = {
     el.append(card(h('h3', null, 'Look'), line('Theme', 'White or black. The sun or moon at the top right does the same.', seg(['White', 'Black'], document.documentElement.dataset.theme === 'dark' ? 1 : 0, (_, i) => ui.setTheme(i === 1))),
       line('Window', 'The desk always fills the window.', h('span', { class: 'val' }, 'Full window'))));
   } },
+  menu: { title: 'Menu', render(el, ui) {
+    const { h, btn, sw, card, line, toast } = ui;
+    const mark = h('span', { class: 'saved', role: 'status', 'aria-live': 'polite' });
+    const rows = h('div', { class: 'mrows', role: 'list', 'aria-label': 'Menu places' });
+    const firstSel = h('select', { id: 'menu-first', 'aria-label': 'The place that opens first' });
+    const now = () => cleanMenu(ui.state.settings[MENU_KEY]);
+    const save = async (menu, what = 'Saved') => {
+      try { await ui.saveMenu(menu); mark.textContent = what; mark.className = 'saved ok'; clearTimeout(mark._t); mark._t = setTimeout(() => { mark.textContent = ''; }, 2000); }
+      catch (e) { clearTimeout(mark._t); mark.textContent = 'Not saved: ' + e.message; mark.className = 'saved err'; }
+      paint();
+    };
+    // a new order keeps the places of switched-off modules where the owner put them (they come back there)
+    const withOrder = (ids) => { const m = now(); return { ...m, order: [...ids, ...m.order.filter(x => !ids.includes(x))] }; };
+    let dragId = null;
+    const paint = () => {
+      const m = now(); const places = arrangeMenu(ui.menuPlaces(), m); const ids = places.map(x => x.id);
+      const move = (id, to) => save(withOrder(movePlace(ids, id, to)));
+      rows.replaceChildren(...places.map((it, i) => {
+        const name = h('input', { type: 'text', value: it.renamed ? it.label : '', placeholder: it.defaultLabel, maxlength: String(NAME_MAX), 'aria-label': `Name for ${it.defaultLabel}`, 'data-place-name': it.id,
+          onchange: (e) => { const names = { ...now().names }; const v = e.target.value.trim(); if (v && v !== it.defaultLabel) names[it.id] = v; else delete names[it.id]; save({ ...now(), names }); } });
+        const keep = ALWAYS_SHOWN.includes(it.id);
+        const shown = keep ? h('span', { class: 'sub mkeep' }, 'Always shown') : sw(!it.hidden, `Show ${it.label} in the menu`, (on) => { const hidden = now().hidden.filter(x => x !== it.id); if (!on) hidden.push(it.id); return save({ ...now(), hidden }); }, { 'data-place-shown': it.id });
+        const row = h('div', { class: 'mrow' + (it.hidden ? ' off' : ''), role: 'listitem', draggable: 'true', 'data-place': it.id },
+          h('span', { class: 'grip', 'aria-hidden': 'true', title: 'Drag to move' }, '⋮⋮'), name,
+          h('span', { class: 'mbtns' }, btn('↑', { kind: 'ghost sm', 'aria-label': `Move ${it.label} up`, disabled: i === 0, onClick: () => move(it.id, -1) }), btn('↓', { kind: 'ghost sm', 'aria-label': `Move ${it.label} down`, disabled: i === places.length - 1, onClick: () => move(it.id, 1) })), shown);
+        row.addEventListener('dragstart', (e) => { dragId = it.id; row.classList.add('drag'); try { e.dataTransfer.setData('text/plain', it.id); e.dataTransfer.effectAllowed = 'move'; } catch {} });
+        row.addEventListener('dragend', () => { dragId = null; row.classList.remove('drag'); });
+        row.addEventListener('dragover', (e) => { if (dragId && dragId !== it.id) { e.preventDefault(); } });
+        row.addEventListener('drop', (e) => { e.preventDefault(); const from = dragId || e.dataTransfer?.getData('text/plain'); if (!from || from === it.id) return; const r = row.getBoundingClientRect(); move(from, e.clientY > r.top + r.height / 2 ? { after: it.id } : { before: it.id }); });
+        return row;
+      }));
+      const off = ROLES[ui.state.settings.role]?.off || []; const opens = firstPlace(ui.menuPlaces(), m, off);
+      firstSel.replaceChildren(...places.filter(x => !x.hidden && !off.includes(x.id)).map(x => h('option', { value: x.id, selected: x.id === opens }, x.label)));
+    };
+    firstSel.onchange = (e) => save({ ...now(), first: e.target.value });
+    el.append(card(h('h3', null, 'Menu'), h('p', { class: 'sub' }, 'Rename, move, hide or show the places in the top menu. Drag a row, or use the arrows. This changes only the menu: switches, roles and permissions stay as they are.'),
+      rows, line('Opens first', 'The place the desk opens on', h('span', { class: 'field' }, firstSel)),
+      h('div', { class: 'row', style: { marginTop: '8px' } }, mark, h('span', { class: 'grow' }), btn('Reset to the default menu', { kind: 'ghost sm', id: 'menu-reset', onClick: () => save(null, 'The default menu is back') }))));
+    paint(); ui.on('modules', () => setTimeout(paint, 0));
+  } },
   security: { title: 'Security', render(el, ui) {
     const { h, api, card, line, btn, toast, fmt, empty } = ui;
     const levels = h('div', { class: 'levels' }), auto = h('div'), pending = h('div'), log = h('div');
@@ -153,6 +194,8 @@ export async function settingsPage(el, ui) {
   }
   // Security: the code for another browser, whoever draws the rest of the section
   if (want === 'security') { const c = pairCard(ui); body.children[1] ? body.insertBefore(c, body.children[1]) : body.append(c); }   // under the security level
+  // the update dot in the top bar: #/settings/backup?at=updates opens at the Updates card
+  if (ui.state.route.params.at === 'updates') body.querySelector('[data-updates]')?.scrollIntoView({ block: 'start' });
   // #/settings/modules?module=network: straight to that module's card, its switch focused
   const target = ui.state.route.params.module;
   if (target) {

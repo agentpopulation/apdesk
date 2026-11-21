@@ -1,6 +1,7 @@
 // Shell checks in a real browser: a pop-up closes on navigation, the top bar holds with many modules on (with the
 // theme, network and download icons), downloads and network in the bar, Settings › Modules keeps its place, the
-// first-start local model offer, the code for another browser, the installed app, and slow Chat routes.
+// first-start local model offer, the code for another browser, the installed app, and slow Chat routes; menus your way
+// (Settings › Menu), the agent tracker (icon, pop-up, page, Stop, Panic), the update dot and the "needs you" notice.
 // Run from the repository root, no model keys needed:  node tools/check-shell-fixes.mjs [screenshot dir]
 import { createRequire } from 'node:module';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
@@ -14,7 +15,7 @@ const wait = (ms) => new Promise(r => setTimeout(r, ms));
 const until = async (fn, ms = 8000) => { const t0 = Date.now(); for (;;) { const v = await fn(); if (v || Date.now() - t0 > ms) return v; await wait(100); } };
 const t = await testDesk({ modules: ids });
 try {
-  for (const id of ['mail', 'calendar', 'social', 'code', 'connect', 'life', 'studio', 'network', 'voice']) { try { await t.core.modules.set(id, true); } catch (e) { console.log('could not switch on', id, e.message); } }
+  for (const id of ['mail', 'calendar', 'social', 'code', 'connect', 'life', 'studio', 'network', 'voice', 'bench']) { try { await t.core.modules.set(id, true); } catch (e) { console.log('could not switch on', id, e.message); } }
   const b = await chromium.launch();
   for (const [w, hgt] of [[1280, 800], [1024, 768], [1920, 1080]]) {
     const p = await b.newPage({ viewport: { width: w, height: hgt } });
@@ -41,7 +42,7 @@ try {
     check(`${w}x${hgt}: no page errors`, errs.length === 0, errs.join(' | ').slice(0, 200));
     await p.close();
   }
-  await barChecks(b); await downloadChecks(b); await networkChecks(b); await moduleChecks(b); await settingsChecks(b);
+  await barChecks(b); await trackerChecks(b); await menuChecks(b); await downloadChecks(b); await networkChecks(b); await moduleChecks(b); await settingsChecks(b);
   await b.close();
 } finally { await t.close(); }
 await firstStartChecks(); await pairChecks();
@@ -72,14 +73,19 @@ function barGeometry(p) { return p.evaluate(() => {
 async function barChecks(b) {
   const body = Buffer.alloc(64 * 1024, 7); const host = await startDownloadHost({ '/one': { body, slowMs: 400, chunk: 1024 } });
   const d = await t.core.downloads.start({ title: 'Bar check file', url: host.url('/one'), allowHosts: ['127.0.0.1'], size: body.length, sha256: sha(body), to: path.join(t.dataDir, 'dl', 'bar.bin'), kind: 'check' });
+  let release; const held = new Promise(r => { release = r; });
+  const job = await t.core.jobs.start({ kind: 'research.check', title: 'Bar check job', run: async (j) => { j.progress(0.3, 'Reading'); await held; } });
+  t.core.settings.set('ui.menu', { names: { bench: 'Night shift' } });
   try {
     for (const [w, hgt] of [[1366, 768], [1920, 1080], [390, 844]]) for (const theme of ['light', 'dark']) {
       const { ctx, p, errs } = await open(b, w, hgt, theme);
+      t.core.events.emit('update', { canInstall: true, release: { version: '9.9.9' } }); await until(() => p.evaluate(() => !document.getElementById('upd').hidden), 3000);
       const th = await p.evaluate(() => { const e = document.getElementById('theme'); return { text: e.textContent.trim(), svg: !!e.querySelector('svg'), name: e.getAttribute('aria-label'), icon: e.dataset.icon, opacity: getComputedStyle(e).opacity }; });
       const wantName = theme === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme';
       check(`${w}x${hgt} ${theme}: the theme control is a dull icon with no words, named for what it does`, th.text === '' && th.svg && th.name === wantName && th.icon === (theme === 'dark' ? 'sun' : 'moon') && Math.abs(Number(th.opacity) - 0.6) < 0.05, JSON.stringify(th));
       const g = await barGeometry(p);
-      check(`${w}x${hgt} ${theme}: ${g.items} menu places, the download, network and theme icons and Panic: nothing cut, nothing covered`, g.items >= 14 && g.ctl.includes('dl') && g.ctl.includes('net') && g.ctl.includes('theme') && !g.clash.length && !g.cut.length && !g.textCut.length && g.panicWhole && g.menuInBar && g.pageScroll <= 0, JSON.stringify(g));
+      const named = await p.evaluate(() => [...document.querySelectorAll('#menu .nav')].some(n => n.textContent === 'Night shift') && document.getElementById('trk').textContent === '1');
+      check(`${w}x${hgt} ${theme}: ${g.items} menu places (one renamed), the update, tracker, download, network and theme icons and Panic: nothing cut, nothing covered`, named && g.items >= 16 && ['upd', 'trk', 'dl', 'net', 'theme'].every(x => g.ctl.includes(x)) && !g.clash.length && !g.cut.length && !g.textCut.length && g.panicWhole && g.menuInBar && g.pageScroll <= 0, JSON.stringify(g));
       if (g.over) check(`${w}x${hgt} ${theme}: the menu fades and scrolls where places are hidden`, g.fades[1] === true && g.fades[0] === false, JSON.stringify(g.fades));
       if (g.over) { await p.evaluate(() => { const m = document.getElementById('menu'); m.scrollLeft = m.scrollWidth; }); await p.waitForTimeout(150); const f = await p.evaluate(() => [...document.getElementById('menu').classList]); check(`${w}x${hgt} ${theme}: scrolled to the end, only the start fades`, f.includes('fl') && !f.includes('fr'), f.join(' ')); await p.evaluate(() => { document.getElementById('menu').scrollLeft = 0; }); }
       await p.screenshot({ path: `${SHOTS}/topbar_${w}x${hgt}_${theme}.png` });
@@ -95,7 +101,122 @@ async function barChecks(b) {
       check(`${w}x${hgt} ${theme}: no page errors`, errs.length === 0, errs.join(' | ').slice(0, 200));
       await ctx.close();
     }
-  } finally { try { t.core.downloads.cancel(d.id); } catch {} for (const x of t.core.approval.listPending()) t.core.approval.decide(x.id, 'deny'); await host.close(); }
+  } finally { release(); await t.core.jobs.wait(job.id, 3000); t.core.settings.set('ui.menu', null); try { t.core.downloads.cancel(d.id); } catch {} for (const x of t.core.approval.listPending()) t.core.approval.decide(x.id, 'deny'); await host.close(); }
+}
+
+// ---- the agent tracker: the icon's count, the pop-up and the page, live from the 'job' events, Stop and Panic; "needs you"
+async function trackerChecks(b) {
+  const gates = []; const hold = () => new Promise(r => gates.push(r));
+  const agent = t.core.agents.list()[0];
+  const { ctx, p, errs } = await open(b, 1366, 768, 'light');
+  let lists = 0; p.on('request', r => { if (new URL(r.url()).pathname === '/api/jobs') lists++; });
+  try {
+    check('no job running: the tracker icon shows no count', await p.evaluate(() => document.getElementById('trk').textContent === '' && /no job running/.test(document.getElementById('trk').getAttribute('aria-label'))));
+    let step;
+    const a = await t.core.jobs.start({ kind: 'research.check', title: 'Tracker check: research', agentId: agent?.id || null, run: async (j) => { step = (x) => j.progress(x, 'Reading sources'); step(0.2); await hold(); } });
+    const w = await t.core.jobs.start({ kind: 'sales.check', title: 'Tracker check: waiting', run: async (j) => { j.waiting('Waiting for your approval: Send'); await hold(); } });
+    await until(() => p.evaluate(() => document.getElementById('trk').textContent === '1'));
+    check('a running job: the tracker icon counts it', await p.evaluate(() => document.getElementById('trk').textContent === '1' && /1 job running/.test(document.getElementById('trk').getAttribute('aria-label'))));
+    await p.click('#trk'); await p.waitForTimeout(300);
+    const pop = await p.evaluate(() => { const q = document.getElementById('pop'); return { text: q.textContent, running: !!q.querySelector('[data-todo="running"] [data-job]'), waiting: !!q.querySelector('[data-todo="waiting"] [data-job]'), panic: !!q.querySelector('[data-apd="tracker-panic"]'), open: [...q.querySelectorAll('button')].some(x => x.textContent === 'Open Tracker'), stop: q.querySelectorAll('[data-job] button[aria-label^="Stop"]').length }; });
+    check('the pop-up: agents now, running and waiting jobs with progress and a dash for time left, Stop on each, Open Tracker and Panic', pop.running && pop.waiting && pop.panic && pop.open && pop.stop === 2 && /Agents now/.test(pop.text) && /Progress 20%/.test(pop.text) && /Time left –/.test(pop.text) && (!agent || pop.text.includes(agent.name)), JSON.stringify(pop).slice(0, 300));
+    await p.screenshot({ path: `${SHOTS}/tracker_pop_1366x768_light.png` });
+    const before = lists; step(0.6); await p.waitForTimeout(800);
+    check('progress moves from the event stream, not polling', lists === before && await p.evaluate(() => /Progress 60%/.test(document.getElementById('pop').textContent)), `job list reads: ${lists - before}`);
+    await p.click(`#pop [data-job="${a.id}"] button[aria-label^="Stop"]`);
+    await until(() => t.core.jobs.get(a.id).status === 'stopped', 3000);
+    await until(() => p.evaluate(() => document.getElementById('trk').textContent === ''), 3000);
+    check('Stop stops the job through the jobs route; the count goes and it is listed as ended', t.core.jobs.get(a.id).status === 'stopped' && await p.evaluate((id) => !!document.querySelector(`#pop [data-todo="done"] [data-job="${id}"]`), a.id));
+    await p.click('#pop button:has-text("Open Tracker")'); await p.waitForTimeout(600);
+    const page = await p.evaluate(() => ({ hash: location.hash, h2: document.querySelector('#view h2')?.textContent, parts: [...document.querySelectorAll('#view [data-tracker]')].map(x => x.dataset.tracker), panic: !!document.querySelector('#view [data-apd="tracker-panic"]'), pop: document.getElementById('pop').hidden }));
+    check('Open Tracker: the full page with agents, to-do, downloads and Panic', page.hash === '#/tracker' && page.h2 === 'Tracker' && ['agents', 'todo', 'downloads'].every(x => page.parts.includes(x)) && page.panic && page.pop, JSON.stringify(page));
+    for (const theme of ['light', 'dark']) { await p.evaluate((th) => window.apd.setTheme(th === 'dark'), theme); await p.waitForTimeout(200); await p.screenshot({ path: `${SHOTS}/tracker_page_1366x768_${theme}.png` }); }
+    check('job events read the job list only at start', lists === 0 || lists === before, `reads ${lists}`);
+    check('tracker: no page errors', errs.length === 0, errs.join(' | ').slice(0, 200));
+  } finally { for (const g of gates) g(); await ctx.close(); }
+  // phone width: the pop-up fits, nothing cut
+  for (const theme of ['light', 'dark']) {
+    const { ctx: c2, p: q, errs: e2 } = await open(b, 390, 844, theme);
+    const g2 = []; const j = await t.core.jobs.start({ kind: 'research.check', title: 'A long job title that has to wrap at phone width without cutting', run: async (h) => { h.progress(0.5); await new Promise(r => g2.push(r)); } });
+    try {
+      await until(() => q.evaluate(() => document.getElementById('trk').textContent === '1'));
+      await q.click('#trk'); await q.waitForTimeout(300);
+      const fit = await q.evaluate(() => { const r = document.getElementById('pop').getBoundingClientRect(); const cut = [...document.querySelectorAll('#pop button, #pop b')].filter(x => { const y = x.getBoundingClientRect(); return y.right > r.right + 0.5 || y.left < r.left - 0.5; }).length; return { l: r.left, r: r.right, w: innerWidth, cut, scroll: document.documentElement.scrollWidth - innerWidth }; });
+      check(`390x844 ${theme}: the tracker pop-up fits the screen, nothing cut`, fit.l >= 0 && fit.r <= fit.w && fit.cut === 0 && fit.scroll <= 0, JSON.stringify(fit));
+      await q.screenshot({ path: `${SHOTS}/tracker_pop_390x844_${theme}.png` });
+      await q.evaluate(() => { location.hash = '#/tracker'; }); await q.waitForTimeout(500);
+      check(`390x844 ${theme}: the Tracker page has no sideways scroll`, await q.evaluate(() => document.documentElement.scrollWidth <= innerWidth && document.getElementById('view').scrollWidth <= document.getElementById('view').clientWidth + 1));
+      await q.screenshot({ path: `${SHOTS}/tracker_page_390x844_${theme}.png` });
+      check(`390x844 ${theme}: tracker: no page errors`, e2.length === 0, e2.join(' | ').slice(0, 200));
+    } finally { g2.forEach(r => r()); await t.core.jobs.wait(j.id, 3000); await c2.close(); }
+  }
+  // "needs you": a desktop notification when a job goes to waiting, only in a background window, once
+  for (const hidden of [true, false]) {
+    const ctx = await b.newContext({ viewport: { width: 1366, height: 768 } }); const q = await ctx.newPage();
+    await q.addInitScript((hid) => {
+      window.__notes = []; Object.defineProperty(document, 'hidden', { get: () => hid });
+      window.Notification = class { constructor(title, o) { window.__notes.push([title, o?.body]); } static get permission() { return 'granted'; } };
+    }, hidden);
+    await q.goto(t.base + '/#/home'); await q.waitForSelector('#menu .nav'); await q.waitForTimeout(600);
+    const gs = []; const j = await t.core.jobs.start({ kind: 'sales.check', title: 'Needs you check', run: async (h) => { h.waiting('Waiting for your approval'); await new Promise(r => gs.push(r)); h.resumed(); h.waiting('Waiting again'); await new Promise(r => gs.push(r)); } });
+    await q.waitForTimeout(600); gs.shift()(); await q.waitForTimeout(600);
+    const notes = await q.evaluate(() => window.__notes.filter(n => /Needs you/.test(n[1] || '')));
+    check(hidden ? 'a job went to waiting in a background window: one "needs you" notification, not two' : 'the window in front: no desktop notification for it', hidden ? notes.length === 1 && notes[0][1] === 'Needs you: Needs you check' : notes.length === 0, JSON.stringify(notes));
+    for (const g of gs) g(); await new Promise(r => setTimeout(r, 50)); for (const g of gs) g(); t.core.jobs.stop(j.id); await ctx.close();
+  }
+}
+
+// ---- menus your way: rename, move by button and by drag, hide, the first place, reset; nothing else changes
+async function menuChecks(b) {
+  t.core.settings.set('ui.menu', null);
+  const { ctx, p, errs } = await open(b, 1366, 768, 'light', '#/settings/menu');
+  const navs = () => p.evaluate(() => [...document.querySelectorAll('#menu .nav')].map(n => n.dataset.v + ':' + n.childNodes[0].textContent));
+  const before = { role: t.core.settings.get('role'), level: t.core.approval.state().level, modules: t.core.modules.list().map(m => m.id + m.on).join() };
+  try {
+    check('Settings › Menu lists every menu place', await p.evaluate(() => document.querySelectorAll('#view .mrow').length) === (await navs()).length);
+    await p.fill('[data-place-name="bench"]', 'Night shift'); await p.press('[data-place-name="bench"]', 'Tab'); await p.waitForTimeout(500);
+    check('rename: the menu says Night shift', (await navs()).includes('bench:Night shift'), (await navs()).join(' '));
+    await p.click('#view button[aria-label="Move Tasks up"]'); await p.waitForTimeout(500);
+    const n1 = (await navs()).map(x => x.split(':')[0]);
+    check('the up button moves Tasks before Research', n1.indexOf('tasks') === n1.indexOf('research') - 1, n1.join(' '));
+    await p.evaluate(() => { document.getElementById('view').scrollTop = 0; }); await p.waitForTimeout(100);
+    await p.dragAndDrop('#view .mrow[data-place="sales"] .grip', '#view .mrow[data-place="chat"]', { targetPosition: { x: 20, y: 2 } }); await p.waitForTimeout(600);
+    const n2 = (await navs()).map(x => x.split(':')[0]);
+    check('a drag moves Sales to the top', n2[0] === 'sales', n2.join(' '));
+    await p.click('#view [data-place-shown="mail"]'); await p.waitForTimeout(500);
+    check('hide: Mail leaves the menu', !(await navs()).some(x => x.startsWith('mail:')));
+    check('Settings cannot be hidden', await p.evaluate(() => !document.querySelector('[data-place-shown="settings"]') && /Always shown/.test(document.querySelector('.mrow[data-place="settings"]').textContent)));
+    await p.selectOption('#menu-first', 'tasks'); await p.waitForTimeout(500);
+    await p.screenshot({ path: `${SHOTS}/settings_menu_1366x768_light.png` });
+    await p.goto(t.base + '/'); await p.waitForSelector('#menu .nav'); await p.waitForTimeout(800);
+    check('the chosen place opens first', await p.evaluate(() => location.hash === '#/tasks'));
+    await p.evaluate(() => { location.hash = '#/bench'; }); await p.waitForTimeout(1200);
+    check('a renamed place: its page heading says the owner\'s name', await p.evaluate(() => document.querySelector('#view h2')?.textContent === 'Night shift'), await p.evaluate(() => document.querySelector('#view h2')?.textContent));
+    await t.core.modules.set('bench', false); await p.waitForTimeout(1200);
+    check('a renamed place switched off: the notice uses the owner\'s name', await p.evaluate(() => /Night shift is switched off/.test(document.getElementById('view').textContent)));
+    await t.core.modules.set('bench', true); await p.waitForTimeout(800);
+    for (const [w, hgt] of [[390, 844], [1920, 1080]]) for (const theme of ['light', 'dark']) {
+      await p.setViewportSize({ width: w, height: hgt }); await p.evaluate((th) => window.apd.setTheme(th === 'dark'), theme);
+      await p.evaluate(() => { location.hash = '#/settings/menu'; }); await p.waitForTimeout(600);
+      const fit = await p.evaluate(() => ({ scroll: document.documentElement.scrollWidth - innerWidth, rows: [...document.querySelectorAll('.mrow')].filter(r => r.scrollWidth > r.clientWidth + 1).length }));
+      check(`${w}x${hgt} ${theme}: Settings › Menu fits, no row cut`, fit.scroll <= 0 && fit.rows === 0, JSON.stringify(fit));
+      await p.screenshot({ path: `${SHOTS}/settings_menu_${w}x${hgt}_${theme}.png` });
+    }
+    await p.setViewportSize({ width: 1366, height: 768 }); await p.evaluate(() => window.apd.setTheme(false));
+    await p.click('#menu-reset'); await p.waitForTimeout(500);
+    const n3 = (await navs()).map(x => x.split(':')[0]);
+    check('Reset to the default menu: the default order and names, Mail back', t.core.settings.get('ui.menu') == null && n3[0] === 'chat' && n3.includes('mail') && (await navs()).includes('bench:Bench'), n3.join(' '));
+    const after = { role: t.core.settings.get('role'), level: t.core.approval.state().level, modules: t.core.modules.list().map(m => m.id + m.on).join() };
+    check('customising changed no role, level or module switch', JSON.stringify(before) === JSON.stringify(after));
+    // the update dot opens Settings › Backup at Updates; nothing installs from it
+    let installs = 0; p.on('request', r => { if (/\/api\/update\/install/.test(r.url())) installs++; });
+    t.core.events.emit('update', { canInstall: true, release: { version: '9.9.9' } }); await until(() => p.evaluate(() => !document.getElementById('upd').hidden), 3000);
+    await p.click('#upd'); await p.waitForTimeout(1200);
+    check('the update dot leads to Settings › Backup › Updates and installs nothing', await p.evaluate(() => /#\/settings\/backup/.test(location.hash) && !!document.querySelector('#view [data-updates]')) && installs === 0);
+    t.core.events.emit('update', { canInstall: false, release: null }); await p.waitForTimeout(300);
+    check('no update to install: no dot', await p.evaluate(() => document.getElementById('upd').hidden));
+    check('menus: no page errors', errs.length === 0, errs.join(' | ').slice(0, 200));
+  } finally { t.core.settings.set('ui.menu', null); await ctx.close(); }
 }
 
 // ---- 2: downloads in the top bar, live from the event stream
@@ -121,6 +242,12 @@ async function downloadChecks(b) {
     await p.waitForTimeout(2000);
     const w1 = await p.evaluate(() => document.querySelector('#pop [data-dl] .meter b')?.style.width);
     check('live updates come from the event stream, not polling', lists === before && w1 !== run.width, `list reads during 2 s: ${lists - before}; bar ${run.width} -> ${w1}`);
+    await p.click('#trk'); await until(() => p.evaluate(() => document.getElementById('pop').dataset.kind === 'tracker' && !!document.querySelector('#pop [data-tracker="downloads"] [data-dl] .meter b')));
+    const t1 = await p.evaluate(() => document.querySelector('#pop [data-tracker="downloads"] [data-dl] .meter b')?.style.width);
+    await p.waitForTimeout(2000);
+    const t2 = await p.evaluate(() => document.querySelector('#pop [data-tracker="downloads"] [data-dl] .meter b')?.style.width);
+    check('the tracker pop-up\'s downloads move live from the event stream too', !!t1 && t1 !== t2, `bar ${t1} -> ${t2}`);
+    await p.click('#dl'); await until(() => p.evaluate(() => document.getElementById('pop').dataset.kind === 'downloads'));
     await p.click('#pop [data-dl] button:has-text("Pause")');
     await until(() => p.evaluate(() => /Paused/.test(document.querySelector('#pop [data-dl]')?.textContent || '')));
     check('Pause works and the row says Paused with Resume', await p.evaluate(() => [...document.querySelectorAll('#pop [data-dl] button')].some(x => x.textContent === 'Resume')));

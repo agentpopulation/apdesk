@@ -2,6 +2,9 @@
 import * as kit from '/ui/kit.js';
 import { homePage, ROLES, applyRole, teamFor, STARTING_TEAM } from '/ui/pages/home.js';
 import { settingsPage, coreSettingsSections, ABOUT_MAX, ABOUT_HELP } from '/ui/pages/settings.js';
+import { trackerPage, trackerBody } from '/ui/pages/tracker.js';
+import { MENU_KEY, cleanMenu, arrangeMenu, firstPlace } from '/ui/menus.js';
+import { mergeJob, runningCount, needsYou, updateReady, leftWords, popShowsDownloads } from '/ui/tracker-data.js';
 const { $, $$, h, api, toast } = kit;
 
 const OFFICIAL = [['chat', 'Chat'], ['research', 'Research'], ['tasks', 'Tasks'], ['sales', 'Sales'], ['files', 'Files'], ['agents', 'Agents'], ['models', 'Models'], ['settings', 'Settings']];
@@ -19,7 +22,11 @@ const ui = {
   onLeave(fn) { pageCleanup.push(fn); },
   moduleOn: (id) => state.modules.some(m => m.id === id && m.on),
   agent: (id) => state.agents.find(a => a.id === id) || null,
-  label: (page, fallback) => roleLabel(page, fallback),
+  label: (page, fallback) => ownName(page) || roleLabel(page, fallback),
+  /** Every menu place in the default order with its default name (Settings › Menu lists these). */
+  menuPlaces: () => basePlaces(),
+  /** Keep the owner's menu (names, order, hidden, first place) for this desk; null is the default menu. */
+  async saveMenu(menu) { const r = await api('settings', { body: { [MENU_KEY]: menu == null ? null : cleanMenu(menu) } }); state.settings[MENU_KEY] = r.settings[MENU_KEY] ?? null; paintMenu(); return state.settings[MENU_KEY]; },
   refresh: () => refresh(),
   render: () => render(),
   async setLevel(level) { state.security = await api('settings/security', { body: { level } }); paintChrome(); return state.security; },
@@ -41,12 +48,16 @@ const globalOn = (type, fn) => { if (!listeners.has(type)) listeners.set(type, n
 // ---------- role labels and menu
 const role = () => state.settings.role ? ROLES[state.settings.role] : null;
 const roleLabel = (page, fallback) => role()?.labels?.[page] || fallback;
-function menuItems() {
+function basePlaces() {
   const extra = [];
   for (const m of state.modules) if (m.on) for (const it of m.menu || []) if (!OFFICIAL.some(o => o[0] === it.id)) extra.push({ ...it, module: m.id });
   extra.sort((a, b) => (a.order || 100) - (b.order || 100));
   return [...OFFICIAL.map(([id, label]) => ({ id, label: roleLabel(id, label), official: true })), ...extra];
 }
+// the owner's menu (Settings › Menu): his names and order; a hidden place leaves the menu but its address still opens it
+const menuItems = () => arrangeMenu(basePlaces(), state.settings[MENU_KEY]).filter(x => !x.hidden);
+const ownName = (page) => cleanMenu(state.settings[MENU_KEY]).names[page] || null;
+const openingPlace = () => firstPlace(basePlaces(), state.settings[MENU_KEY], role()?.off || []);
 // ---------- a job finished: a notice that stays a while, a count on the menu place, a desktop notification
 const badges = new Map();          // menu place -> finished jobs not yet looked at
 const toldJobs = new Set();
@@ -65,6 +76,12 @@ function jobFinished(j) {
     try { if ('Notification' in window && Notification.permission === 'granted') new Notification(appName(), { body: text, tag: j.id }); } catch {}
   }
 }
+// a job went to waiting: in a background window, once per job, a desktop notification says it needs the owner
+const toldWaiting = new Set();
+function jobNeedsYou(j) {
+  if (!needsYou(j, toldWaiting) || state.settings.notifications === false || !document.hidden) return;
+  try { if ('Notification' in window && Notification.permission === 'granted') new Notification(appName(), { body: `Needs you: ${j.title || 'a job'}`, tag: j.id + '-waiting' }); } catch {}
+}
 const appName = () => String(state.settings.appName || '').trim() || 'AP Desk';
 document.addEventListener('visibilitychange', () => { if (!document.hidden) document.title = appName(); });
 function paintMenu() {
@@ -78,6 +95,8 @@ const ICON = {
   sun: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>'),
   moon: svg('<path d="M20 14.6A8.2 8.2 0 1 1 9.4 4a6.6 6.6 0 0 0 10.6 10.6z"/>'),
   down: svg('<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/>'),
+  track: svg('<path d="M9 6.5h11M9 12h11M9 17.5h11"/><path d="M3.8 6.4l1.2 1.2 2.2-2.4M3.8 11.9l1.2 1.2 2.2-2.4"/><circle cx="5.2" cy="17.5" r="1.3"/>'),
+  upd: svg('<circle cx="12" cy="12" r="8.5"/><path d="M12 16.5v-8M8.5 11.5 12 8l3.5 3.5"/>'),
   wifi: (cut) => svg('<path d="M2.5 9.2a14 14 0 0 1 19 0M5.6 12.6a9.4 9.4 0 0 1 12.8 0M8.7 16a5 5 0 0 1 6.6 0"/><circle cx="12" cy="19.3" r=".9" fill="currentColor"/>', cut ? '<path d="M4 3.5 20 20.5"/>' : ''),
 };
 function paintTheme() {
@@ -88,7 +107,7 @@ function paintTheme() {
   b.setAttribute('aria-label', name); b.title = name;
 }
 function paintChrome() {
-  paintTheme(); paintDownloads(); paintNet();
+  paintTheme(); paintDownloads(); paintNet(); paintTracker(); paintUpdate();
   const nameEl = document.querySelector('.bar .name'); if (nameEl && nameEl.textContent !== appName()) nameEl.textContent = appName();
   if (!document.hidden && document.title !== appName()) document.title = appName();
   const halted = !!state.panic.halted;
@@ -96,7 +115,9 @@ function paintChrome() {
   $('#halt').hidden = !halted; $('#panic').textContent = halted ? 'Stopped' : 'Panic';
   const n = state.pendingApprovals.length, st = state.stoppedApprovals.length;
   $('#waiting').hidden = n === 0 && st === 0;
-  $('#waiting').textContent = n ? (n === 1 ? '1 waiting for you' : `${n} waiting for you`) : `Stopped by Panic: ${st}`;
+  // at phone width only the number shows (the words are in the button's name), so the bar keeps room for its icons
+  const words = n ? `${n} waiting for you` : `Stopped by Panic: ${st}`;
+  if ($('#waiting').getAttribute('aria-label') !== words) { $('#waiting').replaceChildren(...(n ? [String(n), h('span', { class: 'wl' }, ' waiting for you')] : [h('span', { class: 'wl' }, 'Stopped by Panic: '), String(st)])); $('#waiting').setAttribute('aria-label', words); }
   paintMenu();
 }
 async function setTheme(dark) {
@@ -155,7 +176,7 @@ function approvalCard(a) {
 const ACTION_WORDS = { 'file.write': 'Write a file', 'file.delete': 'Delete a file', 'file.read.outside': 'Open a folder', 'shell.run': 'Run a command', 'browser.open': 'Open a site', 'browser.act': 'Act in the browser', 'net.post': 'Send data', 'send.person': 'Send to a person', spend: 'Spend money', 'module.toggle': 'Switch a module', install: 'Install', login: 'Sign in', 'calendar.write': 'Change the calendar', custom: 'Action' };
 ui.approvalCard = approvalCard; ui.ACTION_WORDS = ACTION_WORDS;
 // ---------- one pop-up under the top bar: what waits for the owner, the downloads, or the network
-const POP_BUTTON = { approvals: 'waiting', downloads: 'dl', network: 'net' };
+const POP_BUTTON = { approvals: 'waiting', downloads: 'dl', network: 'net', tracker: 'trk' };
 const popKind = () => $('#pop').hidden ? null : $('#pop').dataset.kind;
 function showPop(kind, open) {
   const pop = $('#pop');
@@ -169,21 +190,23 @@ function paintPop() {
   const pop = $('#pop'), kind = pop.dataset.kind;
   // redrawn on every live update: a focused button inside keeps the focus (same row, same words)
   const f = pop.contains(document.activeElement) ? document.activeElement : null;
-  const key = f ? [f.closest('[data-dl]')?.dataset.dl || '', f.textContent] : null;
+  const rowOf = (x) => { const r = x.closest('[data-dl],[data-job]'); return r ? (r.dataset.dl || 'job:' + r.dataset.job) : ''; };
+  const key = f ? [rowOf(f), f.textContent] : null;
   drawPop(pop, kind);
-  if (key) { const n = [...pop.querySelectorAll('button')].find(x => (x.closest('[data-dl]')?.dataset.dl || '') === key[0] && x.textContent === key[1]); (n || pop.querySelector('button'))?.focus({ preventScroll: true }); }
+  if (key) { const n = [...pop.querySelectorAll('button')].find(x => rowOf(x) === key[0] && x.textContent === key[1]); (n || pop.querySelector('button'))?.focus({ preventScroll: true }); }
 }
 function drawPop(pop, kind) {
   if (kind === 'approvals') pop.replaceChildren(popHead('Waiting for you', kind), ...(state.pendingApprovals.length ? state.pendingApprovals.map(approvalCard) : [kit.empty('Nothing is waiting.')]), stoppedSection());
   else if (kind === 'downloads') pop.replaceChildren(popHead('Downloads', kind), ...downloadRows());
   else if (kind === 'network') pop.replaceChildren(popHead('Network', kind), ...netRows());
+  else if (kind === 'tracker') pop.replaceChildren(popHead('Tracker', kind), ...trackerBody(ui));
 }
 function showApprovals(open) { if (open) showPop('approvals', true); else showPop('approvals', false); }
 const togglePop = (kind) => popKind() === kind ? closePop(kind) : showPop(kind, true);
 $('#waiting').onclick = () => togglePop('approvals');
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !e.shiftKey && popKind() && document.getElementById('modal')?.hidden !== false) closePop(); });
 // a press anywhere else closes the downloads and network pop-ups (the approvals list stays until Close)
-document.addEventListener('pointerdown', (e) => { const k = popKind(); if (k === 'downloads' || k === 'network') { if (!e.target.closest?.('#pop, #dl, #net')) showPop(k, false); } }, true);
+document.addEventListener('pointerdown', (e) => { const k = popKind(); if (k === 'downloads' || k === 'network' || k === 'tracker') { if (!e.target.closest?.('#pop, #dl, #net, #trk')) showPop(k, false); } }, true);
 
 // ---------- downloads in the top bar: shown while any is not finished, live from the desk's 'downloads' events
 const dls = { list: [], summary: { active: 0, total: 0 }, told: new Set(), loaded: false };
@@ -192,7 +215,6 @@ function dlWords(d) {
   if (d.state === 'paused') return /panic/i.test(d.reason || '') ? 'Paused by Panic' : /offline|internet/i.test(d.reason || '') ? 'Waiting for the internet' : 'Paused';
   return { waiting: 'Waiting for you to approve', queued: 'Waiting to start', running: 'Downloading', done: 'Done', failed: 'Did not finish', cancelled: 'Cancelled' }[d.state] || d.state;
 }
-const leftWords = (s) => s < 60 ? 'under a minute left' : s < 3600 ? `about ${Math.ceil(s / 60)} min left` : `about ${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min left`;
 async function loadDownloads() {
   try {
     const r = await api('downloads'); dls.list = r.downloads || []; dls.summary = r.summary || dls.summary;
@@ -204,12 +226,12 @@ function paintDownloads() {
   const b = $('#dl'); if (!b) return;
   const { active = 0, total = 0 } = dls.summary || {};
   b.hidden = total === 0;
-  if (b.hidden) { if (popKind() === 'downloads') paintPop(); return; }
+  if (b.hidden) { if (popShowsDownloads(popKind())) paintPop(); return; }
   const text = `${active} of ${total}`;
   if (b.dataset.text !== text) { b.innerHTML = ICON.down; b.append(h('span', null, text)); b.dataset.text = text; }
   const name = `Downloads: ${active} of ${total} moving. Show the list`;
   b.setAttribute('aria-label', name); b.title = name;
-  if (popKind() === 'downloads') paintPop();
+  if (popShowsDownloads(popKind())) paintPop();
 }
 function downloadRows() {
   const recent = (d) => d.finished && Date.now() - new Date(d.finished).getTime() < 15 * 60000;
@@ -232,6 +254,40 @@ function downloadRows() {
   });
 }
 $('#dl').onclick = () => togglePop('downloads');
+
+// ---------- the agent tracker in the top bar: the count of running jobs, live from the desk's 'job' events (read once at start)
+const tracked = { jobs: new Map(), loaded: null };
+function loadJobs() {
+  tracked.loaded = api('jobs?limit=100').then(r => { for (const j of r.jobs || []) if (!tracked.jobs.has(j.id) || tracked.jobs.get(j.id).updated <= j.updated) mergeJob(tracked.jobs, j); }).catch(() => {}).then(() => { paintTracker(); });
+  return tracked.loaded;
+}
+ui.tracker = {
+  jobs: () => [...tracked.jobs.values()],
+  ready: () => tracked.loaded || loadJobs(),
+  downloadRows: () => downloadRows(),
+  stop: (id) => api(`jobs/${encodeURIComponent(id)}/stop`, { method: 'POST' }).then(j => { mergeJob(tracked.jobs, j); paintTracker(); return j; }),
+};
+function paintTracker() {
+  const b = $('#trk'); if (!b) return;
+  const n = runningCount(tracked.jobs.values());
+  const text = n ? String(n) : '';
+  if (b.dataset.text !== text || !b.firstChild) { b.innerHTML = ICON.track; if (n) b.append(h('span', null, text)); b.dataset.text = text; }
+  const name = `Tracker: ${n === 0 ? 'no job running' : n === 1 ? '1 job running' : n + ' jobs running'}. Show what your agents are doing`;
+  b.setAttribute('aria-label', name); b.title = name;
+  if (popKind() === 'tracker') paintPop();
+}
+$('#trk').onclick = () => togglePop('tracker');
+
+// ---------- a checked update can be installed: a small dot on an icon that opens Settings › Backup › Updates. Nothing installs from it.
+let updateOk = false;
+function paintUpdate() {
+  const b = $('#upd'); if (!b) return;
+  b.hidden = !updateOk;
+  if (updateOk && !b.firstChild) { b.innerHTML = ICON.upd; b.append(h('span', { class: 'newdot', 'aria-hidden': 'true' })); }
+  const name = 'A new version can be installed. Open Settings, Backup, Updates';
+  b.setAttribute('aria-label', name); b.title = name;
+}
+$('#upd').onclick = () => { location.hash = '#/settings/backup?at=updates'; };
 
 // ---------- the network icon: green online, red no internet, grey when the owner set the desk Offline.
 // What it knows costs nothing outside: the browser's own online state, the model door's last real calls, and, with the
@@ -289,7 +345,7 @@ function parseHash() {
   const parts = pathPart.split('/').filter(Boolean).map(decodeURIComponent);
   // Files has one address form: #/files?path=<workspace path>. A link written as #/files/<path> is turned into it.
   if (parts[0] === 'files' && parts.length > 1 && !q) { history.replaceState(null, '', '#/files?path=' + encodeURIComponent(parts.slice(1).join('/'))); return { page: 'files', parts: [], params: { path: parts.slice(1).join('/') } }; }
-  return { page: parts[0] || (state.settings.onboarded || state.settings.role ? 'chat' : 'chat'), parts: parts.slice(1), params: Object.fromEntries(new URLSearchParams(q || '')) };
+  return { page: parts[0] || openingPlace(), parts: parts.slice(1), params: Object.fromEntries(new URLSearchParams(q || '')) };
 }
 async function moduleUi(id) {
   if (loaded.has(id)) return loaded.get(id);
@@ -314,17 +370,27 @@ async function render() {
   try {
     if (page === 'home') return await homePage(view, ui);
     if (page === 'settings') return await settingsPage(view, ui);
+    if (page === 'tracker') return await trackerPage(view, ui);
     const m = ownerOf(page);
     if (!m) return view.replaceChildren(offNote('This place is not part of the desk.', null));
-    if (!m.on) return view.replaceChildren(offNote(`${m.name} is switched off.`, m));
+    if (!m.on) return view.replaceChildren(offNote(`${ownName(page) || m.name} is switched off.`, m));
     if (!m.hasUi) return view.replaceChildren(offNote(`${m.name} is on but has no screen yet.`, null));
     const mod = await moduleUi(m.id);
     if (stale()) return;
     const def = mod.pages?.[page];
     if (mod.error || !def) return view.replaceChildren(offNote(`${m.name} could not open its screen${mod.error ? ': ' + mod.error.message : ''}.`, null));
+    ownHeading(view, page);
     await def.render(view, ui, state.route);
     if (def.unmount) pageCleanup.push(() => def.unmount());
   } catch (e) { console.error(e); view.replaceChildren(offNote('This screen hit an error: ' + e.message, null)); }
+}
+/** A renamed place: the page's own heading says the owner's name too, whenever the page draws it with the default one. */
+function ownHeading(view, page) {
+  const it = arrangeMenu(basePlaces(), state.settings[MENU_KEY]).find(x => x.id === page);
+  if (!it?.renamed) return;
+  const was = [it.defaultLabel, OFFICIAL.find(o => o[0] === page)?.[1], ownerOf(page)?.menu?.find(x => x.id === page)?.label].filter(Boolean);
+  const fix = () => { for (const h2 of view.querySelectorAll('h2')) if (was.includes(h2.textContent.trim()) && h2.textContent !== it.label) h2.textContent = it.label; };
+  const mo = new MutationObserver(fix); mo.observe(view, { childList: true, subtree: true }); pageCleanup.push(() => mo.disconnect()); fix();
 }
 // A control that a page redraws in place (a module switch in Settings) keeps the keyboard focus: when the focused
 // element leaves the page and nothing else took the focus, its new copy (same data-module or id) gets it back.
@@ -509,7 +575,7 @@ function connect() {
   const es = new EventSource('/api/events');
   es.addEventListener('apd', (ev) => { let m = null; try { m = JSON.parse(ev.data); } catch { return; } if (m?.type) emitLocal(m.type, m.data || {}); });
   es.onerror = () => { /* the browser reconnects on its own */ };
-  let opened = false; es.onopen = () => { if (opened) loadDownloads(); opened = true; };   // events missed while away
+  let opened = false; es.onopen = () => { if (opened) { loadDownloads(); loadJobs(); } opened = true; };   // events missed while away
 }
 globalOn('panic', (st) => { if (st && 'halted' in st) { state.panic = st; paintChrome(); if (!st.halted) refreshApprovals().catch(() => {}); } });
 globalOn('approval', (a) => { refreshApprovals().catch(() => {}); if (a?.status === 'pending') toast(`Waiting for you: ${a.title}`); });
@@ -524,6 +590,9 @@ globalOn('agents', () => api('agents').then(r => { state.agents = r.agents; }).c
 globalOn('security', (s) => { if (s?.level) { state.security = s; paintChrome(); } });
 globalOn('toast', (t) => toast(t.text || String(t), t.kind || ''));
 globalOn('job', jobFinished);
+globalOn('job', (j) => { mergeJob(tracked.jobs, j); paintTracker(); });
+globalOn('job', jobNeedsYou);
+globalOn('update', (st) => { updateOk = updateReady(st); paintUpdate(); });
 globalOn('downloads', ({ download, summary } = {}) => {
   if (download?.id) {
     const i = dls.list.findIndex(x => x.id === download.id); if (i >= 0) dls.list[i] = download; else dls.list.unshift(download);
@@ -557,10 +626,10 @@ ui.coreSettingsSections = coreSettingsSections;
 await refresh();
 paintOnboarding();
 connect();
-loadDownloads(); loadNet({ calls: true });
+loadDownloads(); loadNet({ calls: true }); loadJobs();
 // the Network module's stored summary, read again now and then while the window is shown (a read on this PC, never a call out)
 setInterval(() => { if (!document.hidden && ui.moduleOn('network')) loadNet(); }, 60000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) loadNet(); });
 bootModules();
 ownerHere();
-if (!location.hash) location.hash = '#/chat'; else render();
+if (!location.hash) location.hash = '#/' + openingPlace(); else render();

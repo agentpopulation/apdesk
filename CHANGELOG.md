@@ -154,6 +154,9 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Each Bench session shows its to-do list with an estimate of the time left, and results can come with a Draft (a one-pager or a list of next actions) that you can edit, make again, accept, discard or hand to Mail drafts yourself.
 - Today's find (one question a day picked from your own history in the desk), a Rulebook proposed from your workspace files with file and line, and a weekly "What I learned" note from your ratings. All are suggestions; nothing changes by itself.
 - Bench marks leads that are already in your Sales customers list as "already a customer", matched by name or site.
+- Settings has a new Menu section: rename, reorder, hide or show menu places, pick the first page, or reset to the default menu. Your names show in the menu, page titles and notices; customising never changes permissions.
+- A Tracker icon in the top bar counts running jobs. Its pop-up and the Tracker page show what each agent is doing, the to-do list with time left where a job reports one, downloads, Stop and Panic, updated live.
+- A small dot in the top bar says a checked update can be installed and opens Settings, Backup, Updates; it installs nothing. Desktop notices now also say when a job needs you.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

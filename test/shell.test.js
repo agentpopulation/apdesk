@@ -106,3 +106,88 @@ test('Home: Finished counts only work the owner asked for, not the desk\'s quiet
     assert.equal(home.jobs.summary.running, t.core.jobs.summary().running);
   } finally { await t.close(); }
 });
+
+// ---- the agent tracker's lists (app/ui/tracker-data.js): plain functions, fed by the desk's 'job' events
+import { mergeJob, todoLists, runningCount, timeLeft, agentsNow, needsYou, updateReady, jobWho, popShowsDownloads } from '../app/ui/tracker-data.js';
+const NOW = Date.parse('2026-11-21T10:00:00Z');
+const ago = (min) => new Date(NOW - min * 60000).toISOString();
+const JOBS = [
+  { id: 'a', title: 'Deep research', status: 'running', progress: 0.4, agentId: 'scout', created: ago(5), updated: ago(1) },
+  { id: 'b', title: 'Lead list', status: 'waiting', agentId: 'closer', detail: 'Waiting for your approval: Send', created: ago(9), updated: ago(2) },
+  { id: 'c', title: 'Old report', status: 'done', created: ago(200), finished: ago(120) },
+  { id: 'd', title: 'Brief', status: 'done', created: ago(30), finished: ago(20) },
+  { id: 'e', title: 'Tidy', status: 'running', quiet: true, created: ago(3) },
+  { id: 'f', title: 'Upkeep failed', status: 'failed', quiet: true, created: ago(3), finished: ago(2) },
+  { id: 'g', title: 'Next up', status: 'queued', created: ago(1) },
+  { id: 'h', title: 'Stopped one', status: 'stopped', created: ago(10), finished: ago(8) },
+];
+
+test('tracker: the to-do list is queued, running, waiting for you and ended in the last hour; the desk\'s quiet upkeep only when it failed', () => {
+  const l = todoLists(JOBS, NOW);
+  assert.deepEqual(l.queued.map(j => j.id), ['g']);
+  assert.deepEqual(l.running.map(j => j.id), ['a']);
+  assert.deepEqual(l.waiting.map(j => j.id), ['b']);
+  assert.deepEqual(l.done.map(j => j.id), ['f', 'h', 'd'], 'newest first, nothing older than an hour');
+  assert.equal(runningCount(JOBS), 1);
+});
+
+test('tracker: a job event replaces the stored job; the map keeps the latest', () => {
+  const m = new Map(); mergeJob(m, JOBS[0]); mergeJob(m, { ...JOBS[0], status: 'done', finished: ago(0) }); mergeJob(m, null); mergeJob(m, {});
+  assert.equal(m.size, 1); assert.equal(m.get('a').status, 'done');
+});
+
+test('tracker: time left only where the job says it, a dash otherwise', () => {
+  assert.equal(timeLeft({ status: 'running' }), '–');
+  assert.equal(timeLeft({ status: 'running', secondsLeft: 30 }), 'under a minute left');
+  assert.equal(timeLeft({ status: 'running', secondsLeft: 600 }), 'about 10 min left');
+  assert.equal(timeLeft({ status: 'done', secondsLeft: 600 }), '–');
+});
+
+test('tracker: each agent says what it is doing now', () => {
+  const a = agentsNow([{ id: 'scout', name: 'Scout' }, { id: 'closer', name: 'Closer' }, { id: 'coder', name: 'Coder' }], JOBS);
+  assert.deepEqual(a.map(x => [x.name, x.busy, x.text]), [['Scout', true, 'Deep research'], ['Closer', true, 'Waiting for you: Lead list'], ['Coder', false, 'Not working on anything']]);
+});
+
+test('tracker: a job or agent with no known name shows a plain word, never its id', () => {
+  const agents = [{ id: 'scout', name: 'Scout' }, { id: 'k3x9f0ab1c2d' }];
+  assert.equal(jobWho(agents, { agentId: 'scout' }), 'Scout');
+  assert.equal(jobWho(agents, { agentId: 'zz8q2m4n7p1r' }), 'An agent');
+  assert.equal(jobWho(agents, { agentId: 'k3x9f0ab1c2d' }), 'An agent');
+  assert.equal(jobWho(agents, {}), 'The desk');
+  const a = agentsNow(agents, []);
+  assert.deepEqual(a.map(x => x.name), ['Scout', 'An agent']);
+  const page = fs.readFileSync(path.join(ROOT, 'app', 'ui', 'pages', 'tracker.js'), 'utf8');
+  assert.doesNotMatch(page, /j\.agentId \? j\.agentId/, 'the Tracker row uses jobWho');
+  assert.match(page, /jobWho\(/);
+});
+
+test('tracker: a downloads event repaints the open tracker pop-up as well as the downloads pop-up', () => {
+  assert.equal(popShowsDownloads('downloads'), true);
+  assert.equal(popShowsDownloads('tracker'), true);
+  for (const k of [null, 'network', 'approvals']) assert.equal(popShowsDownloads(k), false);
+  const src = fs.readFileSync(path.join(ROOT, 'app', 'ui', 'shell.js'), 'utf8');
+  const body = src.slice(src.indexOf('function paintDownloads()'), src.indexOf('function downloadRows()'));
+  assert.doesNotMatch(body, /popKind\(\) === 'downloads'/, 'paintDownloads asks popShowsDownloads');
+  assert.equal((body.match(/popShowsDownloads\(popKind\(\)\)/g) || []).length, 2);
+});
+
+test('tracker: "needs you" is told once per job, only when it goes to waiting, never for quiet upkeep', () => {
+  const told = new Set();
+  assert.equal(needsYou(JOBS[1], told), true); assert.equal(needsYou(JOBS[1], told), false);
+  assert.equal(needsYou(JOBS[0], told), false); assert.equal(needsYou({ ...JOBS[4], status: 'waiting' }, told), false);
+});
+
+test('update notice: shown only when the update event says it can be installed', () => {
+  assert.equal(updateReady({ canInstall: true, release: { version: '0.1.1' } }), true);
+  for (const s of [null, {}, { canInstall: false, release: { version: '0.1.1' } }, { canInstall: true }]) assert.equal(updateReady(s), false);
+});
+
+test('shell files: the tracker and menu rules are served to the page; the top bar has the tracker and update icons', async () => {
+  const t = await testDesk();
+  try {
+    for (const f of ['/ui/tracker-data.js', '/ui/menus.js', '/ui/pages/tracker.js']) assert.equal((await fetch(t.base + f)).status, 200, f);
+    const html = fs.readFileSync(path.join(ROOT, 'app', 'ui', 'index.html'), 'utf8');
+    assert.match(html, /<button class="ico" id="upd" hidden><\/button><button class="ico" id="trk"><\/button>/);
+    assert.match(html, /id="trk"[^]*id="dl"[^]*id="net"[^]*id="theme"[^]*id="panic"/);
+  } finally { await t.close(); }
+});
