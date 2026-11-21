@@ -212,6 +212,10 @@ export const pages = {
           }))
           : p.paid === 'always' ? ui.h('div', { class: 'sub' }, ui.h('span', { class: 'pill' }, 'Paid API'), ' Adding a key means paying for what it uses. Your spend limits still apply.')
           : p.paid === 'account' ? ui.h('div', { class: 'sub', 'data-apd': 'billing-note' }, `Free or paid depends on your own account with ${p.name}. The desk cannot see or control its billing.`) : null;
+        // the owner tells the desk whether a key is free: then its calls cost nothing; paid prices them at the list price; not sure leaves the cost unknown
+        const TIERS = [['Free tier', 'free'], ['Paid', 'paid'], ['Not sure', null]];
+        const tierChoice = (k) => ui.h('label', { class: 'ktier', title: 'Is this key charged?' }, ui.h('span', { class: 'sub' }, 'Cost'),
+          ui.seg(TIERS.map(o => o[0]), Math.max(0, TIERS.findIndex(([, v]) => v === (k.tier || null))), async (_, i) => { try { await ui.api(API + `keys/${encodeURIComponent(k.id)}/tier`, { body: { tier: TIERS[i][1] } }); await load(); } catch (e) { ui.toast(e.message, 'err'); } }));
         return ui.h('div', { class: 'keys' },
           ui.h('div', { class: 'sub' }, 'Your data: ', p.terms, p.signup ? [' ', ui.h('a', { href: p.signup, target: '_blank', rel: 'noopener noreferrer' }, 'Get a key')] : null),
           paid,
@@ -219,6 +223,7 @@ export const pages = {
             ui.h('span', { style: { flex: 1, minWidth: 0, fontFamily: 'var(--ui)' } }, ui.h('b', null, k.fromEnv ? 'Key from the environment' : k.label), ' ', ui.h('span', { class: 'sub' }, k.fromEnv ? 'this run only, not saved' : 'added ' + ui.fmt.date(k.created))),
             testLine(k.test, ui),
             k.fromEnv ? null : ui.sw(k.enabled, k.label, async (on) => { await ui.api(API + `keys/${encodeURIComponent(k.id)}/toggle`, { body: { on } }); await load(); }),
+            tierChoice(k),
             testBtn({ provider: p.id, keyId: k.id }),
             k.fromEnv ? null : ui.btn('Remove', { kind: 'ghost sm', onClick: async () => { if (!await ui.confirm(`Remove ${k.label} from ${p.name}?`, { ok: 'Remove' })) return; await ui.api(API + 'keys/' + encodeURIComponent(k.id), { method: 'DELETE' }); await load(); } }))),
           ui.h('div', { class: 'row' }, label, value, base, cmodel, add),
@@ -407,9 +412,11 @@ export const pages = {
       }
       async function tabUsage() {
         const u = await ui.api(API + 'usage');
-        const tot = u.today.reduce((s, r) => ({ calls: s.calls + r.calls, failed: s.failed + r.failed, cost: s.cost + r.cost }), { calls: 0, failed: 0, cost: 0 });
-        return [ui.h('p', { class: 'sub' }, `Today: ${tot.calls} calls, ${tot.failed} failed, about ${ui.fmt.money(tot.cost, u.currency)}. Free API and local models cost nothing.`),
-          ui.table([{ label: 'Model', render: r => r.label }, { label: 'Calls', render: r => String(r.calls) }, { label: 'Failed', render: r => String(r.failed) }, { label: 'Cost (about)', render: r => ui.fmt.money(r.cost, u.currency) }], u.today, { empty: 'No model calls yet today.' })];
+        const tot = u.today.reduce((s, r) => ({ calls: s.calls + r.calls, failed: s.failed + r.failed, cost: s.cost + r.cost, unknown: s.unknown + (r.unknown || 0) }), { calls: 0, failed: 0, cost: 0, unknown: 0 });
+        // a call whose cost the desk cannot know is shown as "not known", with its tokens, never as ₹0
+        const costCell = (r) => r.unknown ? (r.cost ? `${ui.fmt.money(r.cost, u.currency)} + not known` : 'not known') : ui.fmt.money(r.cost, u.currency);
+        return [ui.h('p', { class: 'sub' }, `Today: ${tot.calls} calls, ${tot.failed} failed, about ${ui.fmt.money(tot.cost, u.currency)}${tot.unknown ? `, and ${tot.unknown} call${tot.unknown === 1 ? '' : 's'} whose cost is not known` : ''}. Free API and local models cost nothing.`),
+          ui.table([{ label: 'Model', render: r => r.label }, { label: 'Calls', render: r => String(r.calls) }, { label: 'Failed', render: r => String(r.failed) }, { label: 'Tokens', render: r => String(r.tokens) }, { label: 'Cost (about)', render: costCell }], u.today, { empty: 'No model calls yet today.' })];
       }
 
       ui.on('models', (c) => { load().catch(() => {}); if (c?.change === 'local-engine' && st.tab === 2) drawEngine().catch(() => {}); });

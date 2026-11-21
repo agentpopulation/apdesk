@@ -163,7 +163,8 @@ export async function settingsPage(el, ui) {
     for (const m of ui.state.modules) {
       if (!m.on || !m.hasUi || !(m.settings || []).length) continue;
       const mod = await ui.moduleUi(m.id);
-      for (const s of m.settings) if (mod.settings?.[s.id]) sections[s.id] = { title: s.label || mod.settings[s.id].title, render: mod.settings[s.id].render, module: m.id };
+      // the owner's own name for the place wins (Settings › Menu rename), so the side list and heading follow a rename
+      for (const s of m.settings) if (mod.settings?.[s.id]) sections[s.id] = { title: ui.label(s.id, s.label || mod.settings[s.id].title), render: mod.settings[s.id].render, module: m.id };
     }
     return sections;
   };

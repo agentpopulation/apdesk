@@ -53,12 +53,12 @@ export async function activate(ctx) {
   async function defaultChair() { return asModel((await live()).chair); }
 
   /** One call for one seat: its own model first; then a live model no other seat sits on, the provider's own choice, the desk's chain. */
-  async function seatCall(model, messages, { signal, json = false, maxTokens = 500, spare = [], onDelta }) {
+  async function seatCall(model, messages, { signal, json = false, maxTokens = 500, spare = [], onDelta, agentId = null }) {
     const tries = model?.provider ? [model, ...spare, ...(model.model ? [{ provider: model.provider, model: null }] : []), null] : [null];
     let last;
     for (const m of tries) {
       try {
-        const r = await ctx.model.chat({ purpose: 'council', messages, json, maxTokens, temperature: 0.6, signal, ...(onDelta ? { onDelta } : {}), ...(m ? { model: m } : {}) });
+        const r = await ctx.model.chat({ purpose: 'council', messages, json, maxTokens, temperature: 0.6, signal, agentId, ...(onDelta ? { onDelta } : {}), ...(m ? { model: m } : {}) });
         return { ...r, fellBack: m !== tries[0] };
       } catch (e) { last = e; if (signal?.aborted || ['halted', 'aborted', 'offline'].includes(e.code)) throw e; }
     }
@@ -144,20 +144,20 @@ export async function activate(ctx) {
         await Promise.all(seats.map(async (s, i) => {
           try { await inTime(async (signal, started) => {
             const msgs = answerMessages(room.question, s, FORMATS[room.format], room.brief);
-            const r = await seatCall(s.model, msgs, { signal, maxTokens: 900, spare: spareFor(i), onDelta: started });
+            const r = await seatCall(s.model, msgs, { signal, maxTokens: 900, spare: spareFor(i), onDelta: started, agentId: s.agentId });
             let text = String(r.text || '').trim(), cut = false;
             if (text && r.cutOff === true) {
               // the model door says the reply hit its length limit: ask the same model once to finish; if that is cut off too
               // (or fails), keep the full sentences only. The last character is never the signal.
               let still = true;
-              try { const c = await seatCall({ provider: r.provider, model: r.model }, continueMessages(msgs, text), { signal, maxTokens: 300 }); text = joinContinuation(text, c.text); still = c.cutOff === true; }
+              try { const c = await seatCall({ provider: r.provider, model: r.model }, continueMessages(msgs, text), { signal, maxTokens: 300, agentId: s.agentId }); text = joinContinuation(text, c.text); still = c.cutOff === true; }
               catch (e) { if (signal.aborted || e.code === 'halted' || e.code === 'aborted') throw e; }
               if (still) { text = toLastSentence(text) || text.replace(/\s+\S*$/, '') + '…'; cut = true; }
             }
             // the seat's own recommendation line; on a miss, the same model is asked once for that line alone
             let recommendation = parseRecommendation(text);
             if (text && !recommendation) {
-              try { const c = await ctx.model.chat({ purpose: 'council', messages: recommendMessages(msgs, text), maxTokens: 200, temperature: 0.2, signal, model: { provider: r.provider, model: r.model } }); recommendation = parseRecommendation(c.text, { bare: true }); }
+              try { const c = await ctx.model.chat({ purpose: 'council', messages: recommendMessages(msgs, text), maxTokens: 200, temperature: 0.2, signal, agentId: s.agentId, model: { provider: r.provider, model: r.model } }); recommendation = parseRecommendation(c.text, { bare: true }); }
               catch (e) { if (signal.aborted || e.code === 'halted' || e.code === 'aborted') throw e; }
             }
             answers[i] = { ...answers[i], text: shown(text), cut, recommendation: recommendation && shown(recommendation), label: r.label, fellBack: r.fellBack, setLabel: label(s.model), ms: r.ms };
@@ -178,7 +178,7 @@ export async function activate(ctx) {
         await Promise.all(seats.map(async (s, i) => {
           if (!answers[i].text) return;
           try {
-            const r = await inTime((signal, started) => seatCall(s.model, rankMessages(room.question, order.map((ai, k) => ({ letter: letters[k], text: answers[ai].text }))), { signal, json: true, maxTokens: 900, spare: spareFor(i), onDelta: started }));
+            const r = await inTime((signal, started) => seatCall(s.model, rankMessages(room.question, order.map((ai, k) => ({ letter: letters[k], text: answers[ai].text }))), { signal, json: true, maxTokens: 900, spare: spareFor(i), onDelta: started, agentId: s.agentId }));
             const parsed = parseRanking(r, letters);
             rankings.push({ seat: i, name: s.name, label: r.label, order: parsed.order, ranked: parsed.order.map(l => answers[byLetter[l]].name), notes: Object.fromEntries(Object.entries(parsed.notes).filter(([l]) => byLetter[l] != null).map(([l, v]) => [answers[byLetter[l]].name, v])), raw: parsed.order.length ? null : clip(r.text, 300) });
           } catch (e) { if (signal.aborted || e.code === 'halted' || e.code === 'aborted') throw e; rankings.push({ seat: i, name: s.name, error: e.message, order: [] }); }
@@ -192,10 +192,10 @@ export async function activate(ctx) {
         agg.agreeLine = agreement(recs); agg.major = majority(recs);
         // stage 3: the chairman writes the Verdict
         job.progress(0.85, 'The chairman is writing the Verdict'); card('The chairman is writing the Verdict', 0.85); emit('verdict-writing');
-        let r = await seatCall(chair, chairMessages(room.question, answers, seats, agg, { plan, brief: room.brief }), { signal, json: true, maxTokens: plan ? 1800 : 1200 });
+        let r = await seatCall(chair, chairMessages(room.question, answers, seats, agg, { plan, brief: room.brief }), { signal, json: true, maxTokens: plan ? 1800 : 1200, agentId: chair?.agentId });
         const usable = (x) => x && [x.decision, x.answer].some(v => typeof v === 'string' && v.trim()) ? x : null;   // JSON without a decision is no Verdict
         let j = usable(parseJson(r));
-        if (!j) { r = await seatCall(chair, chairMessages(room.question, answers, seats, agg, { plan, brief: room.brief }), { signal, json: true, maxTokens: 2400 }); j = usable(parseJson(r)); }   // cut off or unreadable: once more, with more room
+        if (!j) { r = await seatCall(chair, chairMessages(room.question, answers, seats, agg, { plan, brief: room.brief }), { signal, json: true, maxTokens: 2400, agentId: chair?.agentId }); j = usable(parseJson(r)); }   // cut off or unreadable: once more, with more room
         if (!j) {            // still cut off: take the decision as far as its last full sentence, never half a sentence
           const m = String(r.text || '').match(/"decision"\s*:\s*"((?:[^"\\]|\\.)*)/);
           const raw = m ? m[1].replace(/\\n/g, ' ').replace(/\\"/g, '"') : String(r.text || '').replace(/[{}"]/g, ' ');

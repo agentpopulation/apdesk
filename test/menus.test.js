@@ -110,6 +110,20 @@ test('menus: a place only partly inside the menu\'s clear area is marked, so no 
 import fs from 'node:fs';
 import { menuEnds } from '../app/ui/menus.js';
 
+test('settings: a renamed menu place shows the owner\'s new name in the Settings side list, not the old one', () => {
+  // a module's settings section is titled through the shell's owner-name helper, so renaming the place (Bench -> "Night
+  // shift" in Settings › Menu) renames its Settings section too; without the owner's name it falls back to the module's label.
+  const settings = fs.readFileSync(new URL('../app/ui/pages/settings.js', import.meta.url), 'utf8');
+  assert.match(settings, /title: ui\.label\(s\.id, s\.label \|\| mod\.settings\[s\.id\]\.title\)/, 'the section title uses ui.label(id, fallback)');
+  assert.doesNotMatch(settings, /title: s\.label \|\| mod\.settings\[s\.id\]\.title,/, 'the old title, which kept the stale name, is gone');
+  // the helper returns the owner's own menu name first (from ui.menu names), else the fallback
+  const shell = fs.readFileSync(new URL('../app/ui/shell.js', import.meta.url), 'utf8');
+  assert.match(shell, /label: \(page, fallback\) => ownName\(page\) \|\| roleLabel\(page, fallback\)/);
+  assert.match(shell, /const ownName = \(page\) => cleanMenu\(state\.settings\[MENU_KEY\]\)\.names\[page\] \|\| null/);
+  // and the owner's name really is what the menu rules return for a renamed place
+  assert.equal(cleanMenu({ names: { bench: 'Night shift' } }).names.bench, 'Night shift');
+});
+
 test('menus: an end that hides places shows a "more places" sign there; a menu that fits shows none', () => {
   assert.deepEqual(menuEnds({ scrollLeft: 0, clientWidth: 600, scrollWidth: 600 }), { l: false, r: false }, 'it fits');
   assert.deepEqual(menuEnds({ scrollLeft: 0, clientWidth: 600, scrollWidth: 1200 }), { l: false, r: true }, 'at the start');

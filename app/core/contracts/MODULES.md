@@ -105,7 +105,7 @@ export const agentTabs = { computer: { title: 'Computer', async render(el, ui, a
 export const chatCards = { 'mail.draft': (card, ui) => HTMLElement };   // optional renderers for cards this module posts
 ```
 
-`ui` is the shell kit (`app/ui/kit.js`): `ui.api(path, opts)` (JSON fetch to `/api/...`), `ui.h(tag, attrs, ...children)`, `ui.card`, `ui.pill`, `ui.meter`, `ui.sw`, `ui.seg`, `ui.table`, `ui.toast`, `ui.confirm`, `ui.go(page, params)`, `ui.on(eventType, fn)` (SSE), `ui.state` (theme, role, online, level, modules on). Pages are rendered into one `.view` element inside the rounded pane; they must fill it (flex column) and never scroll the whole window. Use the CSS classes in `app/ui/shell.css` and the look of `app/docs/design/preview.html`. No frameworks, no build step.
+`ui` is the shell kit (`app/ui/kit.js`): `ui.api(path, opts)` (JSON fetch to `/api/...`), `ui.h(tag, attrs, ...children)`, `ui.card`, `ui.pill`, `ui.meter`, `ui.sw`, `ui.seg`, `ui.table`, `ui.toast`, `ui.confirm`, `ui.go(page, params)`, `ui.on(eventType, fn)` (SSE), `ui.placeName(id)` (the owner's name for a menu place: his own, else the default; null when it is not a place), `ui.label(id, fallback)` (the owner's own name for a place, else the role's label, else the fallback — use it for a title that must follow a menu rename), `ui.state` (theme, role, online, level, modules on). Pages are rendered into one `.view` element inside the rounded pane; they must fill it (flex column) and never scroll the whole window. Use the CSS classes in `app/ui/shell.css` and the look of `app/docs/design/preview.html`. No frameworks, no build step.
 
 ## On and off
 

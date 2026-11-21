@@ -34,7 +34,13 @@ export async function activate(ctx) {
     if (minor > l.perItem) return 'per item limit'; if (l.spentToday + minor > l.perDay) return 'daily limit'; if (l.spentMonth + minor > l.perMonth) return 'monthly limit'; return null;
   }
 
-  ctx.route('GET', '/log', (req, res, { owner }) => { if (!owner) return ctx.json(res, { error: 'Only the owner at this desk can see the spend log.' }, 403); ctx.json(res, { items: list(200), limits: limits() }); });
+  // Today's model calls whose cost the desk cannot know: they still count toward the limit at the providers' list price,
+  // so the spend page names that part and it is never silently passed.
+  function unknownToday() {
+    try { const rows = (ctx.model.usage().today) || []; return { minor: rows.reduce((a, r) => a + (r.atList || 0), 0), calls: rows.reduce((a, r) => a + (r.unknown || 0), 0) }; }
+    catch { return { minor: 0, calls: 0 }; }
+  }
+  ctx.route('GET', '/log', (req, res, { owner }) => { if (!owner) return ctx.json(res, { error: 'Only the owner at this desk can see the spend log.' }, 403); ctx.json(res, { items: list(200), limits: limits(), unknownToday: unknownToday() }); });
   ctx.route('GET', '/limits', (req, res) => ctx.json(res, limits()));
 
   ctx.tool({

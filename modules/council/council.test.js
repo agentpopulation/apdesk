@@ -455,3 +455,23 @@ test('council: "(not checked)" is put only by code, on a figure; one a model wro
   assert.equal(shown('Charge ₹350 (not checked) per box.'), 'Charge ₹350 (not checked) per box.');
   assert.equal(shown('hit a ₹350–₄₅₀ price point'), 'hit a ₹350–450 (not checked) price point');
 });
+
+test('council: a seat backed by a hired agent records its calls under that agent; bare-model seats and the chairman under the desk', async () => {
+  const script = (body) => {
+    const s = body.messages[0].content;
+    if (/chairman/.test(s)) return JSON.stringify({ decision: 'Buy now.', reasons: ['Faster', 'Cheaper'], answer: 'Buy.' });
+    if (/review answers/.test(s)) return JSON.stringify({ ranking: ['A', 'B', 'C'] });
+    return 'My position: buy.';
+  };
+  const t = await testDesk({ modules: ['council'], script });
+  try {
+    const api = t.core.modules.api('council');
+    // one seat is a hired advisor (its own agent id), the other two are bare models
+    const j = await api.ask({ question: 'Should we build or buy a rack monitor?', seats: [{ agentId: 'coordinator' }, {}, {}] });
+    assert.equal((await t.core.jobs.wait(j.id, 10000)).status, 'done');
+    const mine = t.core.storage.get("SELECT COUNT(*) AS c FROM calls WHERE agent_id = 'coordinator' AND purpose = 'council'");
+    assert.ok(mine.c >= 1, 'the advisor seat\'s calls are credited to its agent');
+    const desk = t.core.storage.get("SELECT COUNT(*) AS c FROM calls WHERE agent_id IS NULL AND purpose = 'council'");
+    assert.ok(desk.c >= 1, 'a bare-model seat and the chairman still record under the desk');
+  } finally { await t.close(); }
+});

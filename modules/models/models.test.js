@@ -1,10 +1,33 @@
 // Plumbing tests for the Models module against the fake model. Never evidence that a real model works.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { testDesk } from '../../test/helpers/desk.js';
 import { recommend } from './hardware.js';
 import { safeFirst } from './catalog.js';
 import { lanUrl, plainError } from './server.js';
+
+test('usage shows "not known" for a cost that cannot be known, with the tokens; a key is marked free/paid/not sure (owner only)', async () => {
+  const t = await testDesk({ modules: ['models'] });
+  const m = (p, o) => t.call('/api/m/models' + p, o);
+  try {
+    t.core.settings.set('currency', 'INR');
+    const k = (await m('/keys', { body: { provider: 'gemini', value: 'test-key-12345678', label: 'Mine', model: 'gemini-3.5-flash-lite' } })).json;
+    // a sign-up key whose tier the desk cannot know: its call is recorded with a NULL cost
+    t.core.storage.run("INSERT INTO calls (at, purpose, provider, model, ok, ms, input_tokens, output_tokens, cost_minor, currency) VALUES (?, 'chat', 'gemini', 'gemini-3.5-flash-lite', 1, 10, 1000000, 1000000, NULL, 'INR')", new Date().toISOString());
+    const row = (await m('/usage')).json.today.find(x => x.provider === 'gemini');
+    assert.equal(row.unknown, 1); assert.equal(row.cost, 0, 'no known cost, never shown as a number'); assert.ok(row.atList >= 1, 'its list price is given for the screen'); assert.ok(row.tokens >= 2000000, 'the tokens are shown');
+    // the owner marks the key: another program (no session) cannot; the owner's word is kept and shown
+    assert.equal((await m(`/keys/${k.id}/tier`, { body: { tier: 'free' }, session: false })).status, 403, 'only the owner marks a key');
+    assert.equal((await m(`/keys/${k.id}/tier`, { body: { tier: 'free' } })).json.tier, 'free');
+    assert.equal((await m('/providers')).json.providers.find(p => p.id === 'gemini').keys.find(x => x.id === k.id).tier, 'free');
+    assert.equal(t.core.model.keysFor('gemini').find(x => x.id === k.id).meta.tier, 'free');
+    assert.equal((await m(`/keys/${k.id}/tier`, { body: { tier: null } })).json.tier, null, 'back to not sure');
+    const src = fs.readFileSync(new URL('./ui.js', import.meta.url), 'utf8');
+    assert.match(src, /'not known'/, 'the usage table shows "not known", never ₹0, for an unknown cost');
+    assert.match(src, /keys\/\$\{encodeURIComponent\(k\.id\)\}\/tier/, 'each key has the Free tier / Paid / Not sure choice');
+  } finally { await t.close(); }
+});
 
 test('routes: overview, test through the door, keys never come back, pickers, usage', async () => {
   const t = await testDesk({ modules: ['models'], script: (b) => b.messages?.some(m => /ready/.test(m.content)) ? 'ready' : 'hello' });

@@ -112,7 +112,8 @@ export async function activate(ctx) {
       const a = await ctx.approval.request({ jobId: job.id, action: 'install', title: `Get the ${p.title} pack (${sizeText(p.bytes)})`,
         detail: `From ${new URL(p.url).hostname}, the public AgentPopulation list. Checked against its SHA-256 before it is used.`,
         payload: { kind: 'download', what: 'apis pack', url: p.url, size: p.bytes, sha256: p.sha256, file: path.basename(p.file) }, signal: job.signal });
-      if (!a.ok) { setPack(p.id, { state: 'not here', job_id: null, note: a.reason === 'denied' ? 'You said no to this download.' : 'Not allowed, so not downloaded.' }); return { got: false }; }
+      // a denied, timed-out or stopped approval ends the job as stopped, never Done: the Tracker and Home must not call it finished
+      if (!a.ok) { const note = a.reason === 'denied' ? 'You said no to this download.' : 'Not allowed, so not downloaded.'; setPack(p.id, { state: 'not here', job_id: null, note }); throw err('aborted', note); }
       for (;;) {
         while (offline()) { job.waiting('Waiting: the desk is offline'); setPack(p.id, { note: 'Waiting: the desk is offline. It goes on when the desk is online again.' }); await new Promise(r => setTimeout(r, 250)); job.throwIfStopped(); }
         job.resumed('Downloading'); setPack(p.id, { note: null });

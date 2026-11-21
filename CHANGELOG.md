@@ -190,6 +190,10 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - The Tracker names the desk's own work when a job has no agent, and renaming a menu place carries the new name into its page title.
 - A call on a free-tier key is recorded with no spend, and where the desk cannot know whether a call was charged it records the cost as not known rather than guessing; a provider's free-tier report is kept when the desk restarts. Spend windows count the owner's day in your zone.
 - The Tasks page and the Network Desk view name who did each job: the agent when there is one, otherwise the module that started it, and calls with no agent are shown under "The desk" split by purpose.
+- The Settings side list and section heading follow a renamed menu place, so renaming Bench to "Night shift" shows the new name in Settings too.
+- A denied or stopped Get on the APIs page ends its download as stopped, so the Tracker and Home never call it Done.
+- The Models usage list shows "not known" with the tokens for a call whose cost cannot be known, every key has a Free tier / Paid / Not sure choice, and the Payments page names the list-price amount counted toward your daily limit so a limit is never passed unseen.
+- Council seats backed by a hired advisor record their model calls under that advisor, so the Network Desk view and Tasks credit them; bare seats and the chair stay under the desk.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

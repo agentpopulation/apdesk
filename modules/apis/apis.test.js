@@ -66,6 +66,24 @@ async function getPack(t, id) {
   const job = await t.core.jobs.wait(r.json.jobId, 10000);
   return { card, job };
 }
+const denyNext = async (t, action) => {
+  for (let i = 0; i < 100; i++) { const p = (await t.call('/api/approvals')).json.pending.filter(x => x.action === action); if (p.length) { await t.call(`/api/approvals/${p[0].id}/deny`, { method: 'POST' }); return p[0]; } await new Promise(r => setTimeout(r, 30)); }
+  throw new Error('no approval came');
+};
+
+test('a denied Get ends the job as stopped, never Done; nothing is fetched and the pack is not here', async () => {
+  const s = await stand(); const t = await desk(s);
+  try {
+    const r = await t.call('/api/m/apis/packs/test-water/get', { method: 'POST' });
+    assert.equal(r.status, 200, r.text);
+    await denyNext(t, 'install');
+    const job = await t.core.jobs.wait(r.json.jobId, 10000);
+    assert.notEqual(job.status, 'done', 'a denied download is not Done');
+    assert.equal(job.status, 'stopped');
+    assert.equal(s.seen.length, 0, 'nothing was fetched');
+    assert.equal((await t.call('/api/m/apis/packs')).json.packs.find(p => p.id === 'test-water').state, 'not here');
+  } finally { await t.close(); await s.close(); setTestNet(null); }
+});
 
 test('pack rows: quoted commas, the key from the no-key tag, missing fields are "not checked"', () => {
   assert.deepEqual(parseCsvLine('a,"b, c",,"d ""e"""'), ['a', 'b, c', '', 'd "e"']);

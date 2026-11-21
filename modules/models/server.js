@@ -56,7 +56,7 @@ export async function activate(ctx) {
       id, name: p.name, signup: p.signup, tier: id === 'custom' ? 'paid' : (p.tier || 'paid'), freeNote: p.freeNote || null, terms: PROVIDER_TERMS[id] || 'No statement on keeping prompts, so treat it as logging.',
       paidOff: id === 'openrouter' && !openrouterPaid(), paidOn: id === 'openrouter' && openrouterPaid(), paid: paidKind(id, p), listsWithoutKey: !!providersFile.providers[id]?.listsWithoutKey, defaultModel: S(`provider.${id}.model`) || p.defaultModel, builtinModel: p.defaultModel,
       models: knownModels(id),
-      keys: (keys[id] || []).map(k => ({ id: k.id, label: k.label, enabled: k.enabled, created: k.created, fromEnv: !!k.fromEnv, baseUrl: k.meta?.baseUrl || null, model: k.meta?.model || null, test: tests()[tkey(id, null, k.id)] || null })),
+      keys: (keys[id] || []).map(k => ({ id: k.id, label: k.label, enabled: k.enabled, created: k.created, fromEnv: !!k.fromEnv, baseUrl: k.meta?.baseUrl || null, model: k.meta?.model || null, tier: k.meta?.tier || null, test: tests()[tkey(id, null, k.id)] || null })),
     }));
   }
   function knownModels(pid) {
@@ -304,7 +304,8 @@ export async function activate(ctx) {
   // ---------- usage
   function usage() {
     const u = ctx.model.usage();
-    return { currency: S('currency'), today: (u.today || []).map(r => ({ label: ctx.model.label(r.provider, r.model), provider: r.provider, model: r.model, calls: r.calls, failed: r.calls - (r.ok || 0), cost: r.cost || 0, tokens: (r.input || 0) + (r.output || 0) })) };
+    // cost: the known cost; unknown: calls whose cost the desk cannot know (shown as "not known", not ₹0); atList: those at the providers' list price
+    return { currency: S('currency'), today: (u.today || []).map(r => ({ label: ctx.model.label(r.provider, r.model), provider: r.provider, model: r.model, calls: r.calls, failed: r.calls - (r.ok || 0), cost: r.cost || 0, unknown: r.unknown || 0, atList: r.atList || 0, tokens: (r.input || 0) + (r.output || 0) })) };
   }
   async function hardware(force = false) {
     if (!lastHardware || force) { lastHardware = await hw.scan(); ctx.kv.set('hardware', lastHardware); }
@@ -339,6 +340,12 @@ export async function activate(ctx) {
     return { id: k.id, provider: k.provider, label: k.label, enabled: true };     // never the value
   });
   R('POST', '/keys/:id/toggle', ({ params, body }) => { ctx.model.keys.toggle(params.id, !!body?.on); return { ok: true }; });
+  // the owner's word on a key: free tier (costs nothing), paid (the list price), or not known (null)
+  ctx.route('POST', '/keys/:id/tier', (req, res, { params, body, owner }) => {
+    if (!owner) return ctx.json(res, { error: 'A key is marked free or paid only from the desk itself.' }, 403);
+    const tier = body?.tier === 'free' || body?.tier === 'paid' ? body.tier : null;
+    try { ctx.model.keys.tier(params.id, tier); ctx.json(res, { ok: true, tier }); } catch (e) { ctx.json(res, { error: plainError(e) }, e.status || 400); }
+  });
   ctx.route('DELETE', '/keys/:id', (req, res, { params, owner }) => {
     if (!owner) return ctx.json(res, { error: 'Keys are removed only from the desk itself.' }, 403);
     ctx.model.keys.remove(params.id); ctx.json(res, { ok: true });
