@@ -12,3 +12,6 @@ dist/
 setup/package.json
 tools/acceptance/RESULTS.md
 tools/acceptance/FAILURES.md
+
+# Agent worktrees and local session files (never part of the project)
+.claude/
