@@ -218,7 +218,7 @@ Keys found in the environment when the desk starts are used for that run and are
 
 ## 📏 Honest status
 
-This is version **0.1.0**, a first public release. We only state what was measured, with the date.
+This is version **0.1.1**. We only state what was measured, with the date.
 
 | What was measured | Result | When |
 |---|---|---|

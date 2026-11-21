@@ -77,6 +77,10 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Acceptance runner: the Panic check counts only jobs created after the desk registered Panic, and an unclear judge answer is reported as "judge unclear", not as unsupported.
 - Acceptance runner: the lead-search ask reads both lead tables (checked, then "Not checked"), counts their rows together, and fails on unlabelled not-checked rows, a closing line that disagrees with the tables, or a list that is mostly unchecked. An honest shortfall still counts as a fail.
 
+## 0.1.1 (21 Nov 2026)
+
+Everything below was built and tested on Linux after the 0.1.0 release. The Windows installer, background mode and update step are written and checked by static tests but have not been run on Windows yet.
+
 ### 20 Nov 2026
 - `start.bat` from a GitHub download did nothing on Windows. Two causes, both repaired: `setup\setup.bat` had lost the lines that close its install block and the label that block calls, and the `.bat` files were stored with Unix line endings. The zip with the packages inside was not affected, because it never runs the install step.
 - The Windows scripts are now stored with Windows line endings, and a test checks every `.bat` file for line endings, closed blocks and missing labels.
@@ -202,6 +206,7 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Incognito mode (remember nothing): a person can open an Incognito space that runs entirely in memory with a scratch folder. Nothing is kept — not chats, memory, the visit log, ratings or Bench — and it reads none of your real data; on leaving, the memory is dropped and the scratch folder deleted. The one thing that still counts is spend, so Incognito cannot get around your limits. The screen says plainly what still leaves the desk (a mail you approve is still sent, a site still saw you, money spent is spent) and that deleting the scratch files is not a secure wipe.
 - Each person can keep a separate Work and Personal space, each with its own chats, memory, leads and jobs. For now keys are added per space (a safe step short of one shared key store); a person's keys are never seen by another person or by Incognito.
 - The switcher now has the buttons for it: switch between your Work and Personal space, or open Incognito after a plain list of what it does and does not keep; while you are in Incognito the top bar says so.
+- Version 0.1.1. The public copy is generic: an internal safety-findings file and a design mock-up page are removed, and the real company names in the maintainer-only test scripts are replaced with example firms on example.com-style domains. No keys, tokens, passwords or personal data are in the repository or its history.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

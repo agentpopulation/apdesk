@@ -497,7 +497,7 @@ export async function ask8(t) {
   const leads = lt.rows;
   const norm = (s) => s.toLowerCase().replace(/\b(pvt|private|ltd|limited|inc|technologies|technology|software|solutions)\b|[^a-z0-9]/g, '');
   const dups = leads.filter((l, i) => leads.findIndex(m => norm(m.company) === norm(l.company)) !== i).map(l => l.company);
-  // near-duplicates: one name is the other plus a word ("Keka" and "Keka HR")
+  // near-duplicates: one name is the other plus a word ("Nimbus" and "Nimbus HR")
   const core = (s) => norm(s).replace(/(hr|payroll|hrms|people|india|app|cloud|online)$/g, '');
   for (let i = 0; i < leads.length; i++) for (let k = i + 1; k < leads.length; k++) { const a = core(leads[i].company), b = core(leads[k].company); if (a.length >= 3 && a === b && !dups.includes(leads[k].company)) dups.push(`${leads[k].company} (same as ${leads[i].company})`); }
   const noUrl = leads.filter(l => !/^https?:\/\//.test(l.url)).map(l => l.company);

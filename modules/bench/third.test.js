@@ -9,31 +9,31 @@ import { makeDraft, rulesIn, zoneDayStart, hasMore } from './extras.js';
 import { buildNote, freshPlan } from './engine.js';
 import { usageTable, spendWords, placeName } from './ui.js';
 
-const page = { url: 'https://keka.example/pricing', title: 'Keka pricing', quote: 'Keka has a mobile app for leave and attendance' };
-const finding = { id: 'bi_1', kind: 'competitor', title: 'Keka HR', body: 'Keka offers payroll and HR software. Price: Rs 9,999 per month.', evidence: [page] };
+const page = { url: 'https://nimbus.example/pricing', title: 'Nimbus pricing', quote: 'Nimbus has a mobile app for leave and attendance' };
+const finding = { id: 'bi_1', kind: 'competitor', title: 'Nimbus HR', body: 'Nimbus offers payroll and HR software. Price: Rs 9,999 per month.', evidence: [page] };
 /** A stand-in for the model door: replies in turn, records what was asked. */
 const fakeAsk = (replies) => { const asked = []; const ask = async (o) => { asked.push(o); const r = replies[asked.length - 1]; if (r instanceof Error) throw r; return { text: r, route: 'route' + asked.length }; }; return { ask, asked }; };
 
 test('drafts: plain lines are enough, a cut-off reply is tried once more on another model, and nothing is made up', async () => {
-  let f = fakeAsk(['Summary: Keka offers payroll and HR software.\nKey points:\n- **Payroll and HR software.**\n- Rs 9,999 per month.\nRecommendation: Look at the Rs 9,999 per month price.']);
+  let f = fakeAsk(['Summary: Nimbus offers payroll and HR software.\nKey points:\n- **Payroll and HR software.**\n- Rs 9,999 per month.\nRecommendation: Look at the Rs 9,999 per month price.']);
   let d = await makeDraft(f.ask, finding, 'onepager');
-  assert.equal(d.summary, 'Keka offers payroll and HR software.');
+  assert.equal(d.summary, 'Nimbus offers payroll and HR software.');
   assert.deepEqual(d.points, ['Payroll and HR software.', 'Rs 9,999 per month.']);
   assert.equal(d.recommendation, 'Look at the Rs 9,999 per month price.');
-  assert.deepEqual(d.sources, [{ title: 'Keka pricing', url: page.url }], 'sources from the finding only');
+  assert.deepEqual(d.sources, [{ title: 'Nimbus pricing', url: page.url }], 'sources from the finding only');
   assert.notEqual(f.asked[0].json, true, 'no JSON is asked for');
   // the reply a thinking model cut off in the middle (seen with a free model): one more try, on another route
-  f = fakeAsk(['\n\n{\n  "summary": "Keka HR offers payroll", \n  "points": [\n    "Keka offers payroll', 'Summary: Keka offers payroll software.\n- Keka offers payroll and HR software.\n- Keka has a mobile app.\nRecommendation: Read their page.']);
+  f = fakeAsk(['\n\n{\n  "summary": "Nimbus HR offers payroll", \n  "points": [\n    "Nimbus offers payroll', 'Summary: Nimbus offers payroll software.\n- Nimbus offers payroll and HR software.\n- Nimbus has a mobile app.\nRecommendation: Read their page.']);
   d = await makeDraft(f.ask, finding, 'onepager');
   assert.equal(f.asked.length, 2); assert.deepEqual(f.asked[1].avoid, ['route1'], 'the second try avoids the model that gave the cut-off reply');
-  assert.equal(d.summary, 'Keka offers payroll software.');
+  assert.equal(d.summary, 'Nimbus offers payroll software.');
   // still nothing usable after the second try: a plain error, no third call
   f = fakeAsk(['Summary only, no points', 'also nothing']);
   await assert.rejects(() => makeDraft(f.ask, finding, 'onepager'), (e) => e.code === 'shape' && /two free models/.test(e.message));
   assert.equal(f.asked.length, 2);
   // the old JSON shape is still read
-  f = fakeAsk([JSON.stringify({ summary: 'Keka offers payroll software.', points: ['Keka has a mobile app.', 'Rs 9,999 per month.'], recommendation: '' })]);
-  assert.equal((await makeDraft(f.ask, finding, 'onepager')).summary, 'Keka offers payroll software.');
+  f = fakeAsk([JSON.stringify({ summary: 'Nimbus offers payroll software.', points: ['Nimbus has a mobile app.', 'Rs 9,999 per month.'], recommendation: '' })]);
+  assert.equal((await makeDraft(f.ask, finding, 'onepager')).summary, 'Nimbus offers payroll software.');
   // a next-actions list as "action | effort | why" lines
   f = fakeAsk(['1. Compare prices | small | Their price is on their page.\n2. Call two buyers | medium | To hear what they pay.\n3. Write a price page | large | Buyers look for it.']);
   d = await makeDraft(f.ask, finding, 'actions');

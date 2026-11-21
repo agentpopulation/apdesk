@@ -9,33 +9,33 @@ import { sameLesson } from './activities.js';
 
 // three findings as a real run left them (one line each, one quote from a round-up page)
 const roundup = { url: 'https://roundup.example/best-payroll', title: 'Best payroll software in India' };
-const razorpayx = { id: 'bi_r', kind: 'competitor', title: 'RazorpayX', body: 'Specializes in automated tax filing and payments for TDS, PF, PT, ESIC', evidence: [{ ...roundup, quote: 'Best for Automated Tax Filing & Payments (TDS, PF, PT, ESIC)' }] };
-const keka = { id: 'bi_k', kind: 'competitor', title: 'Keka', body: 'Popular choice for its dynamic salary structures and employee-centric UI', evidence: [{ ...roundup, quote: 'Keka – Popular Choice Between Indian Employers' }] };
-const zoho = { id: 'bi_z', kind: 'competitor', title: 'Zoho Payroll', body: 'Best value when already in the Zoho stack with native PF, LWF, PT, and ESI support', evidence: [{ ...roundup, quote: 'Zoho Payroll integrates seamlessly with Zoho Books and Zoho People' }] };
+const vertexx = { id: 'bi_r', kind: 'competitor', title: 'Vertex', body: 'Specializes in automated tax filing and payments for TDS, PF, PT, ESIC', evidence: [{ ...roundup, quote: 'Best for Automated Tax Filing & Payments (TDS, PF, PT, ESIC)' }] };
+const nimbus = { id: 'bi_k', kind: 'competitor', title: 'Nimbus', body: 'Popular choice for its dynamic salary structures and employee-centric UI', evidence: [{ ...roundup, quote: 'Nimbus – Popular Choice Between Indian Employers' }] };
+const orbit = { id: 'bi_z', kind: 'competitor', title: 'Orbit Payroll', body: 'Best value when already in the Orbit stack with native PF, LWF, PT, and ESI support', evidence: [{ ...roundup, quote: 'Orbit Payroll integrates seamlessly with Orbit Books and Orbit People' }] };
 const fakeAsk = (replies) => { const asked = []; const ask = async (o) => { asked.push(o); const r = replies[Math.min(asked.length - 1, replies.length - 1)]; return { text: r, route: 'route' + asked.length }; }; return { ask, asked }; };
 
 // the replies a free model really gave for these findings
-const KEKA_REPLY = 'Summary: Keka is a leading payroll and HR platform favored by Indian employers for its dynamic salary structures and employee-centric user interface. Its flexible payroll configuration and intuitive design make it a top choice for modern organizations.\n- Offers highly configurable salary components that adapt to varied business models.\n- Includes a mobile-friendly UI designed for easy employee self-service.\n- Simplifies compliance with Indian payroll regulations through automated tax calculations.\n- Provides real-time insights into salary disbursements and workforce analytics.';
-const ZOHO_REPLY = 'Summary: Zoho Payroll is best value when already in the Zoho stack with native PF, LWF, PT, and ESI support. It integrates seamlessly with Zoho Books and Zoho People.\n- Zoho Payroll is best value when already in the Zoho stack.\n- Zoho Payroll has native PF, LWF, PT, and ESI support.\n- Zoho Payroll integrates seamlessly with Zoho Books and Zoho People.\nRecommendation: Consider Zoho Payroll when already in the Zoho stack.';
+const NIMBUS_REPLY = 'Summary: Nimbus is a leading payroll and HR platform favored by Indian employers for its dynamic salary structures and employee-centric user interface. Its flexible payroll configuration and intuitive design make it a top choice for modern organizations.\n- Offers highly configurable salary components that adapt to varied business models.\n- Includes a mobile-friendly UI designed for easy employee self-service.\n- Simplifies compliance with Indian payroll regulations through automated tax calculations.\n- Provides real-time insights into salary disbursements and workforce analytics.';
+const ORBIT_REPLY = 'Summary: Orbit Payroll is best value when already in the Orbit stack with native PF, LWF, PT, and ESI support. It integrates seamlessly with Orbit Books and Orbit People.\n- Orbit Payroll is best value when already in the Orbit stack.\n- Orbit Payroll has native PF, LWF, PT, and ESI support.\n- Orbit Payroll integrates seamlessly with Orbit Books and Orbit People.\nRecommendation: Consider Orbit Payroll when already in the Orbit stack.';
 
 test('drafts: a one-line finding gets "nothing to draft" without a model call', async () => {
-  assert.equal(hasMore(razorpayx), false, 'its quote says what its line says');
+  assert.equal(hasMore(vertexx), false, 'its quote says what its line says');
   const f = fakeAsk(['Summary: x']);
-  await assert.rejects(() => makeDraft(f.ask, razorpayx, 'onepager'), (e) => e.code === 'nothing' && /nothing more to say/.test(e.message));
+  await assert.rejects(() => makeDraft(f.ask, vertexx, 'onepager'), (e) => e.code === 'nothing' && /nothing more to say/.test(e.message));
   assert.equal(f.asked.length, 0);
 });
 
 test('drafts: lines the finding does not hold are left out; a draft with too little left is not made', async () => {
-  const f = fakeAsk([KEKA_REPLY]);
-  await assert.rejects(() => makeDraft(f.ask, keka, 'onepager'), (e) => e.code === 'nothing', 'every key point was made up');
+  const f = fakeAsk([NIMBUS_REPLY]);
+  await assert.rejects(() => makeDraft(f.ask, nimbus, 'onepager'), (e) => e.code === 'nothing', 'every key point was made up');
   assert.ok(f.asked.length <= 2);
-  const z = fakeAsk([ZOHO_REPLY]);
-  const d = await makeDraft(z.ask, zoho, 'onepager');
+  const z = fakeAsk([ORBIT_REPLY]);
+  const d = await makeDraft(z.ask, orbit, 'onepager');
   assert.equal(d.points.length, 3, 'what the finding says stays');
-  assert.equal(d.recommendation, 'Consider Zoho Payroll when already in the Zoho stack.');
+  assert.equal(d.recommendation, 'Consider Orbit Payroll when already in the Orbit stack.');
   // one made-up point among real ones: that one goes, the rest stays
-  const mixed = ZOHO_REPLY.replace('- Zoho Payroll has native', '- Consolidated dashboard provides real-time visibility of tax liabilities across multiple departments.\n- Zoho Payroll has native');
-  const m = await makeDraft(fakeAsk([mixed]).ask, zoho, 'onepager');
+  const mixed = ORBIT_REPLY.replace('- Orbit Payroll has native', '- Consolidated dashboard provides real-time visibility of tax liabilities across multiple departments.\n- Orbit Payroll has native');
+  const m = await makeDraft(fakeAsk([mixed]).ask, orbit, 'onepager');
   assert.ok(!m.points.some((p) => /dashboard/.test(p)), m.points.join(' | '));
   assert.equal(m.points.length, 3);
 });
@@ -106,19 +106,19 @@ test('rules: imperative lines count outside a list too, and plain lines under a 
 });
 
 test("today's find on a kept finding: the search carries the owner's field, and a page about another thing of the same name is left out", async () => {
-  const q = pickFind([{ topic: 'Keka', why: 'You kept this Bench finding.', at: '2026-11-21', about: 'payroll' }]);
+  const q = pickFind([{ topic: 'Nimbus', why: 'You kept this Bench finding.', at: '2026-11-21', about: 'payroll' }]);
   assert.equal(q.about, 'payroll');
   const searched = [];
   const pages = {
-    'https://keka.example-archiver/': { title: 'Keka', text: 'Keka, the macOS file archiver. Store more, share with privacy. Keka is a file archiver for macOS that can create 7z and zip archives. '.repeat(4) },
-    'https://keka.example-hr/': { title: 'Keka HR', text: 'Keka is payroll and HR software for Indian businesses. Keka payroll now files PF and ESI returns for you. '.repeat(4) },
+    'https://archiver.example/': { title: 'Nimbus', text: 'Nimbus, the macOS file archiver. Store more, share with privacy. Nimbus is a file archiver for macOS that can create 7z and zip archives. '.repeat(4) },
+    'https://nimbus.example-hr/': { title: 'Nimbus HR', text: 'Nimbus is payroll and HR software for Indian businesses. Nimbus payroll now files PF and ESI returns for you. '.repeat(4) },
   };
   const b = { signal: new AbortController().signal, api: () => null,
     async search(s) { searched.push(s); return Object.keys(pages).map((url) => ({ url })); },
     async read(u) { return { url: u, ...pages[u] }; },
-    async ask(o) { const user = String(o.messages.at(-1).content); assert.ok(!/macOS/.test(user), 'the archiver page is not given to the model'); return { json: { answer: [{ sentence: 'Keka payroll now files PF and ESI returns.', page: 1, quote: 'Keka payroll now files PF and ESI returns for you' }] } }; } };
+    async ask(o) { const user = String(o.messages.at(-1).content); assert.ok(!/macOS/.test(user), 'the archiver page is not given to the model'); return { json: { answer: [{ sentence: 'Nimbus payroll now files PF and ESI returns.', page: 1, quote: 'Nimbus payroll now files PF and ESI returns for you' }] } }; } };
   const r = await answerFind(b, q);
   assert.match(searched[0], /payroll/);
   assert.equal(r.status, 'answered');
-  assert.deepEqual(r.sources.map((s) => s.url), ['https://keka.example-hr/']);
+  assert.deepEqual(r.sources.map((s) => s.url), ['https://nimbus.example-hr/']);
 });

@@ -127,7 +127,7 @@ export async function fetchText(url, { timeout = 25000 } = {}) {
 }
 
 // ---------------------------------------------------------------- browser
-/** Selectors, the design's ids first (app/docs/design/preview.html), then data-apd hooks. */
+/** Selectors, the data-apd hooks on each page. */
 export const SEL = {
   chatInput: '[data-apd="chat-input"], #ask, .compose textarea, .compose input[type="text"]',
   chatSend: '[data-apd="chat-send"], #form button, .compose button.btn',

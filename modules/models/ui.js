@@ -1,4 +1,4 @@
-// Models page and the agent tab "Model". Same look as the Models section of app/docs/design/preview.html.
+// Models page and the agent tab "Model".
 const API = 'm/models/';
 const UNSAFE = /uncensor|abliterat/i;
 

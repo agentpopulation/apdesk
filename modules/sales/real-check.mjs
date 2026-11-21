@@ -39,7 +39,8 @@ try {
     // ---- ask 8: find 20 leads with sources
     const seeds = [];
     if (process.env.SALES_SEED) {
-      for (const [company, website] of [['greytHR', 'https://www.greythr.com'], ['Keka HR', 'https://www.keka.com'], ['Zoho People', 'https://www.zoho.com'], ['HROne', 'https://hrone.cloud'], ['sumHR', 'https://sumhr.com']]) seeds.push((await call('/api/m/sales/leads', { body: { company, website, need: 'HR and payroll software' } })).json.lead);
+      // Illustrative example firms (the .example domains do not resolve); point SALES_SEED at your own list to run this against real sites.
+      for (const [company, website] of [['Acme HR', 'https://acme-hr.example'], ['Nimbus People', 'https://nimbus.example'], ['Orbit People', 'https://orbit.example'], ['Vertex HR', 'https://vertex.example'], ['Summit HR', 'https://summit.example']]) seeds.push((await call('/api/m/sales/leads', { body: { company, website, need: 'HR and payroll software' } })).json.lead);
       info(`pipeline seeded with ${seeds.length} leads from the same field: ${seeds.map(x => x.company).join(', ')}`);
     }
     const t0 = Date.now();
@@ -110,11 +111,11 @@ try {
     }
     const pairs = [...String(out.text || '').matchAll(/(\d+) of (\d+)/g)].map(m => [Number(m[1]), Number(m[2])]);
     check('no "N of M" in the reply has N over M', pairs.every(([n, m]) => n <= m), String(out.text || '').slice(-260));
-    const bee = leads.find(l => /^beehive/i.test(l.company));
-    info(`Beehive: ${bee ? `listed with source ${bee.sources[0].url}, site ${bee.website || 'none'}, address ${bee.email || 'none'}` : 'not in the list'}`);
-    check('no lead carries beehive.net (Beehive Broadband) as its site, source or address', !leads.some(l => /beehive\.net/.test(`${l.website} ${l.email} ${l.sources.map(x => x.url).join(' ')}`)), bee ? `${bee.company}: ${bee.sources[0].url}` : 'Beehive not listed');
+    const bee = leads.find(l => /broadband/i.test(l.company));
+    info(`namesake: ${bee ? `listed with source ${bee.sources[0].url}, site ${bee.website || 'none'}, address ${bee.email || 'none'}` : 'not in the list'}`);
+    check('no lead carries a namesake in another field (an example broadband site) as its site, source or address', !leads.some(l => /broadband\.example/.test(`${l.website} ${l.email} ${l.sources.map(x => x.url).join(' ')}`)), bee ? `${bee.company}: ${bee.sources[0].url}` : 'namesake not listed');
     const twins = []; leads.forEach((a, i) => leads.slice(i + 1).forEach(b => { if (sameCompany(a.company, b.company, topicWords(ASK))) twins.push(`${a.company} = ${b.company}`); }));
-    check('no same company twice (e.g. "Keka" and "Keka HR")', twins.length === 0, twins.join('; ') || `${leads.length} companies, none the same`);
+    check('no same company twice (e.g. "Acme" and "Acme HR")', twins.length === 0, twins.join('; ') || `${leads.length} companies, none the same`);
     check('every mail address is printed on the company\'s own pages', mailBad.length === 0, `${mailOk} of ${leads.filter(x => x.email).length} found again by a fresh fetch${mailBad.length ? '; not: ' + mailBad.join('; ') : ''}`);
     check('no contact or email without a page that gives it', invented.length === 0, `${leads.filter(l => l.contactName).length} contacts and ${leads.filter(l => l.email).length} emails, each found in the source text by code`);
     const tables = cards.filter(c => c.kind === 'table'); const table = tables[0] && { ...tables[0], actions: tables[tables.length - 1].actions };

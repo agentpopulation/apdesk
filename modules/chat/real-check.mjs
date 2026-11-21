@@ -252,7 +252,8 @@ if (want('9')) {
   try {
     t9.core.settings.set('provider.gemini.model', 'gemini-3.5-flash-lite');
     const sales = t9.core.modules.api('sales');
-    for (const [company, url] of [['Keka HR', 'https://www.keka.com/'], ['greytHR', 'https://www.greythr.com/'], ['Zoho Payroll', 'https://www.zoho.com/in/payroll/'], ['RazorpayX Payroll', 'https://razorpay.com/payroll/'], ['sumHR', 'https://www.sumhr.com/'], ['HROne', 'https://hrone.cloud/']])
+    // Illustrative example firms (the .example domains do not resolve).
+    for (const [company, url] of [['Nimbus HR', 'https://nimbus.example/'], ['Acme HR', 'https://acme-hr.example/'], ['Orbit Payroll', 'https://orbit.example/payroll/'], ['Vertex Payroll', 'https://vertex.example/payroll/'], ['Summit HR', 'https://summit.example/'], ['Pinnacle HR', 'https://pinnacle.example/']])
       sales.addLead({ company, need: 'HR and payroll software for small businesses', sources: [{ title: company, url }], stage: 'new' });
     await t9.call('/api/agents/coordinator', { method: 'PATCH', body: { model: { main: { provider: 'router' } } } });
     const s = await t9.call('/api/m/chat/chats/sales-room/send', { body: { text: 'Draft outreach to the top five.' } });
