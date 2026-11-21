@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { now } from './storage.js';
+import { inSpace, boundToSpace } from './space-context.js';
 
 // Modules that ship with the desk and need the plain database door: Backup copies and restores every table, Vault
 // shows the owner his saved keys and logins. Named here, in the core, so a manifest cannot claim it.
@@ -18,6 +19,7 @@ export class Modules {
     this.active = new Map();          // id -> { handle, routes: [], tools: [], api }
     this.routes = [];                 // { module, method, parts, handler }
     this.tools = new Map();           // name -> { module, name, description, parameters, run }
+    this.inSpace = (fn) => inSpace(core.spaceKey, fn);   // a module's code runs inside the space it was switched on in
     this.discover();
   }
   discover() {
@@ -76,7 +78,7 @@ export class Modules {
     try {
       if (m.hasServer) {
         const mod = await import(pathToFileURL(path.join(m.dir, 'server.js')).href);
-        if (typeof mod.activate === 'function') rec.handle = await mod.activate(this.context(m, rec)) || null;
+        if (typeof mod.activate === 'function') rec.handle = await this.inSpace(() => mod.activate(this.context(m, rec))) || null;
       }
       this.errors?.delete(id);
       this.core.log('modules', 'on', id);
@@ -90,7 +92,7 @@ export class Modules {
   }
   async deactivate(id) {
     const rec = this.active.get(id); if (!rec) return true;
-    try { await rec.handle?.deactivate?.(); } catch (e) { this.core.log('modules', 'deactivate error', id, e.message); }
+    try { await this.inSpace(() => rec.handle?.deactivate?.()); } catch (e) { this.core.log('modules', 'deactivate error', id, e.message); }
     this.cleanup(id);
     this.core.log('modules', 'off', id);
     return true;
@@ -120,14 +122,14 @@ export class Modules {
     const ctx = {
       id, manifest: m, dir: m.dir,
       get port() { return core.port; },      // the desk's own port (for refusing the desk itself, and for sidecars that use /router/v1)
-      route(method, p, handler) { self.routes.push({ module: id, method: method.toUpperCase(), parts: ('/api/m/' + id + (p.startsWith('/') ? p : '/' + p)).replace(/\/$/, '').split('/'), handler }); },
+      route(method, p, handler) { self.routes.push({ module: id, method: method.toUpperCase(), parts: ('/api/m/' + id + (p.startsWith('/') ? p : '/' + p)).replace(/\/$/, '').split('/'), handler: (...args) => self.inSpace(() => handler(...args)) }); },
       json(res, data, status = 200) { sendJson(res, data, status); },
       readBody: (req, limit) => readRaw(req, limit),
       db: core.storage.scope(id, { privileged: PRIVILEGED_DB.has(id) && !core.modulesDir }), kv: core.storage.kvScope('m:' + id),
       workspace: core.storage.workspace, workspacePath: (...parts) => core.storage.workspacePath(...parts), dataDir: core.storage.dataDir, backupsDir: core.storage.backupsDir, root: core.root,
       model: core.model.forModule(), approval: core.approval.forModule(), jobs: core.jobs.forModule(),
       panic: { get signal() { return core.panic.signal; }, get halted() { return core.panic.halted; }, onStop: (fn) => core.panic.onStop(fn), child: (s) => core.panic.child(s) },
-      events: { emit: (type, data) => { if (RESERVED_EVENTS.has(String(type))) throw Object.assign(new Error(`Only the core emits '${type}' events.`), { code: 'reserved_event' }); return core.events.emit(type, data); }, on: (fn) => core.events.on(fn) },
+      events: { emit: (type, data) => { if (RESERVED_EVENTS.has(String(type))) throw Object.assign(new Error(`Only the core emits '${type}' events.`), { code: 'reserved_event' }); return core.events.emit(type, data); }, on: (fn) => core.events.on((type, data) => self.inSpace(() => fn(type, data))) },
       agents: { list: () => core.agents.list(), get: (a) => core.agents.get(a), update: (a, p) => core.agents.update(a, p), create: (a) => core.agents.create(a), remove: (a) => core.agents.remove(a), systemPrompt: (a, extra) => core.agents.systemPrompt(a, extra) },
       settings: core.settings.readonly(),
       // Credentials that belong to this module (SMTP password, bot token). Stored in the secrets table, never logged.
@@ -143,7 +145,7 @@ export class Modules {
       tool(def) { if (!def?.name || typeof def.run !== 'function') throw new Error('ctx.tool needs name and run'); self.tools.set(def.name, { module: id, name: def.name, description: def.description || '', parameters: def.parameters || { type: 'object', properties: {} }, run: def.run, agents: def.agents || null }); },
       /** Remove one of this module's own Coordinator tools while the module stays on (an MCP tool the owner unticked). */
       untool(name) { const t = self.tools.get(name); if (t && t.module === id) self.tools.delete(name); },
-      expose(api) { rec.api = api; },
+      expose(api) { rec.api = boundToSpace(core.spaceKey, api); },   // called from anywhere, it runs in this module's space
       chatCard(chatId, card) { return self.api('chat')?.postCard?.(chatId, card) ?? null; },
       modules: { api: (x) => self.api(x), isOn: (x) => self.isOn(x), list: () => self.list(), tools: () => [...self.tools.values()].map(t => ({ name: t.name, module: t.module, description: t.description, parameters: t.parameters })), runTool: (name, args, call) => self.runTool(name, args, call) },
       log: (...a) => core.log(id, ...a),
@@ -167,7 +169,7 @@ export class Modules {
     const t = this.tools.get(name);
     if (!t) throw Object.assign(new Error(`No such tool: ${name}`), { code: 'no_tool' });
     if (this.core.panic.halted) throw Object.assign(new Error('Everything is stopped. Press Resume first.'), { code: 'halted' });
-    return t.run(args || {}, { ...call, signal: this.core.panic.child(call.signal) });
+    return this.inSpace(() => t.run(args || {}, { ...call, signal: this.core.panic.child(call.signal) }));
   }
   /** Match /api/m/<id>/... */
   match(method, pathname) {

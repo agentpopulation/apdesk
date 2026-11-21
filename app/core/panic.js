@@ -25,5 +25,26 @@ export class Panic {
   }
   resume() { this.halted = false; this.reason = null; for (const fn of this._listeners) { try { fn(this.state()); } catch {} } }
   state() { return { halted: this.halted, reason: this.reason, at: this.at }; }
+  /** The same Panic as seen from one space (contracts/PEOPLE.md): anyone's stop stops every space. The hooks and listeners
+   *  a space adds run inside that space (run), and close() stops that space alone: it aborts every signal the space was
+   *  handed (signal, child), runs the space's stop hooks and takes them all back. */
+  scope(run = (fn) => fn()) {
+    const p = this; const mine = new Set();
+    const closed = new AbortController(); let seen = null;
+    const add = (set, fn) => { const w = (x) => run(() => fn(x)); set.add(w); mine.add([set, w]); return () => { set.delete(w); for (const e of mine) if (e[1] === w) mine.delete(e); }; };
+    return {
+      get halted() { return p.halted; }, get reason() { return p.reason; }, get at() { return p.at; },
+      get signal() { const s = p.signal; if (seen?.from !== s) seen = { from: s, signal: AbortSignal.any([s, closed.signal]) }; return seen.signal; },
+      child: (parent) => AbortSignal.any([p.child(parent), closed.signal]), onStop: (fn) => add(p._hooks, fn), onChange: (fn) => add(p._listeners, fn),
+      stopAll: (reason) => p.stopAll(reason), resume: () => p.resume(), state: () => p.state(),
+      async close(reason = 'Shutting down') {
+        const st = { halted: true, reason, at: new Date().toISOString() };
+        closed.abort('closed');
+        for (const [set, w] of [...mine]) if (set === p._hooks) { try { await Promise.race([w(reason), new Promise(r => setTimeout(r, 3000))]); } catch {} }
+        for (const [set, w] of [...mine]) if (set === p._listeners) { try { w(st); } catch {} }
+        for (const [set, w] of mine) set.delete(w); mine.clear();
+      },
+    };
+  }
 }
 export class HaltedError extends Error { constructor() { super('Everything is stopped. Press Resume first.'); this.code = 'halted'; } }

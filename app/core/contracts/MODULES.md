@@ -114,6 +114,7 @@ export const chatCards = { 'mail.draft': (card, ui) => HTMLElement };   // optio
 ## Rules for module authors
 
 - A module writes only inside its own folder, `vendor/<name>/` for copied open-source code, and its lines in `ATTRIBUTION.md`. It does not change `app/core/`, `app/ui/shell*` or `app/server.js`; a module that needs something from the core asks for it in an issue.
+- A module may be switched on in more than one space in one process (contracts/PEOPLE.md). Keep what it holds inside `activate` (closures, `ctx.db`, `ctx.kv`), never in module-level variables, and reach the core only through `ctx`.
 - Every model call goes through `ctx.model`. Every action with a side effect goes through `ctx.approval`. Every long piece of work is a job. Every child process or browser registers `ctx.panic.onStop`.
 - Code copied from an open-source project gets a comment at the top of the copied file naming the project and a line in `ATTRIBUTION.md`.
 - Tests with `node:test` in `*.test.js` beside the code. Model-dependent behaviour is tested against the fake model in `test/helpers/fake-llm.js` for plumbing only; that is never evidence that the feature works. Say "not checked" where you could not run a real model.

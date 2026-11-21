@@ -24,7 +24,8 @@ export async function activate(ctx) {
   };
   const voiceDir = () => { const d = ctx.workspacePath('voice'); fs.mkdirSync(d, { recursive: true }); return d; };
   const rel = (abs) => path.relative(ctx.workspace, abs).split(path.sep).join('/');
-  const offStop = ctx.panic.onStop(() => ({ voice: killAll() }));
+  const mine = new Set();   // the engines this activation started: Panic and switching off kill these, not another space's
+  const offStop = ctx.panic.onStop(() => ({ voice: killAll(mine) }));
 
   const elevenKey = () => (typeof ctx.serviceKey === 'function' ? ctx.serviceKey('elevenlabs') : null);
   /** Which engine the server uses: the owner's choice, else local when found, else ElevenLabs when its key is there. */
@@ -60,7 +61,7 @@ export async function activate(ctx) {
     const lang = language || prefs().language;
     const args = ['-m', e.whisperModel, '-f', abs, '-nt', '-np', ...(lang && lang !== 'auto' ? ['-l', lang] : [])];
     const started = Date.now();
-    const r = await run(e.whisper, args, { signal: ctx.panic.child(signal), timeoutMs: 15 * 60_000 });
+    const r = await run(e.whisper, args, { signal: ctx.panic.child(signal), timeoutMs: 15 * 60_000, track: mine });
     if (r.error === 'stopped') throw Object.assign(err('Stopped.', 409), { code: 'halted' });
     if (r.code !== 0) throw err(`whisper.cpp could not read the file${r.error ? ': ' + r.error : ''}. ${r.stderr.split('\n').filter(Boolean).slice(-1)[0] || ''}`.trim(), 502);
     return { text: r.stdout.replace(/\s+/g, ' ').trim(), engine: 'whisper.cpp', model: path.basename(e.whisperModel), seconds: (Date.now() - started) / 1000 };
@@ -87,7 +88,7 @@ export async function activate(ctx) {
     const out = path.join(voiceDir(), name);
     const d = await ctx.approval.request({ agentId, chatId: chatId || 'voice', action: 'file.write', title: `Write ${name}`, detail: 'Workspace › voice', payload: { path: 'voice/' + name } });
     if (!d.ok) throw err(d.reason === 'halted' ? 'Stopped.' : 'Writing the audio file was not allowed.', 403);
-    const r = await run(e.piper, ['-m', e.piperVoice, '-f', out], { input: t, signal: ctx.panic.child(signal), timeoutMs: 5 * 60_000 });
+    const r = await run(e.piper, ['-m', e.piperVoice, '-f', out], { input: t, signal: ctx.panic.child(signal), timeoutMs: 5 * 60_000, track: mine });
     if (r.error === 'stopped') { fs.rmSync(out, { force: true }); throw Object.assign(err('Stopped.', 409), { code: 'halted' }); }
     if (r.code !== 0 || !fs.existsSync(out)) throw err(`Piper could not speak${r.error ? ': ' + r.error : ''}. ${r.stderr.split('\n').filter(Boolean).slice(-1)[0] || ''}`.trim(), 502);
     return { path: rel(out), name, seconds: wavSeconds(out), engine: 'Piper', voice: path.basename(e.piperVoice, '.onnx'), url: `/api/m/voice/audio/${encodeURIComponent(name)}` };
@@ -140,5 +141,5 @@ export async function activate(ctx) {
   });
 
   ctx.expose({ transcribe, speak, status: () => status(false) });
-  return { async deactivate() { offStop?.(); killAll(); } };
+  return { async deactivate() { offStop?.(); killAll(mine); } };
 }

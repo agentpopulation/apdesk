@@ -2,7 +2,6 @@
 // These routes need the session token that the shell page carries; agents and modules never see it.
 import { SETTINGS_TOKEN } from './approval-door.js';
 import { sendJson } from './modules.js';
-import { Updater } from './update.js';
 
 const OWNER_ONLY_PREFIX = ['security.', 'spend.', 'openrouter.', 'update.'];
 const PLAIN_KEYS = new Set(['theme', 'role', 'onboarded', 'online', 'ownerName', 'appName', 'companyName', 'business.about', 'notifications', 'country', 'currency', 'timeZone', 'locale', 'router.enabled', 'router.baseUrl', 'router.freeOnly', 'router.builtin', 'router.model', 'router.apiKey', 'router.upstreams', 'ollama.baseUrl', 'ollama.model', 'model.defaultChain', 'network.lanNodes', 'menuPosition', 'textSize', 'motion', 'countries', 'city', 'startWithWindows', 'notifications']);
@@ -16,7 +15,7 @@ export function settingsRoutes(core, sessionOk) {
     return r;
   };
   // Signed updates (contracts/UPDATES.md): checked and installed only from the owner's window, like the security level.
-  core.updater = new Updater(core).startDaily();
+  // The house makes the one updater (app/server.js) and keeps it in core.updater.
   const updater = () => core.updater;
   return {
     'GET /api/update': (req, res) => { const st = updater().state(); updater().shown(); sendJson(res, st); },

@@ -175,6 +175,7 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Network: route tracing to your own domains and watched sites on your button, using this PC's own tracert, traceroute or tracepath; it keeps the last 20 runs and shows what changed. Nothing is installed if no tool is found.
 - Network: a "Where things are" table. There is no map yet: no free location source was found whose terms allow this use.
 - The Network status strip shows messages a minute while Chat is on.
+- Inside, the desk is now a "house" (the server, Panic, Offline, downloads, the local model, updates) and a "space" (one person's data), the first step toward several people sharing one PC. Nothing you see changes yet: the desk still runs one space, and a second can only be opened by tests.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

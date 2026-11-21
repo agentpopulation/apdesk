@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
-import { scanFolder, wavSeconds } from './engines.js';
+import { scanFolder, wavSeconds, run, killAll } from './engines.js';
 
 test('wavSeconds reads a WAV header', () => {
   const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'apdv-')), 'a.wav');
@@ -18,4 +18,16 @@ test('scanFolder finds engines and model files a few levels down', () => {
   fs.writeFileSync(path.join(d, 'ggml-base.bin'), 'x'); fs.writeFileSync(path.join(d, 'v.onnx'), 'x'); fs.writeFileSync(path.join(d, 'v.onnx.json'), '{}');
   const s = scanFolder(d);
   assert.equal(s.whisper, w); assert.equal(s.piper, null); assert.equal(s.whisperModels.length, 1); assert.equal(s.piperVoices.length, 1);
+});
+
+test('killAll stops only the engines of the set it is given (one set per space)', async () => {
+  const mineA = new Set(), mineB = new Set();
+  const args = ['-e', 'setTimeout(() => {}, 20000)'];
+  const a = run(process.execPath, args, { track: mineA, timeoutMs: 15000 });
+  const b = run(process.execPath, args, { track: mineB, timeoutMs: 15000 });
+  assert.equal(mineA.size, 1); assert.equal(mineB.size, 1);
+  assert.equal(killAll(mineA), 1);
+  assert.equal((await a).code, null);
+  assert.equal(mineB.size, 1, 'the other set still runs');
+  assert.equal(killAll(mineB), 1); await b;
 });

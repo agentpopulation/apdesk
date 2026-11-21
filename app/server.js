@@ -4,18 +4,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { openStorage } from './core/storage.js';
-import { Settings } from './core/settings.js';
 import { Panic } from './core/panic.js';
 import { guardOutbound, offlineAllowList, hostKey } from './core/offline.js';
-import { Events } from './core/events.js';
-import { Agents } from './core/agents.js';
-import { ApprovalDoor } from './core/approval-door.js';
-import { ModelDoor } from './core/model-door.js';
-import { Jobs } from './core/jobs.js';
-import { Modules, sendJson, readRaw } from './core/modules.js';
+import { sendJson, readRaw } from './core/modules.js';
 import { settingsRoutes, publicSettings } from './core/settings-routes.js';
-import { ServiceKeys } from './core/service-keys.js';
+import { openSpace } from './core/space.js';
+import { otherSpace } from './core/space-context.js';
+import { Updater } from './core/update.js';
 
 const APP = path.dirname(fileURLToPath(import.meta.url));     // <install>/app: the shell and the doors
 const ROOT = path.dirname(APP);                               // <install>: app, modules, vendor, node_modules, setup, data, backups
@@ -31,34 +26,26 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
   let logZone = null;
   const stamp = () => { try { return new Date().toLocaleTimeString('en-GB', { hour12: false, timeZone: logZone || undefined, timeZoneName: 'short' }); } catch { return new Date().toLocaleTimeString('en-GB', { hour12: false, timeZoneName: 'short' }); } };
   const log = (...a) => { if (!quiet) console.log(stamp(), ...a); };
-  const storage = openStorage(dataDir, backupsDir || (process.env.APD_DATA || dataDir !== path.join(ROOT, 'data') ? path.join(dataDir, '..', path.basename(dataDir) + '-backups') : path.join(ROOT, 'backups')));
-  const settings = new Settings(storage);
-  logZone = settings.get('timeZone') || null;
+  // The house (contracts/PEOPLE.md): this server, pairing and the session, Panic, the offline guard, downloads, the local
+  // engine and updates. It is shared by every space. Each space is one data folder with its own full core.
   const panic = new Panic();
-  const events = new Events();
-  const agents = new Agents(storage, events);
-  const approval = new ApprovalDoor({ storage, settings, panic, events, log });
-  const model = new ModelDoor({ storage, settings, panic, agents, events, log });
-  model.loadEnvKeys(env);
-  const jobs = new Jobs({ storage, panic, events, log });
-  const services = new ServiceKeys({ storage, events, env });
-  const core = { root: ROOT, app: APP, modulesDir, onlyModules, port, host, storage, settings, panic, events, agents, approval, model, jobs, services, log, version: readVersion() };
-  const modules = new Modules(core);
-  core.modules = modules;
-  approval.spendModuleOn = () => modules.isOn('payments');
-  jobs.onEnd = (id) => approval.endScope(id);   // "ask once per job" ends with the job
+  const version = readVersion();
+  const space = openSpace({ dataDir, backupsDir: backupsDir || (process.env.APD_DATA || dataDir !== path.join(ROOT, 'data') ? path.join(dataDir, '..', path.basename(dataDir) + '-backups') : path.join(ROOT, 'backups')), panic, main: true, env, log, root: ROOT, app: APP, modulesDir, onlyModules, host, version });
+  // The routes below serve the desk's main space, the only one this part opens. They reach it through `core`.
+  const { core } = space;
+  core.port = port;
+  const { storage, settings, events, agents, approval, model, jobs, services, modules } = core;
+  logZone = settings.get('timeZone') || null;
+  const spaces = new Set([space]);
   // Offline holds in this process: outside calls are refused here, whatever a module or a browser page asks for
-  core.offlineAllows = (url) => { try { const k = hostKey(url); return !!k && offlineAllowList({ settings, port: () => core.port }).has(k); } catch { return false; } };
-  const unguard = guardOutbound({ isOffline: () => settings.get('online') === false, allows: (u) => core.offlineAllows(u), onRefused: (u) => log('offline', 'refused a call to', u.hostname) });
-  // a job that asks the owner shows "waiting" with the reason, and goes back to "running" once the owner decides
-  approval.onJobWait = (jobId, title, waiting) => {
-    const j = jobs.get(jobId); if (!j) return;
-    if (waiting && j.status === 'running') jobs.update(jobId, { status: 'waiting', detail: 'Waiting for your approval: ' + String(title || '').slice(0, 160) });
-    else if (!waiting && j.status === 'waiting') jobs.update(jobId, { status: 'running', detail: 'Working' });
-  };
-  model.spendGuard = () => { const l = approval.limits(); return approval.spent('day') >= l.perDay ? 'daily spend limit' : approval.spent('month') >= l.perMonth ? 'monthly spend limit' : null; };
-  jobs.cardSink = (chatId, card) => modules.api('chat')?.postCard?.(chatId, card);
-  panic.onChange((st) => { events.emit('panic', st); approval.activity({ action: 'panic', title: st.halted ? 'Panic: everything stopped' : 'Resumed', how: 'owner' }); });
+  // Each space may call its own local model servers (its Ollama, its LAN model nodes): its own allow list
+  const allowsIn = (c) => (url) => { try { const k = hostKey(url); return !!k && offlineAllowList({ settings: c.settings, port: () => core.port }).has(k); } catch { return false; } };
+  core.offlineAllows = allowsIn(core);
+  // a call is judged by the space that made it; a space that is closed may call nothing
+  const callerCore = () => { const k = otherSpace(); if (!k) return core; for (const s of spaces) if (s.core.spaceKey === k) return s.core; return null; };
+  const unguard = guardOutbound({ isOffline: () => settings.get('online') === false, allows: (u) => !!callerCore()?.offlineAllows(u), onRefused: (u) => log('offline', 'refused a call to', u.hostname) });
+  // Signed updates (contracts/UPDATES.md): one for the whole desk, checked and installed from the owner's window (settings-routes.js).
+  core.updater = new Updater(core).startDaily();
 
   const session = crypto.randomBytes(24).toString('hex');     // carried by the shell page only
   const sessionOk = (req) => req.headers['x-apd-session'] === session;
@@ -251,11 +238,26 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
     }
   });
 
+  /** Tests only (node --test): a second space on another data folder, in this process. No route, setting or tool reaches it. */
+  const openTestSpace = async ({ dataDir: dir } = {}) => {
+    if (!process.env.NODE_TEST_CONTEXT) throw new Error('A second space is for node --test only in this version.');
+    const other = openSpace({ dataDir: dir, backupsDir: path.join(dir, '..', path.basename(dir) + '-backups'), panic, main: false, houseSettings: settings, env, log, root: ROOT, app: APP, modulesDir, onlyModules, host, version });
+    Object.defineProperty(other.core, 'port', { get: () => core.port, enumerable: true });
+    other.core.offlineAllows = allowsIn(other.core);
+    other.core.restart = (reason) => core.restart(reason);
+    other.core.model.localEngine = core.localEngine;
+    spaces.add(other);
+    await other.start();
+    const close = other.close;
+    other.close = async () => { if (!spaces.delete(other)) return; await close(); };
+    return other;
+  };
+
   core.restart = (reason) => { log('restart requested:', reason); events.emit('toast', { text: 'The desk is restarting.' }); desk.restartRequested = reason || true; if (desk.onRestart) setTimeout(() => desk.onRestart(reason), 300); };
   const desk = {
-    core, server, session, modules, state, restartRequested: null, onRestart: null, pairCode: pairing ? pairCode : null,
+    core, server, session, modules, state, restartRequested: null, onRestart: null, pairCode: pairing ? pairCode : null, openTestSpace,
     async start() {
-      await modules.startAll();
+      await space.start();
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
       core.port = server.address().port;
       log(`AP Desk ${core.version} on http://${host}:${core.port}  data: ${dataDir}`);
@@ -267,11 +269,11 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
     async stop() {
       unguard();
       await panic.stopAll('Shutting down').catch(() => {});
-      for (const id of [...modules.active.keys()].reverse()) await modules.deactivate(id);
-      for (const c of events.clients) { try { c.res.end(); } catch {} }
+      const all = [...spaces].reverse(); spaces.clear();
+      for (const s of all) await s.stop();   // Panic's stop hooks of every space ran just above
       await new Promise((r) => { server.close(() => r()); server.closeAllConnections?.(); });
       try { fs.rmSync(path.join(dataDir, 'desk.pid'), { force: true }); } catch {}
-      storage.close();
+      for (const s of all) s.core.storage.close();
     },
     url: () => `http://${host}:${core.port}`,
   };

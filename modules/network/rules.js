@@ -1,8 +1,9 @@
 // Website rules for the agents: sites they may never open, and sites they may open only after asking the owner.
 // The Network module sets the lists (from the owner's own page only); the address guards in modules/search/guard.js
-// and modules/browser/guard.js read them through siteRuleSync / siteRuleAsk. Pure state in this process, no I/O.
+// and modules/browser/guard.js read them through siteRuleSync / siteRuleAsk. Pure state in this process, one set per space, no I/O.
 import { AsyncLocalStorage } from 'node:async_hooks';
 import net from 'node:net';
+import { otherSpace } from '../../app/core/space-context.js';
 
 // Two-part public suffixes, so "news.example.co.uk" is ruled as "example.co.uk", not "co.uk".
 // A short list, not the full Public Suffix List: a name under a suffix missing here is ruled by its last two labels.
@@ -46,25 +47,31 @@ export function covers(domain) {
   return `${domain} and every name under it (for example www.${domain}). Not other endings such as ${domain.split('.')[0]}.org, and not the site's numeric address.`;
 }
 
-const state = { never: [], ask: [], version: 0, asker: null, decisions: new Map(), pending: new Map() };
+const fresh = () => ({ never: [], ask: [], version: 0, asker: null, decisions: new Map(), pending: new Map() });
+// Each space keeps its own rules (contracts/PEOPLE.md). The desk's main space, and code outside every space, use `main`.
+const main = fresh();
+const bySpace = new WeakMap();
+const rulesHere = () => { const k = otherSpace(); if (!k) return main; let st = bySpace.get(k); if (!st) bySpace.set(k, st = fresh()); return st; };
 const DECISION_MS = 15 * 60_000;   // like the approval door's grants: a turn's yes or no lasts at most 15 minutes
 
 /** Called by the Network module only: the lists it keeps in its own settings. */
 export function setRules({ never = [], ask = [] } = {}) {
+  const state = rulesHere();
   state.never = [...new Set(never.map(cleanHost).filter(Boolean))];
   state.ask = [...new Set(ask.map(cleanHost).filter(Boolean))].filter(d => !state.never.includes(d));
   state.version++;
   state.decisions.clear();
 }
-export function setAsker(fn) { state.asker = typeof fn === 'function' ? fn : null; }
-export function clearRules() { setRules({}); state.asker = null; }
-export const rulesVersion = () => state.version;
-export const listRules = () => ({ never: [...state.never], ask: [...state.ask] });
+export function setAsker(fn) { const state = rulesHere(); state.asker = typeof fn === 'function' ? fn : null; }
+export function clearRules() { setRules({}); rulesHere().asker = null; }
+export const rulesVersion = () => rulesHere().version;
+export const listRules = () => { const state = rulesHere(); return { never: [...state.never], ask: [...state.ask] }; };
 
 const under = (host, d) => host === d || host.endsWith('.' + d);
 /** { kind: 'never' | 'ask', domain } or null. "Never" wins when both lists name it. */
 export function ruleFor(host) {
   const h = cleanHost(host); if (!h) return null;
+  const state = rulesHere();
   const n = state.never.find(d => under(h, d)); if (n) return { kind: 'never', domain: n };
   const a = state.ask.find(d => under(h, d)); if (a) return { kind: 'ask', domain: a };
   return null;
@@ -79,6 +86,7 @@ const key = (domain, who) => scopeOf(who) + '|' + domain;
 
 /** The owner's answer for this domain in this job or chat turn: true, false, or undefined (not asked). */
 export function decided(domain, who) {
+  const state = rulesHere();
   const d = state.decisions.get(key(domain, who));
   if (!d) return undefined;
   if (Date.now() - d.at > DECISION_MS) { state.decisions.delete(key(domain, who)); return undefined; }
@@ -87,6 +95,7 @@ export function decided(domain, who) {
 /** Ask the owner once per job or turn (the Network module's asker goes through the approval door). No asker: no. */
 export async function askFirst({ domain, url, who }) {
   const prev = decided(domain, who); if (prev !== undefined) return prev;
+  const state = rulesHere();
   const k = key(domain, who);
   if (state.pending.has(k)) return state.pending.get(k);
   const p = (async () => {
@@ -129,6 +138,7 @@ export async function siteRuleAsk(host, url, { who = null } = {}) {
 
 /** Chromium switch that makes "never" sites unreachable by name for a browser started now (redirects included). */
 export function resolverRules() {
+  const state = rulesHere();
   const names = state.never.filter(d => !net.isIP(d));
   if (!names.length) return null;
   return '--host-resolver-rules=' + names.flatMap(d => [`MAP ${d} ~NOTFOUND`, `MAP *.${d} ~NOTFOUND`]).join(', ');

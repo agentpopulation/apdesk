@@ -34,17 +34,17 @@ const size = (f) => { try { return fs.statSync(f).size; } catch { return 0; } };
 function runnable(f) { try { fs.accessSync(f, WIN ? fs.constants.F_OK : fs.constants.X_OK); return fs.statSync(f).isFile(); } catch { return false; } }
 
 const active = new Set();
-/** Kill every running engine (Panic, switch off). */
-export function killAll() { let n = 0; for (const c of active) { try { c.kill(); n++; } catch {} } active.clear(); return n; }
+/** Kill every running engine in this set (Panic, switch off). The Voice module passes its own set, one per space. */
+export function killAll(track = active) { let n = 0; for (const c of track) { try { c.kill(); n++; } catch {} } track.clear(); return n; }
 
-export function run(cmd, args, { input = null, timeoutMs = 300_000, signal, cwd } = {}) {
+export function run(cmd, args, { input = null, timeoutMs = 300_000, signal, cwd, track = active } = {}) {
   return new Promise((resolve) => {
     let stdout = '', stderr = '', done = false;
     let child;
-    const finish = (row) => { if (done) return; done = true; clearTimeout(timer); active.delete(child); resolve({ ...row, stdout, stderr }); };
+    const finish = (row) => { if (done) return; done = true; clearTimeout(timer); track.delete(child); resolve({ ...row, stdout, stderr }); };
     try { child = spawn(cmd, args, { cwd: cwd || path.dirname(cmd), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }); }
     catch (e) { return resolve({ code: null, error: e.message, stdout, stderr }); }
-    active.add(child);
+    track.add(child);
     const timer = setTimeout(() => { try { child.kill(); } catch {} finish({ code: null, error: 'timeout' }); }, timeoutMs);
     const onAbort = () => { try { child.kill(); } catch {} finish({ code: null, error: 'stopped' }); };
     if (signal) { if (signal.aborted) onAbort(); else signal.addEventListener('abort', onAbort, { once: true }); }

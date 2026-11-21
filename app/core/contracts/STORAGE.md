@@ -1,6 +1,6 @@
 # Contract 4: storage
 
-One SQLite file and one workspace folder. Nothing else is written outside them, except the browser profiles of agents' computers (inside the data folder too).
+One SQLite file and one workspace folder per space (contracts/PEOPLE.md). Nothing else is written outside them, except the browser profiles of agents' computers (inside the space's data folder too). This version opens one space, the main one, in the data folder below.
 
 ```
 <install>/                   for example C:\apdesk; the repository root
@@ -17,7 +17,7 @@ One SQLite file and one workspace folder. Nothing else is written outside them, 
     bin/                     deleted files wait here (restore from Files > Bin)
   backups/                   zips made by Settings > Backup. Outside data/ on purpose: delete data/, restore, and it is back
 ```
-`ctx.dataDir`, `ctx.workspace`, `ctx.backupsDir` and `ctx.root` give these paths. Never build them by hand.
+`ctx.dataDir`, `ctx.workspace`, `ctx.backupsDir` and `ctx.root` give these paths: the first three are those of the space the module was switched on in. Never build them by hand.
 
 ## The door
 

@@ -42,15 +42,20 @@ export function systemPlace(system = {}) {
   return { country: country || 'US', currency: CURRENCY[country] || 'USD', timeZone: system.timeZone || o.timeZone || 'UTC', locale };
 }
 
+// Kept by the house for every space (contracts/PEOPLE.md): a space other than the main one reads these from the house's
+// settings and cannot write them. Online and offline is one switch for the whole desk.
+const HOUSE_KEYS = new Set(['online']);
+
 export class Settings {
-  constructor(storage, { system } = {}) {
-    this.s = storage; this.listeners = new Set();
+  constructor(storage, { system, house = null } = {}) {
+    this.s = storage; this.listeners = new Set(); this.house = house;
     this.defaults = { ...DEFAULTS, ...systemPlace(system) };
     // a desk that was already set up keeps what it showed before: the earlier values are stored for it, once
     if (this.stored('onboarded')) for (const k of PLACE_KEYS) if (!this.stored(k)) this.set(k, EARLIER_PLACE[k]);
   }
-  stored(key) { return !!this.s.get('SELECT 1 AS x FROM settings WHERE key = ?', key); }
+  stored(key) { if (this.house && HOUSE_KEYS.has(key)) return this.house.stored(key); return !!this.s.get('SELECT 1 AS x FROM settings WHERE key = ?', key); }
   get(key) {
+    if (this.house && HOUSE_KEYS.has(key)) return this.house.get(key);
     const r = this.s.get('SELECT value FROM settings WHERE key = ?', key);
     if (!r) return this.defaults[key];
     try { return JSON.parse(r.value); } catch { return this.defaults[key]; }
@@ -58,9 +63,11 @@ export class Settings {
   all() {
     const out = { ...this.defaults };
     for (const r of this.s.all('SELECT key, value FROM settings')) { try { out[r.key] = JSON.parse(r.value); } catch {} }
+    if (this.house) for (const k of HOUSE_KEYS) out[k] = this.house.get(k);
     return out;
   }
   set(key, value) {
+    if (this.house && HOUSE_KEYS.has(key)) throw Object.assign(new Error('Online and offline are set for the whole desk.'), { code: 'forbidden' });
     this.s.run('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, JSON.stringify(value ?? null));
     for (const fn of this.listeners) { try { fn(key, value); } catch {} }
   }
