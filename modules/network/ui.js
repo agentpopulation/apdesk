@@ -1,6 +1,8 @@
 // The Network page: one section at a time, picked from the list on the left (a row of tabs on a phone).
 // Everything from the web is shown as plain text (text nodes only); nothing here builds markup from what a site said.
 import { lineModel, barModel, drawLine, drawBars, legend } from './ui-chart.js';
+import { drawAgentMap, drawDeps, STATE } from './ui-desk.js';
+import { pickFromText, textMatches, related } from './ui-deskmap.js';
 
 const SECTIONS = [
   ['connection', 'Connection'], ['active', 'Active connection'], ['apis', 'API health'], ['tracking', 'IP, DNS and ASN'],
@@ -8,9 +10,27 @@ const SECTIONS = [
   ['diagnose', 'Is it me or them?'], ['ai', 'AI provider speed'], ['devices', 'Devices'], ['domain', 'Your domain'],
   ['rules', 'Website rules'], ['ports', 'What listens here'], ['lookup', 'Look up a domain'], ['data', 'Desk data use'],
 ];
+const VIEWS = [['desk', 'Desk'], ['link', 'Link'], ['split', 'Split']];
+const VIEW_KEY = 'apd-network-view';
 const NEEDS_NET = new Set(['speed', 'watch', 'diagnose', 'domain', 'lookup']);
 const CSS = `
 .view.netv{padding:0;gap:0;height:100%;min-height:0;display:flex;flex-direction:column}
+.netp-views{display:flex;gap:6px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--line);flex:0 0 auto}
+.netp-views button{padding:5px 14px;border-radius:var(--r-s);border:1px solid var(--line);background:transparent;color:var(--fg);font-size:13px;cursor:pointer}
+.netp-views button[aria-pressed=true]{background:var(--accent);color:var(--on-accent,#fff);border-color:var(--accent)}
+.netp-main{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.netp-main.split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr)}
+.netp-main.split>*{min-height:0}
+.netp-main.split .netp{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);border-left:1px solid var(--line)}
+.netp-main.split .netp-nav{display:flex;flex-direction:row;flex-wrap:wrap;gap:4px;border-right:0;border-bottom:1px solid var(--line);padding:8px 12px}
+.netp-main.split .netp-nav .nav{width:auto;white-space:nowrap}
+.netp-desk{overflow:auto;min-height:0;padding:16px 22px 28px;display:flex;flex-direction:column;gap:14px}
+.netp-desk h3{margin:0 0 6px;font-size:14.5px}
+.netp-desk table{width:100%;border-collapse:collapse;font-size:13px}.netp-desk th,.netp-desk td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line)}
+.netp-desk .marked{display:flex;gap:8px;align-items:center;font-size:13px}
+.netp-desk .hl-agent circle{stroke:var(--accent);stroke-width:3}
+.netp .hl{outline:2px solid var(--accent);outline-offset:-2px;border-radius:var(--r-s)}
+@media (max-width:860px){.netp-main.split{display:block;overflow:auto}.netp-main.split .netp{min-height:520px;border-left:0;border-top:1px solid var(--line)}.netp-main.split .netp-desk{overflow:visible}}
 .netp-strip{display:flex;gap:8px;flex-wrap:wrap;padding:9px 16px;border-bottom:1px solid var(--line);overflow-x:auto;flex:0 0 auto}
 .netp-strip .nchip{display:flex;flex-direction:column;align-items:center;min-width:62px;padding:3px 10px;border-radius:var(--r-s);background:var(--bubble);font-size:10.5px;color:var(--dim);line-height:1.25;white-space:nowrap}
 .netp-strip .nchip b{font-size:15px;color:var(--fg)}
@@ -54,7 +74,32 @@ export const pages = {
       const body = h('div', { class: 'netp-body' });
       const nav = h('nav', { class: 'netp-nav list', 'aria-label': 'Network sections' }, SECTIONS.map(([id, label]) => h('button', { class: 'nav', type: 'button', 'aria-current': id === cur ? 'page' : null, onclick: () => ui.go('network', id) }, label)));
       const strip = h('div', { class: 'netp-strip', role: 'status', 'aria-label': 'Network status' }, h('span', { class: 'sub' }, 'Loading status…'));
-      el.replaceChildren(strip, h('div', { class: 'netp' }, nav, body));
+      let view = 'link'; try { const v = localStorage.getItem(VIEW_KEY); if (VIEWS.some(x => x[0] === v)) view = v; } catch {}
+      const setView = (v) => { try { localStorage.setItem(VIEW_KEY, v); } catch {} return pages.network.render(el, ui, route); };
+      const switcher = h('div', { class: 'netp-views', role: 'group', 'aria-label': 'Network view' }, VIEWS.map(([id, label]) => h('button', { type: 'button', 'aria-pressed': String(id === view), onclick: () => id !== view && setView(id) }, label)));
+      const link = h('div', { class: 'netp' }, nav, body);
+      const deskPane = h('div', { class: 'netp-desk' });
+      el.replaceChildren(strip, switcher, h('div', { class: 'netp-main ' + view }, view !== 'link' ? deskPane : null, view !== 'desk' ? link : null));
+      let deskData = null, sel = null;
+      const marks = () => { if (view !== 'split' || !deskData) return; for (const n of body.querySelectorAll('.hl')) n.classList.remove('hl'); if (sel) for (const n of body.querySelectorAll('tr, .line')) if (textMatches(n.textContent, sel, deskData.deps)) n.classList.add('hl'); };
+      const setSel = (x) => { sel = x; paintDeskPane(); marks(); };
+      const paintDeskPane = () => {
+        if (view === 'link' || !deskData) return;
+        const d = deskData, w = Math.max(280, Math.min(900, (deskPane.clientWidth || 600) - 48));
+        const rel = related(d.deps, sel), what = sel ? (d.deps.providers.find(p => p.provider === sel.key)?.label || sel.key) : null;
+        put(deskPane,
+          card(h('h3', null, 'Agents'), d.states.length ? drawAgentMap(document, d.states, { width: w }) : h('p', { class: 'sub' }, 'No agents are switched on.'),
+            h('p', { class: 'sub' }, 'Green is working, amber is waiting for you, grey is idle, red is a failure in the last day.'),
+            d.states.length ? ui.table([{ label: 'Agent', key: 'name' }, { label: 'State', render: x => STATE[x.state][0] }, { label: 'Doing now', render: x => x.doing || '—' }], d.states, { empty: '' }) : null),
+          card(h('h3', null, 'Who calls which provider (last 24 hours)'),
+            sel ? h('div', { class: 'marked' }, h('span', null, `Marked: ${what}`), btn('Clear', { kind: 'ghost sm', onClick: () => setSel(null) })) : null,
+            d.deps.edges.length ? drawDeps(document, d.deps, { width: w, sel, onSelect: setSel }) : h('p', { class: 'sub' }, 'No model calls in the last 24 hours.'),
+            h('p', { class: 'sub' }, 'A thicker line is more calls. A red provider failed its last connection check, and the agents that used it are marked with a red ring and a "!". A provider that was never checked is not marked.'),
+            ui.table([{ label: 'Agent', key: 'agent' }, { label: 'Provider', key: 'provider' }, { label: 'Calls', key: 'calls' }, { label: 'Last check', render: x => (x.health == null ? 'Not checked' : x.down ? 'Failed' : 'Passed') }], d.deps.table, { empty: 'Nothing to list yet.' })));
+        for (const n of deskPane.querySelectorAll('[data-agent]')) n.classList.toggle('hl-agent', rel.agents.has(n.getAttribute('data-agent')));
+      };
+      if (view !== 'link') (async () => { try { deskData = await api('m/network/desk'); paintDeskPane(); marks(); } catch (e) { put(deskPane, h('p', { class: 'sub' }, 'The desk view could not load: ' + e.message)); } })();
+      if (view === 'split') body.addEventListener('click', (e) => { const row = e.target.closest?.('tr, .line'); if (!row || !deskData || e.target.closest('button, a, input, select')) return; const pick = pickFromText(row.textContent, deskData.deps); if (!pick) return; setSel(pick && sel && sel.kind === pick.kind && sel.key === pick.key ? null : pick); });
       requestAnimationFrame(() => { const b = nav.querySelector('[aria-current]'); if (b && nav.scrollWidth > nav.clientWidth) nav.scrollLeft = b.offsetLeft - (nav.clientWidth - b.offsetWidth) / 2; });
       (async () => {
         try {
@@ -87,7 +132,9 @@ export const pages = {
         return h('div', null, legend(document, names || series.map(s => s.name)), drawLine(document, m, { title: t }));
       };
       const C = { h, api, card, btn, pill, toast, fmt, empty, line, ui, box, head, waitJob, busy, kv, select, ms, chart, offline, put };
+      if (view === 'desk') return;
       try { await (SECTION_RENDER[cur])(C); } catch (e) { put(box, h('p', { class: 'sub' }, 'This section could not load: ' + e.message)); }
+      marks();
     },
   },
 };

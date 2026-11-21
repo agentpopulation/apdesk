@@ -11,6 +11,7 @@ import { runSpeedTest, runLatency, SPEEDTEST_HOST, FULL_TEST_BYTES, LATENCY_TEST
 import { interfaces, arpTable, tcpOpen, subnetTargets, pool, isPrivate, inOwnSubnet } from './lan.js';
 import { lookupDns, lookupRdap, lookupHeaders, lookupTls, lookupRobots, lookupCompany, normalizeDomain } from './lookup.js';
 import { localConnection, publicAddress, signalWords, PUBLIC_IP_SOURCES } from './conn.js';
+import { agentStates, dependencyModel } from './ui-deskmap.js';
 import { statusStrip, diffAddresses, diffDns, issuesFrom, apiHealthFrom, severityRank } from './health.js';
 import { siteUrl, clampEvery, checkOnce, nextCheckAt, transition, textHash, diffSummary, keepText, robotsAllows, UA as WATCH_UA, DEFAULT_SLOW_MS, DEFAULT_CHANGE_MIN, MIN_EVERY_MIN } from './watch.js';
 import { knock, systemResolves, verdict, WELL_KNOWN, PUBLIC_RESOLVER } from './diagnose.js';
@@ -461,6 +462,22 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
     return { at: nowIso(), providers: apiHealthFrom(rows, clock()), every: kv('api.every', 'off'), online: online() };
   }
 
+  // ================= V. Desk view: what each agent is doing, and which providers they called in the last day.
+  // Reads the jobs door, the core calls table (read only) and this module's own API checks. No outbound call.
+  function deskView() {
+    const agents = ctx.agents.list();
+    const jobs = [...ctx.jobs.list({ status: 'running', limit: 100 }), ...ctx.jobs.list({ status: 'waiting', limit: 100 }), ...ctx.jobs.list({ status: 'failed', limit: 100 })];
+    const since = new Date(clock() - DAY).toISOString();
+    let calls = []; try { calls = ctx.db.all('SELECT agent_id, provider, ok FROM calls WHERE at >= ? ORDER BY id DESC LIMIT 20000', since); } catch {}
+    const byName = new Map(agents.map(a => [a.name, a.id]));
+    const visits = ctx.db.all('SELECT host, who FROM m_network_visits WHERE at >= ? ORDER BY id DESC LIMIT 5000', since)
+      .map(v => ({ host: v.host, agentId: byName.get(String(v.who || '').split(' · ')[0]) })).filter(v => v.agentId);
+    // The last check on record for each provider, however old: a failure stays marked until a later check passes.
+    const last = ctx.db.all('SELECT provider, label, url, ok, status, ms, at FROM m_network_api WHERE id IN (SELECT MAX(id) FROM m_network_api GROUP BY provider)').map(r => ({ ...r, ok: !!r.ok }));
+    const health = apiHealthFrom(last, clock()).map(p => ({ provider: p.provider, status: p.status }));
+    return { at: nowIso(), states: agentStates({ agents, jobs, now: clock() }), deps: dependencyModel({ agents, calls, health, visits, label: (p) => ctx.model.label(p, null) || p }) };
+  }
+
   // ================= P. IP tracking: the local addresses (read here, no outbound) and the public address (recorded when
   // the public lookup in section A runs). Every change is logged old -> new.
   const observeLocal = () => interfaces().filter(i => i.address).map(i => ({ scope: 'local', family: i.family, value: i.address }));
@@ -680,6 +697,8 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
   R('GET', '/notices', () => ({ notices: notices() }));
   // N status strip
   R('GET', '/status', () => statusStripData());
+  // V Desk view
+  R('GET', '/desk', () => deskView());
   // O API connection health
   R('GET', '/api-health', () => apiHealth());
   R('POST', '/api-health/check', jobRoute('network.apihealth', 'Check API connections', () => pingApis({ trigger: 'owner' })), { owner: true });

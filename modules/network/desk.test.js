@@ -126,3 +126,32 @@ test('owner-only: every route that calls out or changes something refuses withou
     assert.deepEqual(k.json, { shodan: true }); assert.ok(!JSON.stringify((await t.call('/api/m/network/osint/keys')).json).includes('abcdefgh'), 'the key never comes back');
   } finally { await t.close(); }
 });
+
+test('V: the desk view route answers agent states and the 24-hour provider calls, and marks a provider whose last check failed', async () => {
+  const t = await on(['network']);
+  try {
+    t.core.storage.run("INSERT INTO calls (at, agent_id, purpose, provider, model, ok, ms) VALUES (?, 'operator', 'chat', 'gemini', 'm', 1, 5)", new Date().toISOString());
+    t.core.storage.run("INSERT INTO calls (at, agent_id, purpose, provider, model, ok, ms) VALUES (?, 'operator', 'chat', 'gemini', 'm', 1, 5)", new Date(Date.now() - 3 * 86400_000).toISOString());
+    const v = (await t.call('/api/m/network/desk')).json;
+    assert.ok(Array.isArray(v.states)); assert.ok(v.states.every(s => ['idle', 'working', 'waiting', 'failed'].includes(s.state)));
+    const g = v.deps.providers.find(p => p.provider === 'gemini'); assert.equal(g.calls, 1, 'only the last 24 hours');
+    assert.equal(g.down, false); assert.equal(g.health, null);
+    t.core.storage.run("INSERT INTO m_network_api (at, provider, label, url, ok, status, ms) VALUES (?, 'gemini', 'Gemini', 'x', 0, 500, 9)", new Date().toISOString());
+    const d = (await t.call('/api/m/network/desk')).json;
+    assert.equal(d.deps.providers.find(p => p.provider === 'gemini').down, true);
+    assert.deepEqual(d.deps.agents.filter(a => a.affected).map(a => a.id), ['operator']);
+  } finally { await t.close(); }
+});
+
+test('V: a provider whose last check failed more than a day ago is still marked', async () => {
+  const t = await on(['network']);
+  try {
+    t.core.storage.run("INSERT INTO calls (at, agent_id, purpose, provider, model, ok, ms) VALUES (?, 'operator', 'chat', 'gemini', 'm', 1, 5)", new Date().toISOString());
+    t.core.storage.run("INSERT INTO m_network_api (at, provider, label, url, ok, status, ms) VALUES (?, 'gemini', 'Gemini', 'x', 1, 200, 9)", new Date(Date.now() - 60 * 3600_000).toISOString());
+    t.core.storage.run("INSERT INTO m_network_api (at, provider, label, url, ok, status, ms) VALUES (?, 'gemini', 'Gemini', 'x', 0, 500, 9)", new Date(Date.now() - 30 * 3600_000).toISOString());
+    const d = (await t.call('/api/m/network/desk')).json;
+    const g = d.deps.providers.find(p => p.provider === 'gemini');
+    assert.equal(g.down, true); assert.equal(g.health, 'down');
+    assert.deepEqual(d.deps.agents.filter(a => a.affected).map(a => a.id), ['operator']);
+  } finally { await t.close(); }
+});

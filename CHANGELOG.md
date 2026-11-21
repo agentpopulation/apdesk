@@ -157,6 +157,9 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Settings has a new Menu section: rename, reorder, hide or show menu places, pick the first page, or reset to the default menu. Your names show in the menu, page titles and notices; customising never changes permissions.
 - A Tracker icon in the top bar counts running jobs. Its pop-up and the Tracker page show what each agent is doing, the to-do list with time left where a job reports one, downloads, Stop and Panic, updated live.
 - A small dot in the top bar says a checked update can be installed and opens Settings, Backup, Updates; it installs nothing. Desktop notices now also say when a job needs you.
+- The Network page has a Desk, Link and Split view switch and remembers your choice. Desk draws one node per agent, coloured by state, with what it is doing now.
+- Desk also shows which agents called which AI providers in the last 24 hours, with a plain table of the same numbers. A provider whose last connection check failed is marked with the agents that used it; one never checked reads "Not checked".
+- In Split, choosing a provider or website on one side marks what is related on the other.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.
