@@ -64,6 +64,20 @@ Models shows every way to get a model or a service, grouped, so the owner can st
 4. The default chain (setting `model.defaultChain`; entries are `router`, `ollama`, `keyed`, or a provider id such as `gemini`): router (free models) -> ollama (first chat model) -> every keyed provider with a live key, in the owner's order.
 5. Each provider is tried with its keys in order; a key on cooldown (429, 401) is skipped; after `attempts.length >= 6` the door stops and throws `all_failed`. Six, not four: the built-in router alone gives up to four targets, so four would never reach Ollama or a keyed provider.
 
+## Learning from the call log
+
+Every call is written to the `calls` table (`purpose`, `provider`, `model`, `ok`, `ms`). From the last 7 days of it (`LEARN.days`), counted from `door.clock()`, the door keeps per kind of ask (`purpose`), provider and model: how many calls, how many answered, and the median time of those that answered. It is read again after 60 s (`LEARN.ttlMs`).
+
+The rule: a candidate with at least 5 calls for that purpose (`LEARN.minCalls`) has a record; among candidates with a record, the higher share answered goes first, then the shorter median time; a tie keeps today's order. Candidates without a record keep their place. Fewer than two candidates with a record: today's order.
+
+Where it applies, and only there:
+- The built-in Free API's targets for one call (the up to four the door would try anyway), ranked per model.
+- The chain's free and local default steps (`router`, `ollama`, `llama`, `lan:<node>` with no model named), ranked per provider. Only steps that stand next to each other trade places: none moves past another step, so a free step never goes behind a keyed or paid provider, and LAN nodes (listed after the keyed providers) trade only among themselves.
+
+It never adds or drops a candidate, never moves a keyed provider (paid or free-with-sign-up), never switches paid models on, and never overrides a pick: an explicit `model`, an agent's `main` and `fallback`, a step with a model named (a LAN node's `model` too), the Router tab's Test of one host, `router.model` or `ollama.model` set by the owner (that step stays put), or a `model.defaultChain` the owner changed from the default (the whole chain keeps his order).
+
+`ctx.model.learned()` -> `{ days, minCalls, rule, rows: [{ purpose, provider, model, label, calls, ok, share, medianMs, enough, free }] }` for the Doctor page. `ctx.model.lastCalls()` -> `{ <provider>: { at, ok, model, error } }`, the latest call per provider (its error as one short sentence; never a key).
+
 ## Time limits
 
 - First byte: a hop waits at most `timeoutMs` for the provider's first byte (default 25 s on the built-in free hosts, `FREE_FIRST_MS`, so several can be tried inside one chat turn's 150 s wait; 180 s elsewhere).

@@ -1,0 +1,17 @@
+{
+  "id": "doctor",
+  "number": 38,
+  "name": "Doctor",
+  "description": "One button checks your desk: a model answers, keys, the internet, disk space, the local model, updates, the port and your switches. Each problem says what to do. It changes nothing by itself.",
+  "kind": "switch-on",
+  "defaultOn": true,
+  "menu": [{ "id": "doctor", "label": "Doctor", "order": 118 }],
+  "pages": ["doctor"],
+  "settings": [],
+  "agentTabs": [],
+  "tools": [],
+  "requires": [],
+  "npm": {},
+  "attribution": [],
+  "status": "partial"
+}

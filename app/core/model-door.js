@@ -30,6 +30,10 @@ export const STREAM_GAP_MS = 45000;
 export const CHAT_DEADLINE_MS = 170000;
 // Free upstreams sometimes return their own notice as an ordinary reply (seen from Pollinations on 13 Nov 2026).
 const NOTICE = /reached its budget|raise the key budget|enter\.pollinations\.ai|rate limit exceeded|quota exceeded|please sign in|model is (currently )?(unavailable|overloaded)/i;
+/** Learning from the call log (MODEL-DOOR.md, Learning): the last `days` of calls, per kind of ask, provider and model.
+ *  A candidate with fewer than `minCalls` calls there is not ranked; the table is read again after `ttlMs`. */
+export const LEARN = Object.freeze({ days: 7, minCalls: 5, ttlMs: 60000 });
+const DEFAULT_CHAIN = ['router', 'ollama', 'keyed'];
 const ENV_KEYS = ['OPENROUTER_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GROQ_API_KEY', 'GEMINI_API_KEY', 'MISTRAL_API_KEY', 'DEEPSEEK_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'CEREBRAS_API_KEY', 'XAI_API_KEY'];
 
 export class ModelError extends Error { constructor(code, message, extra = {}) { super(message); this.code = code; Object.assign(this, extra); } }
@@ -45,6 +49,8 @@ export class ModelDoor {
     this.cache = new Map();       // probe results
     this.last = new Map();        // provider -> the last real call's result, shown in Active now
     this.localEngine = null;      // the desk's own llama-server (core/downloads-routes.js sets it): provider 'llama'
+    this.clock = () => Date.now(); // what "the last 7 days" counts from (tests use a fixed one)
+    this.learnCache = null;       // { at, v } the learned table, read again after LEARN.ttlMs
     this.loadEnvKeys();
   }
   loadEnvKeys(env = process.env) {
@@ -155,7 +161,7 @@ export class ModelDoor {
     if (this.panic.halted) throw new ModelError('halted', 'Everything is stopped. Press Resume first.');
     const signal = this.panic.child(opts.signal);
     const online = this.online;
-    let chain = opts.model?.provider ? [{ ...opts.model, why: 'explicit' }] : this.resolve(opts.agentId).chain;
+    let chain = opts.model?.provider ? [{ ...opts.model, why: 'explicit' }] : this.learnedChain(this.resolve(opts.agentId).chain, opts.purpose);
     if (!online) chain = chain.filter(c => this.isLocal(c.provider));   // an explicit pick of an online model is refused offline too
     if (!chain.length) throw new ModelError(online ? 'no_provider' : 'offline', online ? 'No model is set up. Add a key or start Ollama or the router in Models.' : 'The desk is offline and no local model is running. Start Ollama or go online.');
     const attempts = [];
@@ -277,7 +283,10 @@ export class ModelDoor {
       if (r.ok) return [{ provider: 'router', api: 'openai', baseUrl: this.settings.get('router.baseUrl'), model: step.model || this.routerDefault(r.models), headers: this.routerHeaders() }];
       if (this.settings.get('router.builtin') === false) return [];
       await this.readLiveUpstreams();
-      return this.builtinRouterTargets(step.model, !!opts.tools?.length, step.via || null);
+      const list = this.builtinRouterTargets(step.model, !!opts.tools?.length, step.via || null);
+      // a model picked for this step (agent, explicit, the owner's Test of one host) is used as it is; else the record decides
+      if (step.via || step.model || opts.model?.provider) return list;
+      return this.learnedOrder(list, opts.purpose, (t) => 'router|' + t.model);
     }
     if (p === 'ollama') {
       const r = await this.ollamaModels(); if (!r.ok) return [];
@@ -496,6 +505,63 @@ export class ModelDoor {
       this.s.run('INSERT INTO calls (at, agent_id, purpose, provider, model, ok, ms, input_tokens, output_tokens, cost_minor, currency, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', now(), o.agentId || null, o.purpose || 'chat', o.provider, o.model, o.ok ? 1 : 0, o.ms || 0, o.usage?.input || 0, o.usage?.output || 0, cost, this.settings.get('currency'), o.error || null);
     } catch (e) { this.log('record failed', e.message); }
   }
+  // ---------- learning from the call log
+  /** The last LEARN.days of calls by kind of ask, provider and model: how many, how many answered, the median time of
+   *  those that answered. Also one line per kind of ask and provider (model '*') for the order of the chain's steps. */
+  learned() {
+    const at = this.clock();
+    if (this.learnCache && this.learnCache.at <= at && at - this.learnCache.at < LEARN.ttlMs) return this.learnCache.v;
+    const groups = new Map();
+    const add = (k, base, r) => { const g = groups.get(k) || { ...base, calls: 0, ok: 0, times: [] }; g.calls++; if (r.ok) { g.ok++; g.times.push(Number(r.ms) || 0); } groups.set(k, g); };
+    let rows = [];
+    try { rows = this.s.all('SELECT purpose, provider, model, ok, ms FROM calls WHERE at >= ? AND at <= ?', new Date(at - LEARN.days * 86400000).toISOString(), new Date(at).toISOString()); } catch (e) { this.log('learned read failed', e.message); }
+    for (const r of rows) {
+      const purpose = r.purpose || 'chat';
+      add(`${purpose}|${r.provider}|${r.model || ''}`, { purpose, provider: r.provider, model: r.model || null }, r);
+      add(`${purpose}|${r.provider}|*`, { purpose, provider: r.provider, model: '*' }, r);
+    }
+    const byKey = new Map();
+    for (const [k, g] of groups) { const t = g.times.sort((a, b) => a - b); const n = t.length; byKey.set(k, { purpose: g.purpose, provider: g.provider, model: g.model, calls: g.calls, ok: g.ok, share: g.ok / g.calls, medianMs: n ? Math.round(n % 2 ? t[(n - 1) / 2] : (t[n / 2 - 1] + t[n / 2]) / 2) : null }); }
+    const v = { at, byKey };
+    this.learnCache = { at, v };
+    return v;
+  }
+  /** Better record first: the share that answered, then the median time; fewer than LEARN.minCalls calls is no record. */
+  learnedOrder(list, purpose, keyOf) {
+    const { byKey } = this.learned(); const p = purpose || 'chat';
+    const slots = []; const known = [];
+    list.forEach((c, i) => { const k = keyOf(c); const s = k ? byKey.get(p + '|' + k) : null; if (s && s.calls >= LEARN.minCalls) { slots.push(i); known.push({ c, s, i }); } });
+    if (known.length < 2) return list;
+    known.sort((a, b) => b.s.share - a.s.share || (a.s.medianMs ?? Infinity) - (b.s.medianMs ?? Infinity) || a.i - b.i);
+    const out = [...list]; slots.forEach((slot, j) => { out[slot] = known[j].c; });
+    return out;
+  }
+  /** The chain's steps with the learned order laid over them. Only free and local default steps that stand next to each
+   *  other trade places, so none moves past another step: an agent's own models, keyed providers, a step with a model
+   *  named (a LAN node's model, router.model, ollama.model) and an order set by hand (model.defaultChain) stay put. */
+  learnedChain(chain, purpose) {
+    const steps = this.settings.get('model.defaultChain') || DEFAULT_CHAIN;
+    if (JSON.stringify(steps) !== JSON.stringify(DEFAULT_CHAIN)) return chain;
+    const pinned = (c) => (c.provider === 'router' && (this.settings.get('router.model') || 'auto') !== 'auto') || (c.provider === 'ollama' && !!this.settings.get('ollama.model'));
+    const movable = (c) => (c.why === 'default' || c.why === 'lan') && !c.model && (c.provider === 'router' || this.isLocal(c.provider)) && !pinned(c);
+    const out = []; let run = [];
+    const flush = () => { out.push(...this.learnedOrder(run, purpose, (c) => c.provider + '|*')); run = []; };
+    for (const c of chain) { if (movable(c)) run.push(c); else { flush(); out.push(c); } }
+    flush();
+    return out;
+  }
+  /** The learned table for the screen (the Doctor): one row per kind of ask, provider and model. */
+  learnedView() {
+    const rows = [...this.learned().byKey.values()].filter(r => r.model !== '*').map(r => ({ purpose: r.purpose, provider: r.provider, model: r.model, label: this.label(r.provider, r.model), calls: r.calls, ok: r.ok, share: Math.round(r.share * 100) / 100, medianMs: r.medianMs, enough: r.calls >= LEARN.minCalls, free: r.provider === 'router' || this.isLocal(r.provider) }));
+    rows.sort((a, b) => a.purpose.localeCompare(b.purpose) || b.calls - a.calls);
+    return { days: LEARN.days, minCalls: LEARN.minCalls, rule: `Among the free and local models it would try anyway, the desk tries first the one that answered most often for that kind of ask in the last ${LEARN.days} days (at least ${LEARN.minCalls} calls), then the faster one.`, rows };
+  }
+  /** provider -> its latest call: { at, ok, model, error } (error cut to one short line; no key is ever in it). */
+  lastCalls() {
+    const out = {};
+    try { for (const r of this.s.all('SELECT provider, model, ok, at, error FROM calls WHERE id IN (SELECT MAX(id) FROM calls GROUP BY provider)')) out[r.provider] = { at: r.at, ok: !!r.ok, model: r.model, error: r.error ? short(firstSentence(r.error)) : null }; } catch (e) { this.log('last calls read failed', e.message); }
+    return out;
+  }
   /** True when this model costs money by our price list (free ids and unknown models count as free). */
   priceOf(model) { const p = CATALOG.prices.find(x => String(model || '').toLowerCase().includes(x.match)); return p && (p.in > 0 || p.out > 0) ? p : null; }
   estimate(provider, model, usage) {
@@ -529,6 +595,8 @@ export class ModelDoor {
       providers: () => Object.fromEntries(Object.entries(PROVIDERS).map(([k, v]) => [k, { name: v.name, baseUrl: v.baseUrl, signup: v.signup, defaultModel: v.defaultModel, tier: v.tier || 'paid', freeNote: v.freeNote || null }])),
       freeRouter: () => ({ note: FREE_ROUTER.note, upstreams: this.upstreams().map(u => ({ ...u, models: this.upModels(u) })) }),
       routerCooling: () => this.routerCooling(),
+      /** What the door learned from its call log, and the latest call per provider (Doctor page). */
+      learned: () => this.learnedView(), lastCalls: () => this.lastCalls(),
       /** The assistant message to send back before the tool results, with everything the provider needs kept (Gemini's signature). */
       toolMessage: (r) => toolMessage(r),
       keys: { list: () => this.listKeys(), add: (p, v, l, m) => this.addKey(p, v, l, m), toggle: (id, on) => this.toggleKey(id, on), remove: (id) => this.removeKey(id) },
