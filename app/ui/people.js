@@ -104,14 +104,62 @@ export function takeEntryNotice() {
   if (msgs.length) setTimeout(() => toast(msgs.join(' '), 'err', 9000), 500);
 }
 
+// A person's spaces, said plainly for the confirm before Incognito opens. The desk's own words; the house holds the full
+// list too (shown in the switcher once you are in Incognito). No internal ids, no model text.
+export const INCOGNITO_CAUTIONS = [
+  'Incognito saves nothing on this desk: its chats, memory, history and approvals are dropped the moment you leave.',
+  'What leaves the desk still happens. A mail you approve is still sent. A site still saw your visit. Money spent is spent.',
+  'Spend still counts against your day and month limits, so Incognito cannot get around them.',
+  'Your address and website rules, approvals and Panic all still apply.',
+];
+
+/** Switch this person between Work and Personal (no PIN: the person is already in). The house hands back a fresh token for
+ *  this window; we keep it and reload, so the boot gate opens the chosen space. Same pattern as entering or switching. */
+async function switchSpace(ui, which) {
+  try { const r = await api('people/me/space', { body: { space: which } }); kit.setSession(r.token); location.reload(); }
+  catch (e) { toast(e.message, 'err'); }
+}
+/** Open Incognito: show what it means first, and only on the person's confirm open it and reload into it. */
+function openIncognito(ui) {
+  const body = h('div', { class: 'stack', style: { gap: '10px' } },
+    h('p', { class: 'sub' }, 'Incognito opens a fresh desk that remembers nothing. Before you go in:'),
+    h('ul', { class: 'cautions' }, INCOGNITO_CAUTIONS.map(c => h('li', { class: 'sub' }, c))));
+  const open = async () => {
+    try { const r = await api('people/incognito', { method: 'POST' }); kit.setSession(r.token); location.reload(); return undefined; }
+    catch (e) { toast(e.message, 'err'); return false; }
+  };
+  kit.modal({ title: 'Open Incognito', body, actions: [{ label: 'Cancel' }, { label: 'Open Incognito', onClick: open }] });
+}
+
+/** Under the person in the switcher: the Work/Personal choice and Open Incognito, or, while in Incognito, the plain
+ *  reminder of what it means and a way out. */
+function spacesSection(ui, me) {
+  if (me.incognito) {
+    const cautions = (me.cautions && me.cautions.length ? me.cautions : INCOGNITO_CAUTIONS);
+    return h('div', { class: 'stack', style: { gap: '8px' } },
+      h('b', null, 'You are in Incognito'),
+      h('ul', { class: 'cautions' }, cautions.map(c => h('li', { class: 'sub' }, c))),
+      btn('Leave Incognito', { kind: 'ghost wide', onClick: () => switchSpace(ui, 'work') }));
+  }
+  const cur = me.space === 'personal' ? 'personal' : 'work';
+  const onlyWork = !(me.spaces || []).includes('personal');
+  const seg = kit.seg(['Work', 'Personal'], cur === 'personal' ? 1 : 0, (_o, i) => { const val = i === 1 ? 'personal' : 'work'; if (val !== cur) switchSpace(ui, val); });
+  return h('div', { class: 'stack', style: { gap: '6px' } },
+    h('span', { class: 'sub' }, 'Your space'),
+    seg,
+    onlyWork && cur !== 'personal' ? h('span', { class: 'sub' }, 'Personal starts empty: a separate desk just for you.') : null,
+    btn('Open Incognito', { kind: 'ghost wide', onClick: () => openIncognito(ui) }));
+}
+
 // ---- the switcher: the top-right avatar opens this. Lists the people and the actions.
 export async function switcherMenu(ui) {
   let me, list;
-  try { me = (await api('people/me')).person; list = (await api('people')).people; } catch (e) { return toast(e.message, 'err'); }
+  try { const r = await api('people/me'); me = { ...r.person, incognito: !!r.incognito, space: r.space, spaces: r.spaces, cautions: r.cautions }; list = (await api('people')).people; } catch (e) { return toast(e.message, 'err'); }
   const full = (label, onClick, kind = 'ghost') => btn(label, { kind: kind + ' wide', onClick });
   const others = list.filter(p => p.id !== me.id);
   const body = h('div', { class: 'stack', style: { gap: '12px' } },
     h('div', { class: 'row' }, personAvatar(me, 'big'), h('div', null, h('b', null, me.name), h('span', { class: 'sub', style: { display: 'block' } }, me.keeper ? 'Keeper of this PC' : 'At this desk'))),
+    spacesSection(ui, me),
     others.length ? h('div', { class: 'row', style: { gap: '6px' } }, others.map(p => h('span', { class: 'who-chip', title: p.name }, personAvatar(p), h('span', { class: 'sub' }, p.name)))) : null,
     h('div', { class: 'stack', style: { gap: '6px' } },
       full('Switch person', () => { ui.closeModal(); ui.openChooser('switch'); }),

@@ -149,10 +149,11 @@ ui.setTheme = setTheme;
 async function refreshWho() {
   try { const r = await api('people'); state.people = r.people; } catch { state.people = []; }
   state.multi = state.people.length > 1 || state.people.some(p => p.hasPin);
-  try { const r = await api('people/me'); state.me = r.person; } catch { state.me = null; }
+  try { const r = await api('people/me'); state.me = r.person ? { ...r.person, incognito: !!r.incognito, space: r.space } : null; } catch { state.me = null; }
   paintWho();
 }
 function paintWho() {
+  paintIncognito();
   const b = $('#who'); if (!b) return;
   const show = !!(state.multi && state.me);
   b.hidden = !show;
@@ -160,6 +161,20 @@ function paintWho() {
   b.replaceChildren(personAvatar(state.me, 'bar'));
   const name = `${state.me.name}${state.me.keeper ? ', keeper of this PC' : ''}. Switch person, lock the window`;
   b.setAttribute('aria-label', name); b.title = name;
+}
+// An Incognito window wears a plain mark in the top bar: nothing is saved here. Shown only while this window is in
+// Incognito; removed the moment it leaves. The desk's own words, no emoji.
+function paintIncognito() {
+  const on = !!(state.me && state.me.incognito);
+  let pill = document.getElementById('incog');
+  if (!on) { if (pill) pill.hidden = true; return; }
+  if (!pill) {
+    pill = h('span', { class: 'incog', id: 'incog', role: 'status' }, 'Incognito', h('span', { class: 'tail' }, ' — nothing is saved'));
+    $('.bar > div:first-child')?.append(pill);
+  }
+  pill.hidden = false;
+  const name = 'You are in Incognito. Nothing is saved on this desk.';
+  pill.setAttribute('aria-label', name); pill.title = name;
 }
 $('#who').onclick = () => switcherMenu(ui);
 

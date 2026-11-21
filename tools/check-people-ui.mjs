@@ -21,6 +21,19 @@ const ctxFor = async (w, hgt, theme, { storageState } = {}) => {
   return { ctx, p, errs };
 };
 const skipOnb = async (p) => { await p.getByText('Skip, show everything').click().catch(() => {}); await wait(300); };
+// A fresh space (Personal, Incognito) shows onboarding: click whichever Skip is there until the overlay is gone, and mark
+// the space onboarded so a later reload of the same space does not show it again.
+const dismissOnb = async (p) => { for (let i = 0; i < 4; i++) { if (await p.evaluate(() => document.getElementById('onb').hidden).catch(() => true)) return; await p.getByRole('button', { name: /Skip, show everything|Skip for now/ }).first().click().catch(() => {}); await wait(350); } };
+// Mark the live document before an action that reloads the window, so settle can wait for the new document to arrive
+// (a reload keeps the old #menu .nav around until the last moment, which otherwise races the evaluate below).
+const markNav = (p) => p.evaluate(() => { window.__apdnav = true; }).catch(() => {});
+const settle = async (p) => {
+  await p.waitForFunction(() => window.__apdnav === undefined, null, { timeout: 12000 }).catch(() => {});
+  await p.waitForSelector('#menu .nav', { timeout: 8000 });
+  await p.evaluate(async () => { try { const k = await import('/ui/kit.js'); await k.api('settings', { body: { onboarded: true } }); } catch {} });
+  await dismissOnb(p); await wait(200);
+};
+const openSwitcher = async (p) => { await p.click('#who'); await until(() => p.evaluate(() => !document.getElementById('modal').hidden)); };
 
 try {
   // ---- 1. the keeper's window (open desk): boots straight to the desk, no avatar; sets a PIN, then the avatar appears
@@ -110,5 +123,58 @@ try {
   check('Lock this window drops the token and shows the chooser again', await s.p.evaluate(() => !document.getElementById('chooser').hidden && document.querySelectorAll('#chooser .person').length === 2));
   check('people UI: no page errors', s.errs.length === 0, s.errs.join(' | ').slice(0, 200));
   await s.ctx.close();
+
+  // ---- 6. Work/Personal spaces and Incognito, wired into the switcher and the top bar. Person B (a non-keeper, PIN 4821)
+  // at both sizes and both themes: the switcher offers Work/Personal and Open Incognito; Personal is a separate empty space;
+  // Incognito shows its cautions first and a top-bar mark, and leaving it drops everything it held.
+  for (const [w, hgt, theme] of [[1366, 768, 'light'], [1366, 768, 'dark'], [390, 844, 'light'], [390, 844, 'dark']]) {
+    const g = await ctxFor(w, hgt, theme);
+    const tag = `${w}x${hgt} ${theme}`;
+    await g.p.goto(t.base + '/'); await g.p.waitForSelector('#chooser .person'); await wait(200);
+    await g.p.getByRole('button', { name: /Person B/ }).click(); await wait(150);
+    await g.p.fill('#chooser .pinf', '4821'); await g.p.locator('#chooser').getByRole('button', { name: 'Open' }).click();
+    await settle(g.p);
+    const workTitle = `B Work chat ${tag}`;
+    await g.p.evaluate(async (title) => { const k = await import('/ui/kit.js'); await k.api('m/chat/chats', { body: { title } }); }, workTitle);
+    // the switcher offers Work/Personal and Open Incognito
+    await openSwitcher(g.p);
+    check(`${tag}: switcher shows the Work/Personal choice and Open Incognito`, await g.p.evaluate(() => { const txt = document.getElementById('modal').textContent; const names = [...document.querySelectorAll('#modal button')].map(x => x.textContent); return /Your space/.test(txt) && names.includes('Work') && names.includes('Personal') && names.includes('Open Incognito'); }));
+    await g.p.screenshot({ path: `${SHOTS}/switcher_spaces_${w}x${hgt}_${theme}.png` });
+    // switch to Personal: the window reloads into a separate, empty Personal space (the Work chat is not there)
+    await markNav(g.p); await g.p.locator('#modal').getByRole('button', { name: 'Personal', exact: true }).click();
+    await settle(g.p);
+    const personal = await g.p.evaluate(async (title) => { const k = await import('/ui/kit.js'); const me = await k.api('people/me'); const chats = (await k.api('m/chat/chats')).chats.map(c => c.title); return { space: me.space, has: chats.includes(title) }; }, workTitle);
+    check(`${tag}: Personal is a separate, empty space (the Work chat is absent)`, personal.space === 'personal' && !personal.has, JSON.stringify(personal));
+    await g.p.screenshot({ path: `${SHOTS}/personal_space_${w}x${hgt}_${theme}.png` });
+    // back to Work, then open Incognito: the cautions are shown before it opens
+    await openSwitcher(g.p);
+    await markNav(g.p); await g.p.locator('#modal').getByRole('button', { name: 'Work', exact: true }).click();
+    await settle(g.p);
+    await openSwitcher(g.p);
+    await g.p.locator('#modal').getByRole('button', { name: 'Open Incognito' }).click(); await wait(250);
+    check(`${tag}: opening Incognito shows the cautions first, before it is used`, await g.p.evaluate(() => { const txt = document.getElementById('modal').textContent; const names = [...document.querySelectorAll('#modal button')].map(x => x.textContent); return /saves nothing/.test(txt) && /Spend still counts/.test(txt) && names.includes('Open Incognito') && names.includes('Cancel'); }));
+    await g.p.screenshot({ path: `${SHOTS}/incognito_cautions_${w}x${hgt}_${theme}.png` });
+    // confirm: reload into Incognito. The top-bar indicator shows; a chat is made here to prove it is dropped on leave
+    await markNav(g.p); await g.p.locator('#modal').getByRole('button', { name: 'Open Incognito' }).click();
+    await settle(g.p);
+    const incogTitle = `B Incognito chat ${tag}`;
+    const inState = await g.p.evaluate(async (title) => { const k = await import('/ui/kit.js'); const me = await k.api('people/me'); await k.api('m/chat/chats', { body: { title } }); const pill = document.getElementById('incog'); return { incognito: me.incognito, pillShown: !!(pill && !pill.hidden), pillText: pill ? pill.textContent : '' }; }, incogTitle);
+    check(`${tag}: in Incognito the top-bar indicator shows "Incognito"`, inState.incognito === true && inState.pillShown && /Incognito/.test(inState.pillText), JSON.stringify(inState));
+    await g.p.screenshot({ path: `${SHOTS}/incognito_bar_${w}x${hgt}_${theme}.png` });
+    // the switcher in Incognito: the reminder and a way out
+    await openSwitcher(g.p);
+    check(`${tag}: in Incognito the switcher says so and offers Leave Incognito`, await g.p.evaluate(() => { const txt = document.getElementById('modal').textContent; const names = [...document.querySelectorAll('#modal button')].map(x => x.textContent); return /You are in Incognito/.test(txt) && names.includes('Leave Incognito') && !names.includes('Open Incognito'); }));
+    await g.p.screenshot({ path: `${SHOTS}/switcher_incognito_${w}x${hgt}_${theme}.png` });
+    await markNav(g.p); await g.p.locator('#modal').getByRole('button', { name: 'Leave Incognito' }).click();
+    await settle(g.p);
+    const after = await g.p.evaluate(async (title) => { const k = await import('/ui/kit.js'); const me = await k.api('people/me'); const chats = (await k.api('m/chat/chats')).chats.map(c => c.title); const pill = document.getElementById('incog'); return { incognito: me.incognito, hasChat: chats.includes(title), pillShown: !!(pill && !pill.hidden) }; }, incogTitle);
+    check(`${tag}: leaving Incognito drops its chat and removes the top-bar indicator`, after.incognito === false && !after.hasChat && !after.pillShown, JSON.stringify(after));
+    // a non-keeper still sees no keeper-only items anywhere in this flow
+    await openSwitcher(g.p);
+    check(`${tag}: a non-keeper still has no keeper-only items`, await g.p.evaluate(() => { const names = [...document.querySelectorAll('#modal button')].map(x => x.textContent); return !names.includes('Add a person') && !names.includes('Settings for people'); }));
+    await g.p.getByRole('button', { name: 'Close' }).click().catch(() => {});
+    check(`${tag}: spaces and Incognito flow had no page errors`, g.errs.length === 0, g.errs.join(' | ').slice(0, 200));
+    await g.ctx.close();
+  }
 } finally { await b.close(); await t.close(); }
 console.log(fails ? `${fails} FAILED` : 'all passed'); process.exit(fails ? 1 : 0);
