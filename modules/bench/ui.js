@@ -4,6 +4,52 @@ const KIND_WORDS = { needs: 'Needs you', work: 'Unfinished work', doubt: 'Doubt'
 const STATE_WORDS = { new: 'Waiting for you', kept: 'Kept', dismissed: 'Dismissed', task: 'Turned into a task' };
 const put = (el, ...xs) => el.replaceChildren(...xs.flat().filter((x) => x != null && x !== false));
 const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
+const REASONS = [['wrong facts', 'Wrong facts'], ['weak sources', 'Weak sources'], ['missed the point', 'Missed the point'], ['too long', 'Too long'], ['too short', 'Too short'], ['outdated', 'Outdated'], ['other', 'Other']];
+const spendLine = (ui, g) => g.daySpendMinor > 0 ? ui.fmt.money(g.daySpendMinor, g.currency) + ' today' : 'No paid spend today';
+const stat = (ui, value, label) => ui.h('div', null, ui.h('b', { style: { fontSize: '20px', display: 'block' } }, String(value)), ui.h('span', { class: 'sub' }, label));
+
+/** The quiet rating controls shown under an answer or a finding. Owner-only (the route refuses others). */
+export function ratingBar(ui, targetType, targetId, initial) {
+  const { h, btn, toast } = ui;
+  let r = { thumb: null, research: null, reasons: [], comment: '', ...(initial || {}) };
+  const wrap = h('div', { class: 'row', style: { gap: '6px', flexWrap: 'wrap', marginTop: '6px', alignItems: 'center' } });
+  const chip = (label, active, onClick) => btn(label, { kind: active ? 'sm' : 'ghost sm', onClick });
+  const save = async (patch) => { r = { ...r, ...patch }; try { const res = await ui.api('m/bench/ratings', { body: { targetType, targetId, thumb: r.thumb, research: r.research, reasons: r.reasons, comment: r.comment } }); r = { thumb: null, research: null, reasons: [], comment: '', ...(res.rating || {}) }; paint(); } catch (e) { toast(e.message, 'err'); } };
+  function paint() {
+    const open = r.thumb === 'down' || r.research === 'bad' || (r.reasons && r.reasons.length) || r.comment;
+    const kids = [h('span', { class: 'sub' }, 'Answer'),
+      chip('Good', r.thumb === 'up', () => save({ thumb: r.thumb === 'up' ? null : 'up' })),
+      chip('Poor', r.thumb === 'down', () => save({ thumb: r.thumb === 'down' ? null : 'down' })),
+      h('span', { class: 'sub' }, 'Research'),
+      chip('Strong', r.research === 'good', () => save({ research: r.research === 'good' ? null : 'good' })),
+      chip('Weak', r.research === 'bad', () => save({ research: r.research === 'bad' ? null : 'bad' }))];
+    if (open) {
+      for (const [val, lbl] of REASONS) kids.push(chip(lbl, (r.reasons || []).includes(val), () => { const set = new Set(r.reasons || []); set.has(val) ? set.delete(val) : set.add(val); save({ reasons: [...set] }); }));
+      kids.push(btn(r.comment ? 'Edit note' : 'Add a note', { kind: 'ghost sm', onClick: async () => { const t = await ui.ask('What was off? (optional)', { value: r.comment || '', multiline: true }); if (t != null) save({ comment: t }); } }));
+    }
+    wrap.replaceChildren(...kids);
+  }
+  paint();
+  return wrap;
+}
+
+/** "How I got this": the desk's own record of what ran, loaded when opened. Factual, not a model's stated reason. */
+export function stepsBlock(ui, jobId) {
+  const { h, btn } = ui;
+  if (!jobId) return null;
+  const body = h('div', { class: 'stack', style: { marginTop: '6px', gap: '2px' }, hidden: true });
+  let loaded = false;
+  const toggle = btn('How I got this', { kind: 'ghost sm', onClick: async () => {
+    body.hidden = !body.hidden;
+    if (!body.hidden && !loaded) { loaded = true;
+      try { const r = await ui.api(`m/bench/steps/${encodeURIComponent(jobId)}`);
+        body.replaceChildren(h('p', { class: 'sub' }, "The desk's record of what ran — times, models and pages. Not a model's own reason."),
+          ...(r.steps.length ? r.steps.map((s, i) => h('div', { class: 'sub', style: { overflowWrap: 'anywhere' } }, `${i + 1}. ${s.action}${s.model ? ' · ' + s.model : ''}${s.ms ? ' · ' + Math.round(s.ms) + ' ms' : ''}${s.outcome ? ' — ' + s.outcome : ''}`)) : [h('p', { class: 'sub' }, 'Nothing was recorded for this one.')]));
+      } catch (e) { body.replaceChildren(h('p', { class: 'sub' }, e.message)); }
+    }
+  } });
+  return h('div', null, toggle, body);
+}
 
 function itemCard(ui, it, onDone) {
   const { h, btn, pill, toast, card, fmt } = ui;
@@ -31,7 +77,9 @@ function itemCard(ui, it, onDone) {
     h('div', { class: 'row', style: { marginTop: '8px' } },
       decided ? h('span', { class: 'sub' }, `${STATE_WORDS[it.state]}${it.decided ? ' ' + fmt.when(it.decided) : ''}${it.result ? ': ' + it.result : ''}`) : null,
       h('span', { class: 'grow' }), go,
-      decided ? null : [it.kind === 'needs' ? null : btn('Keep', { kind: 'sm', onClick: act('keep') }), btn('Dismiss', { kind: 'ghost sm', onClick: act('dismiss') }), btn('Turn into a task', { kind: 'ghost sm', onClick: act('task') })]));
+      decided ? null : [it.kind === 'needs' ? null : btn('Keep', { kind: 'sm', onClick: act('keep') }), btn('Dismiss', { kind: 'ghost sm', onClick: act('dismiss') }), btn('Turn into a task', { kind: 'ghost sm', onClick: act('task') })]),
+    stepsBlock(ui, it.data?._jobId),
+    ratingBar(ui, 'bench_item', it.id, it.rating));
 }
 
 /** The note: built on the server by code from the items; shown here as it came. */
@@ -42,6 +90,8 @@ function noteView(ui, data, { filter, onChange }) {
   const kindSeg = seg(['All', ...kinds.map((k) => KIND_WORDS[k] || k)], filter.kind ? kinds.indexOf(filter.kind) + 1 : 0, (_, i) => onChange({ ...filter, kind: i ? kinds[i - 1] : '' }));
   const states = ['new', 'kept', 'dismissed', 'task', ''];
   const stateSeg = seg(['Waiting', 'Kept', 'Dismissed', 'Tasks', 'All'], Math.max(0, states.indexOf(filter.state ?? 'new')), (_, i) => onChange({ ...filter, state: states[i] }));
+  const byId = new Map(items.map((i) => [i.id, i]));   // items carry rating and _jobId; the note's best/groups are raw, so look them up
+  const full = (i) => byId.get(i.id) || i;
   const want = items.filter((i) => (!filter.kind || i.kind === filter.kind) && (filter.state === '' || i.state === (filter.state ?? 'new')));
   const bestIds = new Set(note.best.map((i) => i.id));
   const showBest = !filter.kind && (filter.state ?? 'new') === 'new' && note.best.length;
@@ -51,7 +101,7 @@ function noteView(ui, data, { filter, onChange }) {
   return h('div', { class: 'stack', 'data-apd': 'bench-note' },
     card(h('h3', null, session.state === 'running' ? 'Working now' : 'While you were away'), h('p', { class: 'sub' }, `${fmt.when(session.started)} to ${session.ended ? fmt.when(session.ended) : 'now'}`), ...note.head.map((l) => h('p', null, l))),
     h('div', { class: 'row' }, kinds.length > 1 ? kindSeg : null, stateSeg),
-    showBest ? h('div', { class: 'stack' }, h('h3', { style: { margin: 0 } }, 'Best first'), h('p', { class: 'sub' }, note.rule), ...note.best.map((i) => itemCard(ui, i, refresh))) : null,
+    showBest ? h('div', { class: 'stack' }, h('h3', { style: { margin: 0 } }, 'Best first'), h('p', { class: 'sub' }, note.rule), ...note.best.map((i) => itemCard(ui, full(i), refresh))) : null,
     ...[...byKind.entries()].sort((a, b) => (a[0] === 'needs' ? -1 : b[0] === 'needs' ? 1 : 0)).map(([k, list]) => h('div', { class: 'stack' }, h('h3', { style: { margin: 0 } }, `${KIND_WORDS[k] || k} (${list.length})`), ...list.map((i) => itemCard(ui, i, refresh)))),
     !want.length ? ui.empty('Nothing here with this filter.') : null,
     note.notDone.length ? card(h('h3', null, 'What Bench could not do'), ...note.notDone.map((l) => h('p', { class: 'sub' }, l))) : null);
@@ -63,14 +113,24 @@ export const pages = {
     async render(el, ui, route) {
       const { h, card, line, btn, pill, fmt, empty, toast } = ui;
       el.classList.add('scroll');
-      const now = h('div', { class: 'stack' }); const list = h('div'); const main = h('div', { class: 'stack' });
+      const now = h('div', { class: 'stack' }); const list = h('div'); const main = h('div', { class: 'stack' }); const gateEl = h('div');
       let filter = { kind: '', state: 'new' }; let picked = route?.parts?.[0] || null;
-      el.append(h('div', { class: 'row' }, h('h2', { style: { margin: 0 } }, 'Bench'), h('span', { class: 'grow' }), btn('Bench settings', { kind: 'ghost sm', onClick: () => ui.go('settings', 'bench') })),
+      el.append(h('div', { class: 'row' }, h('h2', { style: { margin: 0 } }, 'Bench'), h('span', { class: 'grow' }), btn('While you were away', { kind: 'ghost sm', onClick: () => ui.go('bench-return') }), btn('Bench settings', { kind: 'ghost sm', onClick: () => ui.go('settings', 'bench') })),
+        gateEl,
         h('div', { class: 'cols' }, main, h('div', { class: 'stack' }, card(h('h3', null, 'Now'), now), card(h('h3', null, 'Sessions'), list))));
+      function paintGate(v) {
+        const g = v.gate;
+        put(gateEl, card({ 'data-apd': 'bench-gate' }, h('div', { class: 'row' },
+          h('div', null, h('b', null, g.ready ? `Spend: ${g.optionWord}` : 'Spend: not chosen'),
+            h('span', { class: 'd' }, g.ready ? `${spendLine(ui, g)} · session ${g.limitStatus.used.sources}/${g.limits.sources} sources, ${g.limitStatus.used.steps}/${g.limits.steps} steps${g.invalid ? ' · cap reached, winding to free' : g.limitStatus.winding ? ' · winding down' : ''}` : 'Bench will not run until you choose how it may spend.')),
+          h('span', { class: 'grow' }), btn(g.ready ? 'Change' : 'Choose', { kind: g.ready ? 'ghost sm' : 'sm', onClick: () => ui.go('settings', 'bench') }))));
+      }
       async function paintNow() {
         const v = await ui.api(API + 'state');
+        paintGate(v);
         const r = v.running;
         put(now, !v.settings.enabled ? line('Bench mode is off', 'Switch it on in Bench settings.', btn('Settings', { kind: 'ghost sm', onClick: () => ui.go('settings', 'bench') }))
+          : !v.gate.ready ? line('Waiting for your spend choice', 'Choose Local only, Free, or Paid, capped in Bench settings.', btn('Choose', { kind: 'sm', onClick: () => ui.go('settings', 'bench') }))
           : r ? [line(`Running since ${fmt.when(r.started)}`, `Stage ${r.tier} of 4${r.now ? ' · ' + r.now : ''}${r.waiting ? ' · ' + r.waiting : ''}`, pill('Working', 'run')),
             line('Used so far', `${r.used.calls} model calls, ${r.used.pages} pages read, ${Math.round((r.used.ms || 0) / 60000)} minutes of work`),
             h('p', { class: 'sub' }, 'It stops as soon as you use the desk.')]
@@ -95,6 +155,50 @@ export const pages = {
       ui.on('bench', () => paintAll());
     },
   },
+  'bench-return': {
+    title: 'While you were away',
+    async render(el, ui) {
+      const { h, card, btn, fmt, line, empty, toast, table } = ui;
+      el.classList.add('scroll');
+      const wrap = h('div', { class: 'stack' }); el.append(wrap);
+      const downloadCsv = async () => {
+        try {
+          const sess = document.querySelector('meta[name="apd-session"]')?.content || '';
+          const r = await fetch('/api/m/bench/usage.csv', { headers: { 'x-apd-session': sess } });
+          if (!r.ok) throw new Error('Could not export.');
+          const url = URL.createObjectURL(await r.blob()); const a = document.createElement('a'); a.href = url; a.download = 'usage-today.csv'; a.click(); URL.revokeObjectURL(url);
+        } catch (e) { toast(e.message, 'err'); }
+      };
+      const resultCard = (c) => card({ 'data-apd': 'return-result' },
+        h('b', { style: { display: 'block', overflowWrap: 'anywhere' } }, c.title),
+        c.summary ? h('p', { class: 'sub', style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, c.summary) : null,
+        (c.sources || []).length ? h('div', { class: 'sub', style: { overflowWrap: 'anywhere' } }, 'Sources: ', ...c.sources.flatMap((s, i) => [i ? ', ' : '', s.url ? h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer' }, s.title || hostOf(s.url)) : h('span', null, s.title || 'Your desk')])) : null,
+        h('div', { class: 'row', style: { marginTop: '6px' } },
+          c.chatId ? btn('Open', { kind: 'ghost sm', onClick: () => ui.go('chat', c.chatId) }) : c.kind === 'bench' ? btn('Open the note', { kind: 'ghost sm', onClick: () => ui.go('bench') }) : null),
+        stepsBlock(ui, c.jobId),
+        ratingBar(ui, c.kind === 'bench' ? 'bench_item' : 'job', c.id, c.rating));
+      async function paint() {
+        let p, u; try { [p, u] = await Promise.all([ui.api(API + 'return'), ui.api(API + 'usage')]); } catch (e) { return put(wrap, empty(e.message)); }
+        const hl = p.headline;
+        const spend = hl.spendTodayMinor > 0 ? fmt.money(hl.spendTodayMinor, hl.currency) : 'No paid spend';
+        const usageCard = u.agents.length ? card(h('div', { class: 'row' }, h('h3', { style: { margin: 0 } }, 'Usage today'), h('span', { class: 'grow' }), btn('Download CSV', { kind: 'ghost sm', onClick: downloadCsv })),
+          h('div', { class: 'scroll' }, table(['Agent', 'Calls', 'Errors', 'Tokens', 'Spend'], u.agents.map((a) => [a.agent, String(a.calls), String(a.errors), String(a.inputTokens + a.outputTokens), a.costMinor > 0 ? fmt.money(a.costMinor, u.currency) : '—']))),
+          u.benchSteps.length ? h('p', { class: 'sub' }, 'Bench steps: ' + u.benchSteps.map((s) => `${s.action} ${s.count}`).join(', ')) : null) : null;
+        put(wrap,
+          card(h('h2', { style: { margin: '0 0 8px' } }, 'While you were away'),
+            h('div', { class: 'row', style: { gap: '20px', flexWrap: 'wrap' } },
+              stat(ui, hl.finished, 'finished'), stat(ui, hl.needsYou, 'need you'), stat(ui, Math.round((hl.workedMs || 0) / 60000) + 'm', 'worked'), stat(ui, spend, 'spent today'))),
+          usageCard,
+          p.results.length ? card(h('h3', null, "What I did"), ...p.results.map(resultCard)) : null,
+          p.needs.length ? card(h('h3', null, 'Needs you'), ...p.needs.map((n) => line(n.title, n.detail || '', n.kind === 'job' ? btn('Open', { kind: 'ghost sm', onClick: () => ui.go('home') }) : null))) : null,
+          p.didntGetTo.length ? card(h('h3', null, "What I didn't get to"), ...p.didntGetTo.map((d) => h('div', { style: { marginTop: '6px' } }, h('b', { style: { display: 'block', overflowWrap: 'anywhere' } }, d.title), d.why ? h('span', { class: 'sub' }, d.why) : null, d.next ? h('p', { class: 'sub', style: { margin: '2px 0 0' } }, 'Next: ' + d.next) : null))) : null,
+          !p.results.length && !p.needs.length && !p.didntGetTo.length ? empty('Nothing to show yet. When Bench runs or a job finishes, it shows up here.') : null);
+      }
+      await paint();
+      ui.on('bench', () => paint().catch((e) => toast(e.message, 'err')));
+      ui.on('job', () => paint().catch(() => {}));
+    },
+  },
 };
 
 export const settings = {
@@ -104,10 +208,12 @@ export const settings = {
       const { h, card, line, btn, sw, seg, toast } = ui;
       const box = h('div', { class: 'stack' }); el.append(box);
       const save = async (patch) => { await ui.api(API + 'settings', { body: patch }); paint(); };
+      const saveGate = async (patch) => { await ui.api(API + 'spendgate', { body: patch }); paint(); };
       async function paint() {
-        const v = await ui.api(API + 'state'); const c = v.settings;
-        const modes = ['local', 'free', 'paid'];
-        const models = seg(['Local only', 'Local then free', 'Also paid'], modes.indexOf(c.models), (_, i) => { if (i === 2 && !v.paidAllowed) { toast('Paid models are not allowed for any provider in Models, so Bench cannot use them.', 'err'); paint(); return; } save({ models: modes[i] }).catch((e) => toast(e.message, 'err')); });
+        const v = await ui.api(API + 'state'); const c = v.settings; const g = v.gate; const cur = g.currency;
+        const optSeg = seg(['Local only', 'Free', 'Paid, capped'], g.options.indexOf(g.option), (_, i) => { if (g.options[i] === 'paid' && !v.paidAllowed) { toast('Paid models are not allowed for any provider in Models, so Bench cannot use them.', 'err'); paint(); return; } saveGate({ option: g.options[i] }).catch((e) => toast(e.message, 'err')); });
+        const capInput = (label, minorVal, key) => h('label', { class: 'row', style: { gap: '6px' } }, h('span', { class: 'sub' }, label), h('input', { type: 'number', min: '0', value: String((minorVal || 0) / 100), style: { width: '110px' }, 'aria-label': `${label} cap in ${cur}`, onchange: (e) => saveGate({ [key]: Math.round(Number(e.target.value) * 100) }).catch((er) => toast(er.message, 'err')) }));
+        const limInput = (label, val, key) => h('label', { class: 'row', style: { gap: '6px' } }, h('span', { class: 'sub' }, label), h('input', { type: 'number', min: '1', value: String(val), style: { width: '90px' }, 'aria-label': `${label} limit`, onchange: (e) => saveGate({ limits: { [key]: Number(e.target.value) } }).catch((er) => toast(er.message, 'err')) }));
         const battery = h('select', { 'aria-label': 'Stop on battery below', onchange: (e) => save({ battery: Number(e.target.value) }).catch((er) => toast(er.message, 'err')) }, [0, 10, 20, 30, 40, 50, 60].map((n) => h('option', { value: String(n), selected: n === c.battery }, n ? `${n}%` : 'Never')));
         const site = h('input', { type: 'text', value: c.site, placeholder: 'yourbusiness.example', 'aria-label': 'Your site address', onchange: (e) => save({ site: e.target.value }).catch((er) => toast(er.message, 'err')) });
         put(box,
@@ -115,10 +221,15 @@ export const settings = {
             h('p', { class: 'sub' }, 'While you are away from this window, Bench looks back at the desk\'s own work and looks up your business, its market, possible customers and funding, from public pages. It leaves a note. It never sends, signs up, applies or changes a setting, and nothing is saved anywhere until you press Keep.'),
             line('Bench mode', c.enabled ? 'On' : 'Off', sw(c.enabled, 'Bench mode', (on) => save({ enabled: on }))),
             line('Start after I have been away for', 'Away means no click or key in this window. The desk cannot see the rest of your PC.', seg(['15 minutes', '30 minutes', '60 minutes'], [15, 30, 60].indexOf(c.startAfter), (_, i) => save({ startAfter: [15, 30, 60][i] }).catch((e) => toast(e.message, 'err')))),
-            line('Models', v.paidAllowed ? 'Local models first. "Also paid" uses a paid model only where paid use is already allowed in Models.' : 'Local models first, then free ones. Paid models are not allowed for any provider in Models, so "Also paid" is not offered.', models),
             line('Stop on battery below', 'A PC with no battery, or on mains power, is never stopped.', h('span', { class: 'field' }, battery)),
             line('Your site address', 'Optional. Bench reads your own pages to propose a short profile.', h('span', { class: 'field' }, site)),
-            line('Start a bench session now', 'To try it. It stops when you next use the desk, after one minute.', btn('Start now', { kind: 'ghost sm', disabled: !c.enabled || v.halted, onClick: async () => { try { const r = await ui.api(API + 'start', { body: {} }); toast(r.text || 'Bench is already running.', 'ok'); } catch (e) { toast(e.message, 'err'); } } }))),
+            line('Start a bench session now', 'To try it. It stops when you next use the desk, after one minute.', btn('Start now', { kind: 'ghost sm', disabled: !c.enabled || v.halted || !g.ready, onClick: async () => { try { const r = await ui.api(API + 'start', { body: {} }); toast(r.text || 'Bench is already running.', 'ok'); } catch (e) { toast(e.message, 'err'); } } }))),
+          card(h('h3', null, 'Spending'),
+            h('p', { class: 'sub' }, 'Bench must have a money choice before it runs. Keys and paid switching stay in Models; "Paid, capped" only lets Bench prefer a paid route where you already allow paid use there.'),
+            line('How Bench may spend', g.ready ? g.optionWord : 'Not chosen yet — Bench will not run until you choose.', optSeg),
+            g.option === 'paid' ? line('Caps', `Local first; paid only when it clearly helps, up to these caps in ${cur}. 0 means no cap. At a cap Bench winds down to free.`, h('div', { class: 'row', style: { gap: '12px', flexWrap: 'wrap' } }, capInput('Per session', g.capSessionMinor, 'capSessionMinor'), capInput('Per day', g.capDayMinor, 'capDayMinor'))) : null,
+            line('Session limits', 'Whatever the money choice: at 80% of any limit Bench winds down to cheaper or local routes; at 100% it stops, checkpoints and lists what is left.', h('div', { class: 'row', style: { gap: '12px', flexWrap: 'wrap' } }, limInput('Tasks', g.limits.tasks, 'tasks'), limInput('Sources', g.limits.sources, 'sources'), limInput('Steps', g.limits.steps, 'steps'), limInput('Minutes', g.limits.minutes, 'minutes'))),
+            g.ready ? line('Today', `${spendLine(ui, g)}. This session so far: ${g.limitStatus.used.sources} sources, ${g.limitStatus.used.steps} steps, ${g.limitStatus.used.minutes} minutes.`) : null),
           card(h('h3', null, 'Stages'), h('p', { class: 'sub' }, 'What runs depends on how long you have been away. Earlier stages that have not run go first.'),
             ...v.tiers.map((t) => line(`After ${t.hours} hour${t.hours === 1 ? '' : 's'}`, v.activities.filter((a) => a.tier === t.n).map((a) => a.title).join(', ')))));
       }

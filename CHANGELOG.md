@@ -113,6 +113,11 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Briefs, schedules, calendar dates, lead values and spend amounts follow your own zone, locale and currency; nothing falls back to India any more.
 
 ### 21 Nov 2026
+- Bench mode now asks how it may spend before it runs: Local only, Free, or Paid with a per-session and per-day cap you set; it waits for your choice, and when a cap is reached it winds back to free and asks you again.
+- Bench holds to session limits whatever the choice: tasks, sources fetched, steps and minutes of work, winding down at 80 percent of any one and stopping with a checkpoint at 100 percent; the Bench page header shows your choice, today's spend and how close the limits are.
+- You can rate any answer and any Bench finding: good or poor on the answer, strong or weak on the research, with reason chips and a note; ratings are only collected for now.
+- A "While you were away" page shows, on your return, what finished, what needs you, time worked and today's spend, with result cards you can open, rate, or follow up, and an honest list of what the desk did not get to and the suggested next step.
+- Each Bench result carries a "How I got this" timeline: the desk's own record of what ran, the models and pages and how long each took, kept factual rather than a model's stated reason.
 - The top bar shows small icons instead of words: a sun or moon for the theme, a network light (green up, red no internet, grey off by choice), and a download count with a live list.
 - Switching a module on or off in Settings keeps your place on the page instead of jumping to the top.
 - First start can download a local model in the background, only after you press Save and allow each download.

@@ -216,7 +216,7 @@ test('a restart resumes the session from its stored state', async () => {
     let desk = await open();
     await desk.core.modules.set('bench', true); desk.core.modules.api('bench'); stubWeb({ core: desk.core });
     desk.core.settings.set('business.about', ABOUT);
-    await fetch(desk.url() + '/api/m/bench/settings', { method: 'POST', headers: { 'content-type': 'application/json', 'x-apd-session': desk.session }, body: JSON.stringify({ enabled: true }) });
+    await fetch(desk.url() + '/api/m/bench/settings', { method: 'POST', headers: { 'content-type': 'application/json', 'x-apd-session': desk.session }, body: JSON.stringify({ enabled: true, models: 'free' }) });
     const base = clock.t; clock.t = base + 1.2 * H;
     let bench = desk.core.modules.api('bench');
     await bench.tick(); await bench.idle();

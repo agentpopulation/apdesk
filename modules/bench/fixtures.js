@@ -67,7 +67,7 @@ export async function benchDesk({ evil = false, modules = ['bench', 'chat', 'mem
   t.core.settings.set('business.about', ABOUT); t.core.settings.set('country', 'IN'); t.core.settings.set('security.level', level);
   await t.core.modules.set('bench', true);
   const bench = t.core.modules.api('bench');
-  await t.call('/api/m/bench/settings', { body: { enabled: true, site: 'https://acmepayroll.example/' } });
+  await t.call('/api/m/bench/settings', { body: { enabled: true, site: 'https://acmepayroll.example/', models: 'free' } });   // the money choice: free
   /** Move the clock to `hours` after `from` and let Bench work until nothing more starts. */
   const at = async (hours, from = clock.base) => { clock.t = from + hours * H; for (let i = 0; i < 30; i++) { const started = await bench.tick(); await bench.idle(); if (!started) break; } };
   clock.base = clock.t;

@@ -104,6 +104,9 @@ async function render(el, ui, route) {
   let chats = []; let chat = null; let messages = []; let alive = true;
   const msgEls = new Map();       // message id -> element
   const streaming = new Map();    // message id -> text so far
+  let benchOn = false;            // rating controls appear under an answer only when Bench mode is on (it owns the store)
+  const ratingCache = new Map();  // message id -> the owner's rating, so a repaint keeps it
+  try { await api('m/bench/state'); benchOn = true; } catch {}
   let curId = route?.parts?.[0] || null;
   if (!curId) { try { curId = localStorage.getItem('apd-chat') || 'everyone'; } catch { curId = 'everyone'; } }
   // the seconds on a waiting reply tick once a second
@@ -179,6 +182,30 @@ async function render(el, ui, route) {
     msgEls.set(m.id, e);
     if (stick || i < 0) toBottom();
   };
+  const RATE_REASONS = [['wrong facts', 'Wrong facts'], ['weak sources', 'Weak sources'], ['missed the point', 'Missed the point'], ['too long', 'Too long'], ['too short', 'Too short'], ['outdated', 'Outdated'], ['other', 'Other']];
+  /** Unobtrusive rating controls under an answer: thumbs, a research verdict, reason chips and a note. Stored by Bench, owner-only. */
+  function answerRating(m) {
+    if (benchOn !== true) return null;
+    const wrap = h('span', { class: 'rate', style: { display: 'inline-flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' } });
+    let r = ratingCache.get(m.id) || { thumb: null, research: null, reasons: [], comment: '' };
+    const chip = (label, active, onClick) => btn(label, { kind: active ? 'sm' : 'ghost sm', onClick });
+    const save = async (patch) => { r = { ...r, ...patch }; try { const res = await api('m/bench/ratings', { body: { targetType: 'answer', targetId: String(m.id), thumb: r.thumb, research: r.research, reasons: r.reasons, comment: r.comment } }); r = { thumb: null, research: null, reasons: [], comment: '', ...(res.rating || {}) }; ratingCache.set(m.id, r); paint(); } catch (e) { toast(e.message, 'err'); } };
+    function paint() {
+      const open = r.thumb === 'down' || r.research === 'bad' || (r.reasons && r.reasons.length) || r.comment;
+      const kids = [h('span', { class: 'sub', style: { fontSize: '11px' } }, 'Rate'),
+        chip('Good', r.thumb === 'up', () => save({ thumb: r.thumb === 'up' ? null : 'up' })), chip('Poor', r.thumb === 'down', () => save({ thumb: r.thumb === 'down' ? null : 'down' })),
+        h('span', { class: 'sub', style: { fontSize: '11px' } }, 'Research'),
+        chip('Strong', r.research === 'good', () => save({ research: r.research === 'good' ? null : 'good' })), chip('Weak', r.research === 'bad', () => save({ research: r.research === 'bad' ? null : 'bad' }))];
+      if (open) {
+        for (const [val, lbl] of RATE_REASONS) kids.push(chip(lbl, (r.reasons || []).includes(val), () => { const set = new Set(r.reasons || []); set.has(val) ? set.delete(val) : set.add(val); save({ reasons: [...set] }); }));
+        kids.push(btn(r.comment ? 'Edit note' : 'Add a note', { kind: 'ghost sm', onClick: async () => { const t = await ui.ask('What was off? (optional)', { value: r.comment || '', multiline: true }); if (t != null) save({ comment: t }); } }));
+      }
+      wrap.replaceChildren(...kids);
+    }
+    paint();
+    if (!ratingCache.has(m.id)) { ratingCache.set(m.id, r); api(`m/bench/ratings/answer/${m.id}`).then((res) => { if (res.rating) { r = { thumb: null, research: null, reasons: [], comment: '', ...res.rating }; ratingCache.set(m.id, r); paint(); } }).catch(() => {}); }
+    return wrap;
+  }
   function msgEl(m) {
     if (m.role === 'system') return h('div', { class: 'msg sys', 'data-role': 'system' }, m.text);
     if (m.role === 'user') {
@@ -195,7 +222,8 @@ async function render(el, ui, route) {
     const tagText = footTag(m);
     const foot = tagText ? pill(tagText, tagText === 'Offline' ? 'wait' : 'stop') : null;
     const speak = !live && text && window.apdVoice?.speak ? btn('Read aloud', { kind: 'ghost sm', onClick: () => window.apdVoice.speak(text) }) : null;
-    return h('div', { class: 'msg it' + (wide ? ' wide' : '') + (hasTable(text) ? ' tbl' : ''), 'data-role': 'assistant', 'data-agent-id': m.agentId || '', 'data-status': m.status, dataset: { id: m.id } }, who, body, stepsEl, ...(m.cards || []).map(c => cardEl(c, m)), foot || speak ? h('div', { class: 'foot' }, foot, speak, h('span', { class: 'sub', style: { fontSize: '11px' } }, fmt.time(m.at))) : null);
+    const rate = !live && m.status === 'done' ? answerRating(m) : null;
+    return h('div', { class: 'msg it' + (wide ? ' wide' : '') + (hasTable(text) ? ' tbl' : ''), 'data-role': 'assistant', 'data-agent-id': m.agentId || '', 'data-status': m.status, dataset: { id: m.id } }, who, body, stepsEl, ...(m.cards || []).map(c => cardEl(c, m)), foot || speak || rate ? h('div', { class: 'foot' }, foot, speak, rate, h('span', { class: 'sub', style: { fontSize: '11px' } }, fmt.time(m.at))) : null);
   }
 
   // ---------- cards

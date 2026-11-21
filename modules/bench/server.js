@@ -5,6 +5,7 @@
 import si from 'systeminformation';
 import { TIERS, ACTIVITIES, BUDGET, KINDS, tierFor, freshPlan, nextActivity, modelOrder, buildNote, noteText, activity as activityDef } from './engine.js';
 import { RUN } from './activities.js';
+import { OPTIONS, OPTION_WORDS, LIMITS, LIMIT_WORDS, GATE_DEFAULTS, gateReady, effectiveMode, limitStatus, cleanCap, cleanLimits } from './spendgate.js';
 
 /** Tests set these: a fake clock (ms), a fake battery reading, no pause between calls, smaller budgets. */
 export const testHooks = { clock: null, battery: null, paceMs: null, budget: null };
@@ -25,6 +26,13 @@ export async function activate(ctx) {
     CREATE TABLE IF NOT EXISTS m_bench_items (id TEXT PRIMARY KEY, session_id TEXT, kind TEXT, tier INTEGER, activity TEXT, title TEXT, body TEXT, evidence TEXT,
       complete INTEGER, state TEXT, data TEXT, created TEXT, decided TEXT, result TEXT);
     CREATE INDEX IF NOT EXISTS m_bench_items_session ON m_bench_items (session_id);`);
+  // v2: the money choice (one row), ratings the owner leaves, and the step trace behind each job.
+  ctx.db.migrate(2, `
+    CREATE TABLE IF NOT EXISTS m_bench_spendgate (id TEXT PRIMARY KEY, option TEXT, chosen INTEGER DEFAULT 0, cap_session INTEGER DEFAULT 0, cap_day INTEGER DEFAULT 0, limits TEXT, set_at TEXT);
+    CREATE TABLE IF NOT EXISTS m_bench_ratings (id TEXT PRIMARY KEY, target_type TEXT NOT NULL, target_id TEXT NOT NULL, thumb TEXT, research TEXT, reasons TEXT, comment TEXT, rated_at TEXT NOT NULL);
+    CREATE UNIQUE INDEX IF NOT EXISTS m_bench_ratings_target ON m_bench_ratings (target_type, target_id);
+    CREATE TABLE IF NOT EXISTS m_bench_steps (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, seq INTEGER, agent_id TEXT, action TEXT, provider TEXT, model TEXT, ms INTEGER, outcome TEXT, at TEXT);
+    CREATE INDEX IF NOT EXISTS m_bench_steps_job ON m_bench_steps (job_id, seq);`);
   const kv = ctx.kv;
   const cfg = () => ({ enabled: kv.get('enabled', false) === true, startAfter: START_AFTER.includes(kv.get('startAfter', 30)) ? kv.get('startAfter', 30) : 30,
     models: MODEL_MODES.includes(kv.get('models', 'free')) ? kv.get('models', 'free') : 'free', battery: Math.max(0, Math.min(100, Number(kv.get('battery', 30)) || 0)), site: String(kv.get('site', '') || '') });
@@ -41,6 +49,52 @@ export async function activate(ctx) {
   const items = (sessionId, { kind, state } = {}) => ctx.db.all('SELECT * FROM m_bench_items WHERE session_id = ? ORDER BY created, rowid', sessionId).map(itemOut).filter((i) => (!kind || i.kind === kind) && (!state || i.state === state));
   const getItem = (id) => itemOut(ctx.db.get('SELECT * FROM m_bench_items WHERE id = ?', id));
   const emit = (d) => { try { ctx.events.emit('bench', d); } catch {} };
+
+  // ---------------- the spend gate: the money choice Bench must have before it spends, with its caps and session limits
+  const gateRow = () => ctx.db.get("SELECT * FROM m_bench_spendgate WHERE id = 'gate'");
+  const gate = () => { const r = gateRow(); if (!r) return { ...GATE_DEFAULTS, limits: { ...LIMITS } };
+    return { option: r.option || null, chosen: !!r.chosen, capSessionMinor: r.cap_session || 0, capDayMinor: r.cap_day || 0, limits: { ...LIMITS, ...J(r.limits, {}) }, setAt: r.set_at || null }; };
+  const setGate = (patch) => {
+    const g = gate();
+    const next = { option: OPTIONS.includes(patch.option) ? patch.option : g.option, chosen: g.chosen || OPTIONS.includes(patch.option),
+      cap_session: patch.capSessionMinor != null ? cleanCap(patch.capSessionMinor) : g.capSessionMinor,
+      cap_day: patch.capDayMinor != null ? cleanCap(patch.capDayMinor) : g.capDayMinor,
+      limits: JSON.stringify(patch.limits ? cleanLimits({ ...g.limits, ...patch.limits }) : g.limits) };
+    ctx.db.run("INSERT INTO m_bench_spendgate (id, option, chosen, cap_session, cap_day, limits, set_at) VALUES ('gate', ?, 1, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET option = excluded.option, chosen = 1, cap_session = excluded.cap_session, cap_day = excluded.cap_day, limits = excluded.limits, set_at = excluded.set_at",
+      next.option, next.cap_session, next.cap_day, next.limits, iso(nowMs()));
+    emit({ change: 'gate' });
+    return gate();
+  };
+  // today's spend (minor units) from the model-call log; the owner's zone day is what model-door.usage() groups by
+  const daySpend = () => (ctx.model.usage().today || []).reduce((a, r) => a + (Number(r.cost) || 0), 0);
+  const sessionSpend = (s) => s ? (ctx.db.get('SELECT COALESCE(SUM(cost_minor), 0) AS c FROM calls WHERE at >= ?', s.started)?.c || 0) : 0;
+  const sessionUsed = (s) => ({ tasks: Object.values(s.plan || {}).filter((p) => p.status !== 'pending').length, sources: s.used.pages || 0, steps: s.used.calls || 0, minutes: Math.round((s.used.ms || 0) / 60000) });
+  const effMode = (s) => effectiveMode(gate(), { daySpend: daySpend(), sessionSpend: sessionSpend(s) });
+
+  // ---------------- the step trace: the desk's own record of what ran (times, models, sources), not a model's reason
+  const stepCount = (jobId) => ctx.db.get('SELECT COUNT(*) AS c FROM m_bench_steps WHERE job_id = ?', jobId).c;
+  const addStep = (jobId, agentId, step) => {
+    if (!jobId) return;
+    ctx.db.run('INSERT INTO m_bench_steps (id, job_id, seq, agent_id, action, provider, model, ms, outcome, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      rid('st_'), jobId, stepCount(jobId), agentId || null, String(step.action || '').slice(0, 80), step.provider || null, step.model || null, step.ms || 0, String(step.outcome || '').slice(0, 300), iso(nowMs()));
+  };
+  const stepsFor = (jobId) => ctx.db.all('SELECT * FROM m_bench_steps WHERE job_id = ? ORDER BY seq', jobId).map((r) => ({ seq: r.seq, agentId: r.agent_id, action: r.action, provider: r.provider, model: r.model, ms: r.ms, outcome: r.outcome, at: r.at }));
+
+  // ---------------- ratings the owner leaves on an answer, a job or a Bench finding (collected only; no auto-tuning)
+  const RATING_REASONS = ['wrong facts', 'weak sources', 'missed the point', 'too long', 'too short', 'outdated', 'other'];
+  const ratingOut = (r) => !r ? null : ({ targetType: r.target_type, targetId: r.target_id, thumb: r.thumb || null, research: r.research || null, reasons: J(r.reasons, []), comment: r.comment || '', ratedAt: r.rated_at });
+  const getRating = (type, id) => ratingOut(ctx.db.get('SELECT * FROM m_bench_ratings WHERE target_type = ? AND target_id = ?', String(type), String(id)));
+  const setRating = (type, id, body) => {
+    const thumb = ['up', 'down'].includes(body.thumb) ? body.thumb : null;
+    const research = ['good', 'bad'].includes(body.research) ? body.research : null;
+    const reasons = Array.isArray(body.reasons) ? body.reasons.filter((x) => RATING_REASONS.includes(x)).slice(0, 7) : [];
+    const comment = String(body.comment || '').slice(0, 1000);
+    if (thumb === null && research === null && !reasons.length && !comment) { ctx.db.run('DELETE FROM m_bench_ratings WHERE target_type = ? AND target_id = ?', String(type), String(id)); emit({ change: 'rating', targetType: type, targetId: id }); return null; }
+    ctx.db.run('INSERT INTO m_bench_ratings (id, target_type, target_id, thumb, research, reasons, comment, rated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(target_type, target_id) DO UPDATE SET thumb = excluded.thumb, research = excluded.research, reasons = excluded.reasons, comment = excluded.comment, rated_at = excluded.rated_at',
+      rid('rt_'), String(type), String(id), thumb, research, JSON.stringify(reasons), comment, iso(nowMs()));
+    emit({ change: 'rating', targetType: type, targetId: id });
+    return getRating(type, id);
+  };
 
   function createSession({ awaySince, manual = false }) {
     const id = rid('bs_'); const t = nowMs();
@@ -95,20 +149,25 @@ export async function activate(ctx) {
       settings: ctx.settings, site: cfg().site, workspace: ctx.workspace, jobs: ctx.jobs,
       api: (id) => ctx.modules.api(id),
       async ask(o) {
-        const order = modelOrder(await ctx.model.active(), { mode: cfg().models, tiers: providerTiers(), paidAllowed });
+        // the gate decides the model mode; at 80% of a session limit a paid mode winds down to free
+        const g = gate(); const em = effectiveMode(g, { daySpend: daySpend(), sessionSpend: sessionSpend(sess()) });
+        let mode = em.mode || 'local'; if (limitStatus(g.limits, sessionUsed(sess())).winding && mode === 'paid') mode = 'free';
+        const order = modelOrder(await ctx.model.active(), { mode, tiers: providerTiers(), paidAllowed });
         if (!order.length) throw fail('nomodel', online() ? 'no model was set up for Bench' : 'the desk is offline and no local model is running');
         let retryAt = 0; const errs = [];
         for (const m of order) {
           check('calls');
           const wait = lastCall + pace - Date.now(); if (wait > 0) await sleep(wait, job.signal);
-          lastCall = Date.now(); use('calls');
+          lastCall = Date.now(); use('calls'); const t1 = Date.now();
           try {
             const { agentId: _a, model: _m, signal: _s, ...rest } = o;
             const r = await ctx.model.chat({ ...rest, model: { provider: m.provider, model: m.model }, signal: job.signal });
             const s = sess(); if (!s.models.includes(r.label)) { s.models.push(r.label); saveSession(s); }
+            addStep(job.id, 'scout', { action: 'asked a model', provider: r.provider || m.provider, model: r.model || m.model, ms: r.ms || (Date.now() - t1), outcome: 'answered' });
             return r;
           } catch (e) {
             if (job.signal.aborted || e.code === 'aborted' || e.code === 'halted') throw fail('aborted', 'Stopped');
+            addStep(job.id, 'scout', { action: 'asked a model', provider: m.provider, model: m.model, ms: Date.now() - t1, outcome: 'no answer: ' + e.message });
             if (e.retryAt) retryAt = retryAt ? Math.min(retryAt, Date.parse(e.retryAt)) : Date.parse(e.retryAt);
             errs.push(e.message);
           }
@@ -117,15 +176,15 @@ export async function activate(ctx) {
         throw fail('nomodel', 'no model answered');
       },
       modelFor: () => ({ chat: (o) => b.ask(o) }),
-      async search(q) { const s = ctx.modules.api('search'); if (!s?.search) throw fail('no_search', 'Search is off'); check('searches'); use('searches'); return await s.search(q, { count: 6, signal: job.signal }) || []; },
-      async read(url) { const s = ctx.modules.api('search'); if (!s?.read) throw fail('no_search', 'Search is off'); check('pages'); use('pages'); await sleep(Math.min(pace, 1000), job.signal); return s.read(url, { signal: job.signal, cache }); },
+      async search(q) { const s = ctx.modules.api('search'); if (!s?.search) throw fail('no_search', 'Search is off'); check('searches'); use('searches'); const t1 = Date.now(); const r = await s.search(q, { count: 6, signal: job.signal }) || []; addStep(job.id, 'scout', { action: 'searched', ms: Date.now() - t1, outcome: `"${String(q).slice(0, 60)}" -> ${r.length} results` }); return r; },
+      async read(url) { const s = ctx.modules.api('search'); if (!s?.read) throw fail('no_search', 'Search is off'); check('pages'); use('pages'); await sleep(Math.min(pace, 1000), job.signal); const t1 = Date.now(); const r = await s.read(url, { signal: job.signal, cache }); addStep(job.id, 'scout', { action: 'read a page', ms: Date.now() - t1, outcome: String(url).slice(0, 120) }); return r; },
       left() { const s = sess(); return { calls: Math.min(B.activity.calls - mine.calls, B.session.calls - s.used.calls), pages: Math.min(B.activity.pages - mine.pages, B.session.pages - s.used.pages), searches: Math.min(B.activity.searches - mine.searches, B.session.searches - s.used.searches), minutes: Math.max(0, Math.floor(Math.min(B.activity.minutes * 60000 - (Date.now() - t0), B.session.minutes * 60000 - s.used.ms) / 60000)) }; },
       spent({ pages = 0, searches = 0 } = {}) { if (pages) use('pages', pages); if (searches) use('searches', searches); },
       note(e) { if (e?.code === 'busy' && e.retryAt) { const s = sess(); s.waitUntil = e.retryAt; saveSession(s); } b.lastStop = e; },
       item(x) {
         const id = rid('bi_');
         ctx.db.run('INSERT INTO m_bench_items (id, session_id, kind, tier, activity, title, body, evidence, complete, state, data, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          id, sid, KINDS.includes(x.kind) ? x.kind : 'needs', a.tier, a.id, String(x.title || '').slice(0, 300), String(x.body || '').slice(0, 4000), JSON.stringify((x.evidence || []).slice(0, 6)), x.complete ? 1 : 0, 'new', JSON.stringify(x.data || {}), iso(nowMs()));
+          id, sid, KINDS.includes(x.kind) ? x.kind : 'needs', a.tier, a.id, String(x.title || '').slice(0, 300), String(x.body || '').slice(0, 4000), JSON.stringify((x.evidence || []).slice(0, 6)), x.complete ? 1 : 0, 'new', JSON.stringify({ ...(x.data || {}), _jobId: job.id }), iso(nowMs()));
         return id;
       },
       sessionItems: () => items(sid),
@@ -202,6 +261,7 @@ export async function activate(ctx) {
       const c = cfg(); let s = current();
       if (ctx.panic.halted) { if (s) endSession(s, 'stopped', 'Panic stopped it'); return; }
       if (!c.enabled) { if (s) endSession(s, 'done', 'Bench mode was switched off'); return; }
+      if (!gateReady(gate())) return;                                   // no money choice yet: Bench waits for the owner to choose
       const t = nowMs(); const seen = kv.get('lastSeen', t);
       if (!s) {
         const panicAt = kv.get('panicAt', 0);
@@ -215,6 +275,13 @@ export async function activate(ctx) {
       if (s.why === 'battery') { s.why = ''; saveSession(s); }
       if (s.waitUntil && Date.now() < s.waitUntil) return;              // a free host is cooling down: wait, do not hammer
       s.tier = tierFor(t - s.awaySince);
+      // a session limit at 100% WHILE work is left: stop, checkpoint, and list what is left (the owner's own ceiling)
+      const ls = limitStatus(gate().limits, sessionUsed(s));
+      const workLeft = ACTIVITIES.some((a) => a.tier <= s.tier && s.plan[a.id].status === 'pending');
+      if (ls.stop && workLeft) {
+        for (const a of ACTIVITIES) if (s.plan[a.id].status === 'pending' && a.tier <= s.tier) Object.assign(s.plan[a.id], { status: 'skipped', why: `the session ${LIMIT_WORDS[ls.which]} limit was reached` });
+        saveSession(s); endSession(s, 'done', `the session ${LIMIT_WORDS[ls.which]} limit was reached`); return;
+      }
       const B = budget();
       if (s.used.calls >= B.session.calls || s.used.ms >= B.session.minutes * 60000) {
         for (const a of ACTIVITIES) if (s.plan[a.id].status === 'pending' && a.tier <= s.tier) Object.assign(s.plan[a.id], { status: 'skipped', why: 'the session budget was reached' });
@@ -260,14 +327,77 @@ export async function activate(ctx) {
   // ---------------- the note
   const lastEnded = () => sessionOut(ctx.db.get("SELECT * FROM m_bench_sessions WHERE state != 'running' ORDER BY ended DESC LIMIT 1"));
   const noteFor = (s) => { const list = items(s.id); const n = buildNote(s, list, { now: nowMs() }); return { session: s, note: n, text: noteText(n), items: list }; };
+  /** The money choice with today's spend and this session's limit status, for the page header and the gate card. */
+  function gateView() {
+    const g = gate(); const s = current(); const ds = daySpend(); const ss = sessionSpend(s);
+    const em = effectiveMode(g, { daySpend: ds, sessionSpend: ss });
+    const ls = limitStatus(g.limits, s ? sessionUsed(s) : {});
+    return { option: g.option, chosen: g.chosen, ready: gateReady(g), optionWord: g.option ? OPTION_WORDS[g.option] : null, options: OPTIONS, optionWords: OPTION_WORDS,
+      capSessionMinor: g.capSessionMinor, capDayMinor: g.capDayMinor, limits: g.limits, limitDefaults: LIMITS, limitWords: LIMIT_WORDS,
+      currency: ctx.settings.get('currency') || '', effectiveMode: em.mode, invalid: em.invalid, why: em.why, daySpendMinor: ds, sessionSpendMinor: ss, limitStatus: ls, setAt: g.setAt };
+  }
   function view() {
-    const c = cfg(); const s = current(); const last = lastEnded();
+    const c = cfg(); const s = current(); const last = lastEnded(); const gv = gateView();
     const r = s ? live.get(s.id) : null;
-    return { settings: c, online: online(), halted: ctx.panic.halted, lastSeen: iso(kv.get('lastSeen', nowMs())), tiers: TIERS, activities: ACTIVITIES,
-      running: s ? { ...s, now: r ? activityDef(r.activity)?.title : null, waiting: s.why === 'battery' ? 'Paused: the PC is on battery' : s.waitUntil > Date.now() ? 'Waiting for the free models' : '' } : null,
+    const gateWait = !gv.ready ? 'Waiting for your spend choice' : gv.invalid ? `Spend choice needs you: ${gv.why}` : gv.limitStatus.winding ? `Winding down: ${gv.limitStatus.which} near its limit` : '';
+    return { settings: { ...c, models: gv.chosen ? gv.option : null }, gate: gv, online: online(), halted: ctx.panic.halted, lastSeen: iso(kv.get('lastSeen', nowMs())), tiers: TIERS, activities: ACTIVITIES,
+      running: s ? { ...s, now: r ? activityDef(r.activity)?.title : null, waiting: s.why === 'battery' ? 'Paused: the PC is on battery' : gateWait || (s.waitUntil > Date.now() ? 'Waiting for the free models' : '') } : null,
       note: last && !last.seen && items(last.id, { state: 'new' }).length ? noteFor(last) : null,
       paidAllowed: Object.entries(providerTiers()).some(([p, tier]) => tier === 'paid' && paidAllowed(p)) || paidAllowed('openrouter') };
   }
+
+  // ---------------- the return panel: "While you were away", from jobs, the calls log and Bench's own findings (no made-up results)
+  const twoLines = (text) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+  const jobSources = (j) => { const out = j.output; const src = Array.isArray(out?.sources) ? out.sources : Array.isArray(out?.evidence) ? out.evidence : []; return src.slice(0, 6).map((e) => ({ title: e.title || e.url || '', url: e.url || null })); };
+  function returnPanel() {
+    const all = ctx.jobs.list({ limit: 200 });
+    const ownerJobs = all.filter((j) => !j.quiet || j.status === 'failed');   // quiet upkeep is left out unless it failed
+    const doneJobs = ownerJobs.filter((j) => j.status === 'done');
+    const waitingJobs = ownerJobs.filter((j) => j.status === 'waiting');
+    const stuckJobs = ownerJobs.filter((j) => ['failed', 'stopped', 'interrupted'].includes(j.status));
+    const s = current() || lastEnded();
+    const list = s ? items(s.id, { state: 'new' }) : [];
+    const needItems = list.filter((i) => i.kind === 'needs');
+    const resultItems = list.filter((i) => i.kind !== 'needs');
+    const drafts = (ctx.approval.listPending?.() || []);
+    const jobCard = (j) => ({ kind: 'job', id: j.id, jobId: j.id, title: j.title, summary: twoLines(j.output?.summary || j.detail), sources: jobSources(j), status: j.status, finished: j.finished || j.updated, agentId: j.agentId, chatId: j.chatId, steps: stepCount(j.id), rating: getRating('job', j.id) });
+    const itemCard = (i) => ({ kind: 'bench', id: i.id, jobId: i.data?._jobId || null, title: i.title, summary: twoLines(i.body), sources: (i.evidence || []).map((e) => ({ title: e.title || e.url || 'Your desk', url: e.url || null })), itemKind: i.kind, complete: i.complete, steps: i.data?._jobId ? stepCount(i.data._jobId) : 0, rating: getRating('bench_item', i.id) });
+    const note = s ? buildNote(s, items(s.id), { now: nowMs() }) : null;
+    const workedMs = (s?.used?.ms || 0) + doneJobs.reduce((a, j) => a + (j.finished && j.created ? Math.max(0, Date.parse(j.finished) - Date.parse(j.created)) : 0), 0);
+    return {
+      headline: { finished: doneJobs.length + resultItems.length, needsYou: waitingJobs.length + needItems.length + drafts.length, workedMs, spendTodayMinor: daySpend(), currency: ctx.settings.get('currency') || '', since: s ? s.started : null },
+      results: [...resultItems.map(itemCard), ...doneJobs.map(jobCard)],
+      needs: [
+        ...needItems.map((i) => ({ kind: 'bench', id: i.id, title: i.title, detail: twoLines(i.body) })),
+        ...waitingJobs.map((j) => ({ kind: 'job', id: j.id, title: j.title, detail: j.detail || 'Waiting for you' })),
+        ...drafts.map((a) => ({ kind: 'draft', id: a.id, title: a.title || 'A draft is waiting for your approval', detail: a.detail || '' })),
+      ],
+      didntGetTo: [
+        ...stuckJobs.map((j) => ({ title: j.title, why: j.error || j.detail || j.status, next: j.status === 'failed' ? 'Open it, read the error, and try again.' : 'Start it again when you are ready.' })),
+        ...(note ? note.notDone.map((l) => ({ title: l, why: '', next: '' })) : []),
+      ],
+    };
+  }
+
+  // ---------------- usage: a read-only per-agent view over the existing model-call log, plus Bench's own step log.
+  // We do NOT instrument new tool kinds: model calls already pass the model door (the `calls` table) and Bench's own
+  // searches/reads/model calls are in m_bench_steps. Other tool/app/API kinds have no single choke point to read, so they
+  // are left out rather than scattered log calls across the desk.
+  const startOfDayIso = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.toISOString(); };
+  function usagePanel() {
+    const day = startOfDayIso();
+    const agents = ctx.db.all("SELECT COALESCE(agent_id, '(desk)') AS agent, COUNT(*) AS calls, SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END) AS errors, COALESCE(SUM(input_tokens), 0) AS input, COALESCE(SUM(output_tokens), 0) AS output, COALESCE(SUM(cost_minor), 0) AS cost FROM calls WHERE at >= ? GROUP BY agent ORDER BY calls DESC", day)
+      .map((r) => ({ agent: r.agent, calls: r.calls, errors: r.errors, inputTokens: r.input, outputTokens: r.output, costMinor: r.cost }));
+    const benchSteps = ctx.db.all("SELECT action, COUNT(*) AS n, COALESCE(SUM(ms), 0) AS ms FROM m_bench_steps WHERE at >= ? GROUP BY action ORDER BY n DESC", day).map((r) => ({ action: r.action, count: r.n, ms: r.ms }));
+    return { day, currency: ctx.settings.get('currency') || '', agents, benchSteps };
+  }
+  const usageCsv = () => {
+    const u = usagePanel();
+    const esc = (s) => /[",\n]/.test(String(s)) ? '"' + String(s).replace(/"/g, '""') + '"' : String(s);
+    const rows = [['agent', 'calls', 'errors', 'input_tokens', 'output_tokens', 'cost_minor', 'currency']];
+    for (const a of u.agents) rows.push([a.agent, a.calls, a.errors, a.inputTokens, a.outputTokens, a.costMinor, u.currency]);
+    return rows.map((r) => r.map(esc).join(',')).join('\r\n') + '\r\n';
+  };
 
   // ---------------- what Keep does: one item, through the module that owns that kind of thing
   async function keep(it) {
@@ -283,13 +413,14 @@ export async function activate(ctx) {
   ctx.route('POST', '/seen', (req, res, { owner }) => { if (ownerOnly(res, owner)) return; ctx.json(res, ownerSeen()); });
   ctx.route('GET', '/state', (req, res) => ctx.json(res, view()));
   ctx.route('GET', '/sessions', (req, res) => ctx.json(res, { sessions: ctx.db.all('SELECT * FROM m_bench_sessions ORDER BY started DESC LIMIT 50').map(sessionOut).map((s) => ({ ...s, counts: Object.fromEntries(KINDS.map((k) => [k, items(s.id, { kind: k }).length]).filter(([, n]) => n)) })) }));
-  ctx.route('GET', '/sessions/:id', (req, res, { params, query }) => { const s = getSession(params.id); if (!s) return ctx.json(res, { error: 'No such session.' }, 404); const n = noteFor(s); ctx.json(res, { ...n, items: items(s.id, { kind: query.kind || undefined, state: query.state || undefined }) }); });
+  const withRating = (i) => ({ ...i, rating: getRating('bench_item', i.id) });
+  ctx.route('GET', '/sessions/:id', (req, res, { params, query }) => { const s = getSession(params.id); if (!s) return ctx.json(res, { error: 'No such session.' }, 404); const n = noteFor(s); ctx.json(res, { ...n, items: items(s.id, { kind: query.kind || undefined, state: query.state || undefined }).map(withRating) }); });
   ctx.route('POST', '/sessions/:id/seen', (req, res, { params, owner }) => { if (ownerOnly(res, owner)) return; const s = getSession(params.id); if (!s) return ctx.json(res, { error: 'No such session.' }, 404); s.seen = iso(nowMs()); saveSession(s); emit({ change: 'seen', id: s.id }); ctx.json(res, { ok: true }); });
   ctx.route('POST', '/settings', (req, res, { body, owner }) => {
     if (ownerOnly(res, owner)) return;
     if (typeof body?.enabled === 'boolean') kv.set('enabled', body.enabled);
     if (START_AFTER.includes(Number(body?.startAfter))) kv.set('startAfter', Number(body.startAfter));
-    if (MODEL_MODES.includes(body?.models)) kv.set('models', body.models);
+    if (OPTIONS.includes(body?.models)) { kv.set('models', body.models); setGate({ option: body.models }); }   // the money choice is the model mode
     if (body?.battery != null && Number.isFinite(Number(body.battery))) kv.set('battery', Math.max(0, Math.min(100, Math.round(Number(body.battery)))));
     if (typeof body?.site === 'string') kv.set('site', body.site.trim().slice(0, 200));
     ctx.json(res, view());
@@ -298,6 +429,7 @@ export async function activate(ctx) {
     if (ownerOnly(res, owner)) return;
     if (ctx.panic.halted) return ctx.json(res, { error: 'Everything is stopped. Press Resume first.' }, 409);
     if (!cfg().enabled) return ctx.json(res, { error: 'Switch Bench mode on first.' }, 409);
+    if (!gateReady(gate())) return ctx.json(res, { error: 'Choose how Bench may spend first: Local only, Free, or Paid, capped.' }, 409);
     const s = current(); if (s) return ctx.json(res, { ok: true, id: s.id, already: true });
     const t = nowMs(); const n = createSession({ awaySince: t - TIERS[0].hours * 3600000, manual: true });
     tick().catch((e) => ctx.log('tick', e.message));
@@ -320,7 +452,41 @@ export async function activate(ctx) {
     ctx.json(res, { ok: true, item: getItem(it.id), result, ...(it.kind === 'profile' && state === 'kept' ? { apply: { setting: 'business.about', text: it.data?.text || '' } } : {}) });
   });
 
+  // The money choice and its caps. Raising a cap, like any change here, needs the owner at the desk (owner session).
+  ctx.route('POST', '/spendgate', (req, res, { body, owner }) => {
+    if (ownerOnly(res, owner)) return;
+    if (body?.option != null && !OPTIONS.includes(body.option)) return ctx.json(res, { error: 'Choose Local only, Free, or Paid, capped.' }, 400);
+    const patch = {};
+    if (OPTIONS.includes(body?.option)) patch.option = body.option;
+    if (body?.capSessionMinor != null) patch.capSessionMinor = body.capSessionMinor;
+    if (body?.capDayMinor != null) patch.capDayMinor = body.capDayMinor;
+    if (body?.limits && typeof body.limits === 'object') patch.limits = body.limits;
+    setGate(patch);
+    if (OPTIONS.includes(body?.option)) kv.set('models', body.option);
+    ctx.json(res, view());
+  });
+  // Ratings the owner leaves (collected only; nothing auto-tunes from them yet).
+  ctx.route('POST', '/ratings', (req, res, { body, owner }) => {
+    if (ownerOnly(res, owner)) return;
+    const type = String(body?.targetType || '').slice(0, 40); const id = String(body?.targetId || '').slice(0, 120);
+    if (!type || !id) return ctx.json(res, { error: 'A rating needs what it is about.' }, 400);
+    ctx.json(res, { ok: true, rating: setRating(type, id, body || {}) });
+  });
+  ctx.route('GET', '/ratings/:type/:id', (req, res, { params, owner }) => { if (ownerOnly(res, owner)) return; ctx.json(res, { rating: getRating(params.type, params.id) }); });
+  // The step trace: the desk's own record of what ran (times, models, pages), not a model's stated reason.
+  ctx.route('GET', '/steps/:jobId', (req, res, { params, owner }) => { if (ownerOnly(res, owner)) return; ctx.json(res, { jobId: params.jobId, steps: stepsFor(params.jobId) }); });
+  // The return panel: "While you were away".
+  ctx.route('GET', '/return', (req, res, { owner }) => { if (ownerOnly(res, owner)) return; ctx.json(res, returnPanel()); });
+  // Per-agent usage today, from the model-call log and Bench's step log; CSV export is owner-only.
+  ctx.route('GET', '/usage', (req, res, { owner }) => { if (ownerOnly(res, owner)) return; ctx.json(res, usagePanel()); });
+  ctx.route('GET', '/usage.csv', (req, res, { owner }) => {
+    if (ownerOnly(res, owner)) return;
+    if (res.writableEnded) return;
+    res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="usage-today.csv"', 'cache-control': 'no-store' });
+    res.end(usageCsv());
+  });
+
   const timer = setInterval(() => { tick().catch((e) => ctx.log('tick', e.message)); }, 60000); timer.unref?.();
-  ctx.expose({ tick, ownerSeen, current, session: getSession, items, note: (id) => { const s = id ? getSession(id) : lastEnded(); return s ? noteFor(s) : null; }, view, idle: async () => { for (const r of [...live.values()]) await r.done; if (ticking) await ticking; } });
+  ctx.expose({ tick, ownerSeen, current, session: getSession, items, note: (id) => { const s = id ? getSession(id) : lastEnded(); return s ? noteFor(s) : null; }, view, gate, setGate, rating: getRating, setRating, steps: stepsFor, returnPanel, usage: usagePanel, idle: async () => { for (const r of [...live.values()]) await r.done; if (ticking) await ticking; } });
   return { async deactivate() { clearInterval(timer); offPanic?.(); offEvents?.(); const s = current(); if (s) stopLive(s.id, 'Bench was switched off'); } };
 }
