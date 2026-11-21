@@ -39,7 +39,7 @@ try {
   await p.evaluate(() => { location.hash = '#/settings/general'; }); await p.waitForTimeout(800);
   const field = p.locator('input[placeholder="AP Desk"]'); await field.fill('Example Traders Desk'); await field.dispatchEvent('change'); await p.waitForTimeout(900);
   const name = await p.evaluate(() => ({ bar: document.querySelector('.bar .name').textContent, title: document.title }));
-  check('the desk can be renamed in Settings: top bar and window title follow', name.bar === 'Example Traders Desk' && name.title === 'Example Traders Desk', JSON.stringify(name));
+  check('the desk can be renamed in Settings: top bar and window title follow', name.bar === 'Example Traders Desk' && name.title === 'Settings · Example Traders Desk', JSON.stringify(name));
   await p.screenshot({ path: path.join(SHOTS, 'renamed_1366x768.png') });
   check('no page errors', errs.length === 0, errs.join(' | ').slice(0, 300));
   await b.close();

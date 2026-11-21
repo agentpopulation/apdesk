@@ -41,3 +41,23 @@ export function movePlace(order, id, to) {
   const target = to?.before ?? to?.after; if (!target || target === id || !list.includes(target)) return list;
   list.splice(i, 1); const at = list.indexOf(target) + (to.after ? 1 : 0); list.splice(at, 0, id); return list;
 }
+
+/** The owner's name for a place (his own, else its default), hidden or not; null for a place that is not there. */
+export function placeName(items, raw, id) { return arrangeMenu(items, raw).find(x => x.id === id)?.label || null; }
+
+/** The browser tab's title: "<place> · <desk name>", the desk name alone when there is no place. */
+export const tabTitle = (place, desk) => place ? `${place} · ${desk}` : desk;
+
+/** Which ends of the menu hide places (there it shows a "more places" arrow): none when it fits. */
+export function menuEnds({ scrollLeft, clientWidth, scrollWidth }) {
+  const over = scrollWidth > clientWidth + 1;
+  return { l: over && scrollLeft > 2, r: over && scrollLeft + clientWidth < scrollWidth - 2 };
+}
+
+/** The places ({ l, r } edges) that would show half a word: not wholly inside the menu's clear area (inside its fades),
+ *  yet partly inside the menu's box. A place wholly out of the box is not drawn at all. */
+export function cutPlaces(boxes, clear, box = clear) {
+  const out = [];
+  boxes.forEach((b, i) => { const whole = b.l >= clear.l - 0.5 && b.r <= clear.r + 0.5, gone = b.r <= box.l + 0.5 || b.l >= box.r - 0.5; if (!whole && !gone) out.push(i); });
+  return out;
+}

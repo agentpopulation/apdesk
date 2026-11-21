@@ -108,7 +108,7 @@ test('Home: Finished counts only work the owner asked for, not the desk\'s quiet
 });
 
 // ---- the agent tracker's lists (app/ui/tracker-data.js): plain functions, fed by the desk's 'job' events
-import { mergeJob, todoLists, runningCount, timeLeft, agentsNow, needsYou, updateReady, jobWho, popShowsDownloads } from '../app/ui/tracker-data.js';
+import { mergeJob, todoLists, runningCount, timeLeft, agentsNow, needsYou, updateReady, jobWho, popShowsDownloads, deskNow, whoAsks } from '../app/ui/tracker-data.js';
 const NOW = Date.parse('2026-11-21T10:00:00Z');
 const ago = (min) => new Date(NOW - min * 60000).toISOString();
 const JOBS = [
@@ -146,6 +146,14 @@ test('tracker: time left only where the job says it, a dash otherwise', () => {
 test('tracker: each agent says what it is doing now', () => {
   const a = agentsNow([{ id: 'scout', name: 'Scout' }, { id: 'closer', name: 'Closer' }, { id: 'coder', name: 'Coder' }], JOBS);
   assert.deepEqual(a.map(x => [x.name, x.busy, x.text]), [['Scout', true, 'Deep research'], ['Closer', true, 'Waiting for you: Lead list'], ['Coder', false, 'Not working on anything']]);
+});
+
+test('tracker: a running job with no agent is the desk\'s own work and is said so; quiet upkeep and agents\' jobs are not', () => {
+  assert.equal(deskNow(JOBS).busy, false, 'only an agent\'s job and quiet upkeep run');
+  const more = [...JOBS, { id: 'i', title: 'Get the maps pack', status: 'running', created: ago(2) }, { id: 'j', title: 'Older desk job', status: 'running', created: ago(4) }, { id: 'k', title: 'Asks first', status: 'waiting', created: ago(1) }];
+  assert.deepEqual(deskNow(more), { busy: true, job: more[8], more: 1, text: 'The desk is working: Get the maps pack' });
+  const src = fs.readFileSync(path.join(ROOT, 'app', 'ui', 'pages', 'tracker.js'), 'utf8');
+  assert.match(src, /deskNow\(/, 'the Tracker pop-up and page say what the desk itself is doing');
 });
 
 test('tracker: a job or agent with no known name shows a plain word, never its id', () => {
@@ -190,4 +198,17 @@ test('shell files: the tracker and menu rules are served to the page; the top ba
     assert.match(html, /<button class="ico" id="upd" hidden><\/button><button class="ico" id="trk"><\/button>/);
     assert.match(html, /id="trk"[^]*id="dl"[^]*id="net"[^]*id="theme"[^]*id="panic"/);
   } finally { await t.close(); }
+});
+
+test('approvals: an ask with no agent is the desk asking (the owner\'s own Get), never "An agent" and never an id', () => {
+  const agents = [{ id: 'scout', name: 'Scout' }];
+  assert.equal(whoAsks(agents, { agentId: null, jobId: 'job_1', action: 'install' }), 'The desk asks');
+  assert.equal(whoAsks(agents, {}), 'The desk asks');
+  assert.equal(whoAsks(agents, { agentId: 'scout' }), 'Scout asks');
+  assert.equal(whoAsks(agents, { agentId: 'zz8q2m4n7p1r' }), 'An agent asks');
+  const shell = fs.readFileSync(path.join(ROOT, 'app', 'ui', 'shell.js'), 'utf8'), home = fs.readFileSync(path.join(ROOT, 'app', 'ui', 'pages', 'home.js'), 'utf8');
+  const card = shell.slice(shell.indexOf('function approvalCard('), shell.indexOf('const ACTION_WORDS'));
+  assert.match(card, /whoAsks\(state\.agents, a\)/, 'the approval card asks whoAsks');
+  for (const [name, src] of [['shell', shell], ['home', home]]) assert.doesNotMatch(src, /\|\| 'An agent'/, name + ': no "An agent" fallback of its own');
+  assert.doesNotMatch(shell, /a\.agentId \|\| 'An agent'/, 'no agent id on screen');
 });

@@ -1,7 +1,7 @@
 // The agent tracker: what each agent is doing now, the to-do list of jobs, the downloads, Stop for each running job and
 // Panic. The same parts fill the top bar's pop-up (short) and the Tracker page (all of it). Live from the desk's events:
 // the shell keeps the jobs from its 'job' events (ui.tracker.jobs()) and the downloads from 'downloads' events.
-import { todoLists, agentsNow, timeLeft, jobWho } from '/ui/tracker-data.js';
+import { todoLists, agentsNow, deskNow, timeLeft, jobWho } from '/ui/tracker-data.js';
 
 const ENDED_WORDS = { done: 'Done', failed: 'Did not finish', stopped: 'Stopped', interrupted: 'Cut off when the desk stopped' };
 
@@ -27,8 +27,11 @@ export function trackerBody(ui, { full = false } = {}) {
   const jobs = ui.tracker.jobs(); const l = todoLists(jobs);
   const agents = agentsNow(ui.state.agents || [], jobs); const busy = agents.filter(a => a.busy);
   const shownAgents = full ? agents : busy;
+  // a running job with no agent is the desk's own work: said as such, never as "no agent is working"
+  const desk = deskNow(jobs);
+  const deskLine = desk.busy ? h('div', { class: 'line', 'data-tracker-desk': '' }, h('div', null, h('b', null, desk.text), desk.more ? h('span', { class: 'd' }, `and ${desk.more} more`) : null), h('span', { class: 'dot on' })) : null;
   const agentPart = h('section', { class: 'tsec', 'data-tracker': 'agents' }, h('h3', null, 'Agents now'),
-    shownAgents.length ? h('div', { class: 'tlist' }, shownAgents.map(a => h('div', { class: 'line' }, h('div', null, h('b', null, a.name), h('span', { class: 'd' }, a.text + (a.more ? ` and ${a.more} more` : ''))), h('span', { class: 'dot' + (a.busy ? ' on' : '') })))) : empty(agents.length ? `No agent is working right now. ${agents.length === 1 ? 'One agent is' : agents.length + ' agents are'} free.` : 'No agents yet.'));
+    shownAgents.length || deskLine ? h('div', { class: 'tlist' }, deskLine, shownAgents.map(a => h('div', { class: 'line' }, h('div', null, h('b', null, a.name), h('span', { class: 'd' }, a.text + (a.more ? ` and ${a.more} more` : ''))), h('span', { class: 'dot' + (a.busy ? ' on' : '') })))) : empty(agents.length ? `No agent is working right now. ${agents.length === 1 ? 'One agent is' : agents.length + ' agents are'} free.` : 'No agents yet.'));
   const group = (key, title, list, cap) => list.length ? h('div', { class: 'tgroup', 'data-todo': key }, h('h6', null, `${title} (${list.length})`), ...list.slice(0, cap).map(j => jobRow(ui, j)), list.length > cap ? h('p', { class: 'sub' }, `${list.length - cap} more on the Tracker page.`) : null) : null;
   const cap = full ? 200 : 3;
   const any = l.queued.length + l.running.length + l.waiting.length + l.done.length;

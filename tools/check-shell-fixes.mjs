@@ -42,7 +42,7 @@ try {
     check(`${w}x${hgt}: no page errors`, errs.length === 0, errs.join(' | ').slice(0, 200));
     await p.close();
   }
-  await barChecks(b); await trackerChecks(b); await menuChecks(b); await downloadChecks(b); await networkChecks(b); await moduleChecks(b); await settingsChecks(b);
+  await barChecks(b); await approvalChecks(b); await trackerChecks(b); await menuChecks(b); await downloadChecks(b); await networkChecks(b); await moduleChecks(b); await settingsChecks(b);
   await b.close();
 } finally { await t.close(); }
 await firstStartChecks(); await pairChecks();
@@ -66,7 +66,17 @@ function barGeometry(p) { return p.evaluate(() => {
   const clash = [...ctl.map(c => overlap(m, c) ? 'menu/' + c.id : null), ...ctl.map(c => overlap(left, c) ? 'title/' + c.id : null), ...ctl.flatMap((a, i) => ctl.slice(i + 1).map(c => overlap(a, c) ? a.id + '/' + c.id : null))].filter(Boolean);
   const cut = ctl.filter(c => c.l < bar.l || c.r > bar.r || c.t < bar.t || c.b > bar.b).map(c => c.id);
   const textCut = ctl.filter(c => { const el = document.getElementById(c.id); return el.scrollWidth > el.clientWidth + 1; }).map(c => c.id);
-  return { items: menu.children.length, over: menu.classList.contains('over'), fades: [menu.classList.contains('fl'), menu.classList.contains('fr')], menuInBar: m.l >= bar.l && m.r <= bar.r && m.b <= bar.b, clash, cut, textCut, panicWhole: panic.l >= 0 && panic.r <= innerWidth && panic.t >= 0 && panic.b <= innerHeight, ctl: ctl.map(c => c.id), pageScroll: document.documentElement.scrollWidth - innerWidth };
+  return { items: menu.querySelectorAll('.nav').length, arrows: [...menu.querySelectorAll('.more')].map(a => getComputedStyle(a).visibility === 'visible' && a.getBoundingClientRect().width > 0), over: menu.classList.contains('over'), fades: [menu.classList.contains('fl'), menu.classList.contains('fr')], menuInBar: m.l >= bar.l && m.r <= bar.r && m.b <= bar.b, clash, cut, textCut, panicWhole: panic.l >= 0 && panic.r <= innerWidth && panic.t >= 0 && panic.b <= innerHeight, ctl: ctl.map(c => c.id), pageScroll: document.documentElement.scrollWidth - innerWidth };
+}); }
+
+/** Menu places drawn across an edge or under a fade (they would read as half a word), the first and last whole ones. */
+function halfWords(p) { return p.evaluate(() => {
+  const m = document.getElementById('menu'), mr = m.getBoundingClientRect(), FADE = 26;
+  const L = mr.left + (m.classList.contains('fl') ? FADE : 0), R = mr.right - (m.classList.contains('fr') ? FADE : 0);
+  const drawn = [...m.querySelectorAll('.nav')].filter(n => getComputedStyle(n).opacity !== '0' && getComputedStyle(n).visibility !== 'hidden').map(n => ({ n, r: n.getBoundingClientRect() })).filter(x => x.r.right > mr.left + 0.5 && x.r.left < mr.right - 0.5);
+  const cut = drawn.filter(x => x.r.left < L - 0.5 || x.r.right > R + 0.5).map(x => `${x.n.textContent} ${Math.round(x.r.left - mr.left)}..${Math.round(x.r.right - mr.left)}`);
+  const cur = m.querySelector('[aria-current="page"]');
+  return { cut, first: drawn[0]?.n.textContent, last: drawn.at(-1)?.n.textContent, current: !!cur && drawn.some(x => x.n === cur) && !cut.some(c => c.startsWith(cur.textContent + ' ')), scroll: Math.round(m.scrollLeft) };
 }); }
 
 // ---- 1, 8: the theme is an icon; the top bar holds with every menu place on, the download icon shown too, at three sizes
@@ -86,9 +96,29 @@ async function barChecks(b) {
       const g = await barGeometry(p);
       const named = await p.evaluate(() => [...document.querySelectorAll('#menu .nav')].some(n => n.textContent === 'Night shift') && document.getElementById('trk').textContent === '1');
       check(`${w}x${hgt} ${theme}: ${g.items} menu places (one renamed), the update, tracker, download, network and theme icons and Panic: nothing cut, nothing covered`, named && g.items >= 16 && ['upd', 'trk', 'dl', 'net', 'theme'].every(x => g.ctl.includes(x)) && !g.clash.length && !g.cut.length && !g.textCut.length && g.panicWhole && g.menuInBar && g.pageScroll <= 0, JSON.stringify(g));
-      if (g.over) check(`${w}x${hgt} ${theme}: the menu fades and scrolls where places are hidden`, g.fades[1] === true && g.fades[0] === false, JSON.stringify(g.fades));
-      if (g.over) { await p.evaluate(() => { const m = document.getElementById('menu'); m.scrollLeft = m.scrollWidth; }); await p.waitForTimeout(150); const f = await p.evaluate(() => [...document.getElementById('menu').classList]); check(`${w}x${hgt} ${theme}: scrolled to the end, only the start fades`, f.includes('fl') && !f.includes('fr'), f.join(' ')); await p.evaluate(() => { document.getElementById('menu').scrollLeft = 0; }); }
+      if (g.over) check(`${w}x${hgt} ${theme}: the menu shows a "more places" arrow only where places are hidden`, g.fades[1] === true && g.fades[0] === false && g.arrows[0] === false && g.arrows[1] === true, JSON.stringify({ fades: g.fades, arrows: g.arrows }));
+      if (g.over) { await p.evaluate(() => { const m = document.getElementById('menu'); m.scrollLeft = m.scrollWidth; }); await p.waitForTimeout(150); const f = await p.evaluate(() => [...document.getElementById('menu').classList, ...[...document.querySelectorAll('#menu .more')].map(a => getComputedStyle(a).visibility)]); check(`${w}x${hgt} ${theme}: scrolled to the end, only the start shows the arrow`, f.includes('fl') && !f.includes('fr') && f.at(-2) === 'visible' && f.at(-1) === 'hidden', f.join(' ')); await p.evaluate(() => { document.getElementById('menu').scrollLeft = 0; }); }
+      if (g.over && theme === 'light') {
+        const s0 = await p.evaluate(() => document.getElementById('menu').scrollLeft);
+        await p.click('#menu .more.r'); await p.waitForTimeout(700);
+        const hwA = await halfWords(p), s1 = await p.evaluate(() => document.getElementById('menu').scrollLeft);
+        check(`${w}x${hgt} ${theme}: a press on the "more places" arrow shows the next places, all whole`, s1 > s0 && !hwA.cut.length, JSON.stringify({ s0, s1, cut: hwA.cut }));
+        await p.evaluate(() => { document.getElementById('menu').scrollLeft = 0; }); await p.waitForTimeout(200);
+      }
       await p.screenshot({ path: `${SHOTS}/topbar_${w}x${hgt}_${theme}.png` });
+      // the menu never shows half a word: at the start, with the last place open (the menu scrolls to it), and after a small wheel turn
+      const hw0 = await halfWords(p);
+      check(`${w}x${hgt} ${theme}: the first and last places shown are whole`, !hw0.cut.length, JSON.stringify(hw0));
+      const last = await p.evaluate(() => [...document.querySelectorAll('#menu .nav')].at(-1).dataset.v);
+      await p.evaluate((id) => { location.hash = '#/' + id; }, last); await p.waitForTimeout(800);
+      const hw1 = await halfWords(p);
+      check(`${w}x${hgt} ${theme}: with the last place open it is in view, and every place shown is whole`, !hw1.cut.length && hw1.current, JSON.stringify(hw1));
+      await p.mouse.move(...await p.evaluate(() => { const r = document.getElementById('menu').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }));
+      await p.mouse.wheel(0, -7); await p.waitForTimeout(400);
+      const hw2 = await halfWords(p);
+      check(`${w}x${hgt} ${theme}: a small wheel turn moves the menu by whole places`, !hw2.cut.length && (!g.over || hw2.scroll !== hw1.scroll), JSON.stringify(hw2));
+      if (w === 1366 && theme === 'light') await p.screenshot({ path: `${SHOTS}/topbar_last_place_${w}x${hgt}_${theme}.png` });
+      await p.evaluate(() => { location.hash = '#/home'; }); await p.waitForTimeout(400);
       if (w === 1366 && theme === 'light') {
         await p.hover('#theme'); await p.waitForTimeout(250);
         check('the theme icon rises to full on hover', await p.evaluate(() => getComputedStyle(document.getElementById('theme')).opacity) === '1');
@@ -104,6 +134,42 @@ async function barChecks(b) {
   } finally { release(); await t.core.jobs.wait(job.id, 3000); t.core.settings.set('ui.menu', null); try { t.core.downloads.cancel(d.id); } catch {} for (const x of t.core.approval.listPending()) t.core.approval.decide(x.id, 'deny'); await host.close(); }
 }
 
+// ---- an approval asked while the window is in front opens its card at once; the field the owner types in keeps the focus
+async function approvalChecks(b) {
+  const ask = (title) => t.core.approval.request({ action: 'install', title, detail: 'A check' });
+  for (const [w, hgt] of [[1366, 768], [390, 844]]) {
+    const { ctx, p, errs } = await open(b, w, hgt, 'light', '#/chat');
+    try {
+      const field = await p.evaluate(() => { const f = document.querySelector('#view textarea, #view input[type="text"]'); if (!f) return null; f.id ||= 'typing-here'; return f.id; });
+      await p.click('#' + field); await p.keyboard.type('Hello ');
+      ask('Approval check: in front');
+      await until(() => p.evaluate(() => document.getElementById('pop').dataset.kind === 'approvals' && !document.getElementById('pop').hidden), 3000);
+      await p.keyboard.type('there');
+      const st = await p.evaluate((id) => ({ kind: document.getElementById('pop').hidden ? null : document.getElementById('pop').dataset.kind, card: /Approval check: in front/.test(document.getElementById('pop').textContent), who: /The desk asks · A check/.test(document.getElementById('pop').textContent) && !/An agent asks/.test(document.getElementById('pop').textContent), focus: document.activeElement?.id === id, value: document.getElementById(id).value }), field);
+      check(`${w}x${hgt}: an approval asked while the window is in front opens its card at once (no agent: "The desk asks"); typing goes on in the same field`, st.kind === 'approvals' && st.card && st.who && st.focus && st.value === 'Hello there', JSON.stringify(st));
+      await p.screenshot({ path: `${SHOTS}/approval_opens_${w}x${hgt}_light.png` });
+      for (const x of t.core.approval.listPending()) t.core.approval.decide(x.id, 'deny');
+      await p.click('#pop button:has-text("Close")'); await p.waitForTimeout(300);
+      // another pop-up the owner opened stays; the pill says one waits
+      await p.click('#trk'); await until(() => p.evaluate(() => document.getElementById('pop').dataset.kind === 'tracker'), 2000);
+      ask('Approval check: tracker open');
+      await until(() => p.evaluate(() => !document.getElementById('waiting').hidden), 3000); await p.waitForTimeout(400);
+      check(`${w}x${hgt}: with another pop-up open it stays; the pill shows the waiting approval`, await p.evaluate(() => document.getElementById('pop').dataset.kind === 'tracker' && !document.getElementById('waiting').hidden));
+      for (const x of t.core.approval.listPending()) t.core.approval.decide(x.id, 'deny');
+      check(`${w}x${hgt}: approvals: no page errors`, errs.length === 0, errs.join(' | ').slice(0, 200));
+    } finally { for (const x of t.core.approval.listPending()) t.core.approval.decide(x.id, 'deny'); await ctx.close(); }
+  }
+  // a window in the background: only the pill and the notice, nothing opens
+  const ctx = await b.newContext({ viewport: { width: 1366, height: 768 } }); const q = await ctx.newPage();
+  await q.addInitScript(() => { Object.defineProperty(document, 'hidden', { get: () => true }); });
+  try {
+    await q.goto(t.base + '/#/home'); await q.waitForSelector('#menu .nav'); await q.waitForTimeout(600);
+    ask('Approval check: background');
+    await until(() => q.evaluate(() => !document.getElementById('waiting').hidden), 3000); await q.waitForTimeout(400);
+    check('a window in the background: the approval card does not open by itself', await q.evaluate(() => document.getElementById('pop').hidden));
+  } finally { for (const x of t.core.approval.listPending()) t.core.approval.decide(x.id, 'deny'); await ctx.close(); }
+}
+
 // ---- the agent tracker: the icon's count, the pop-up and the page, live from the 'job' events, Stop and Panic; "needs you"
 async function trackerChecks(b) {
   const gates = []; const hold = () => new Promise(r => gates.push(r));
@@ -112,6 +178,14 @@ async function trackerChecks(b) {
   let lists = 0; p.on('request', r => { if (new URL(r.url()).pathname === '/api/jobs') lists++; });
   try {
     check('no job running: the tracker icon shows no count', await p.evaluate(() => document.getElementById('trk').textContent === '' && /no job running/.test(document.getElementById('trk').getAttribute('aria-label'))));
+    // a running job with no agent is the desk's own work
+    const dj = await t.core.jobs.start({ kind: 'apis.check', title: 'Tracker check: the desk', run: async () => { await hold(); } });
+    await until(() => p.evaluate(() => document.getElementById('trk').textContent === '1'));
+    await p.click('#trk'); await until(() => p.evaluate(() => document.getElementById('pop').dataset.kind === 'tracker'));
+    const dt = await p.evaluate(() => document.querySelector('#pop [data-tracker="agents"]')?.textContent || '');
+    check('a running job with no agent: the pop-up says the desk is working on it, not that no agent is working', /The desk is working: Tracker check: the desk/.test(dt) && !/No agent is working/.test(dt), dt);
+    t.core.jobs.stop(dj.id); await until(() => p.evaluate(() => document.getElementById('trk').textContent === ''), 3000);
+    await p.keyboard.press('Escape'); await until(() => p.evaluate(() => document.getElementById('pop').hidden), 2000);
     let step;
     const a = await t.core.jobs.start({ kind: 'research.check', title: 'Tracker check: research', agentId: agent?.id || null, run: async (j) => { step = (x) => j.progress(x, 'Reading sources'); step(0.2); await hold(); } });
     const w = await t.core.jobs.start({ kind: 'sales.check', title: 'Tracker check: waiting', run: async (j) => { j.waiting('Waiting for your approval: Send'); await hold(); } });
@@ -176,6 +250,7 @@ async function menuChecks(b) {
     check('Settings › Menu lists every menu place', await p.evaluate(() => document.querySelectorAll('#view .mrow').length) === (await navs()).length);
     await p.fill('[data-place-name="bench"]', 'Night shift'); await p.press('[data-place-name="bench"]', 'Tab'); await p.waitForTimeout(500);
     check('rename: the menu says Night shift', (await navs()).includes('bench:Night shift'), (await navs()).join(' '));
+    check('the browser tab names the place the owner is on', await p.title() === 'Settings · AP Desk', await p.title());
     await p.click('#view button[aria-label="Move Tasks up"]'); await p.waitForTimeout(500);
     const n1 = (await navs()).map(x => x.split(':')[0]);
     check('the up button moves Tasks before Research', n1.indexOf('tasks') === n1.indexOf('research') - 1, n1.join(' '));
@@ -192,6 +267,8 @@ async function menuChecks(b) {
     check('the chosen place opens first', await p.evaluate(() => location.hash === '#/tasks'));
     await p.evaluate(() => { location.hash = '#/bench'; }); await p.waitForTimeout(1200);
     check('a renamed place: its page heading says the owner\'s name', await p.evaluate(() => document.querySelector('#view h2')?.textContent === 'Night shift'), await p.evaluate(() => document.querySelector('#view h2')?.textContent));
+    check('a renamed place: the browser tab says "Night shift · AP Desk"', await p.title() === 'Night shift · AP Desk', await p.title());
+    check('modules can ask the owner\'s name for a place (ui.placeName)', await p.evaluate(() => window.apd.placeName('bench') === 'Night shift' && window.apd.placeName('chat') === 'Chat' && window.apd.placeName('no-such-place') === null));
     await t.core.modules.set('bench', false); await p.waitForTimeout(1200);
     check('a renamed place switched off: the notice uses the owner\'s name', await p.evaluate(() => /Night shift is switched off/.test(document.getElementById('view').textContent)));
     await t.core.modules.set('bench', true); await p.waitForTimeout(800);
@@ -219,9 +296,31 @@ async function menuChecks(b) {
   } finally { t.core.settings.set('ui.menu', null); await ctx.close(); }
 }
 
+/** A stand-in download on loopback (Range support): it sends slowly up to holdAt bytes, then waits for release(). */
+async function heldDownloadHost(body, { slowMs, chunk, holdAt }) {
+  const http = await import('node:http');
+  let release; const held = new Promise(r => { release = r; });
+  const server = http.createServer(async (req, res) => {
+    if (req.url !== '/slow') { res.writeHead(404); return res.end(); }
+    const m = /bytes=(\d+)-/.exec(req.headers.range || ''); const from = m ? Number(m[1]) : 0;
+    res.writeHead(m ? 206 : 200, { 'accept-ranges': 'bytes', 'content-length': String(body.length - from), ...(m ? { 'content-range': `bytes ${from}-${body.length - 1}/${body.length}` } : {}) });
+    for (let i = from; i < body.length; i += chunk) {
+      if (i + chunk > holdAt) await held;
+      if (res.destroyed) return;
+      res.write(body.subarray(i, Math.min(i + chunk, body.length)));
+      if (i + chunk < holdAt) await wait(slowMs);
+    }
+    res.end();
+  });
+  server.on('connection', (c) => c.unref());
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  return { url: (p) => `http://127.0.0.1:${server.address().port}${p}`, release, close: () => { release(); return new Promise(r => { server.closeAllConnections?.(); server.close(() => r()); }); } };
+}
+
 // ---- 2: downloads in the top bar, live from the event stream
 async function downloadChecks(b) {
-  const body = Buffer.alloc(96 * 1024, 3); const host = await startDownloadHost({ '/slow': { body, slowMs: 120, chunk: 2048 } });
+  // the stand-in download sends slowly and cannot finish until released: Pause always lands on a download that is still moving
+  const body = Buffer.alloc(96 * 1024, 3); const host = await heldDownloadHost(body, { slowMs: 200, chunk: 2048, holdAt: body.length - 8192 });
   const { ctx, p, errs } = await open(b, 1366, 768, 'light');
   let lists = 0; p.on('request', r => { if (new URL(r.url()).pathname === '/api/downloads') lists++; });
   try {
@@ -250,8 +349,9 @@ async function downloadChecks(b) {
     await p.click('#dl'); await until(() => p.evaluate(() => document.getElementById('pop').dataset.kind === 'downloads'));
     await p.click('#pop [data-dl] button:has-text("Pause")');
     await until(() => p.evaluate(() => /Paused/.test(document.querySelector('#pop [data-dl]')?.textContent || '')));
-    check('Pause works and the row says Paused with Resume', await p.evaluate(() => [...document.querySelectorAll('#pop [data-dl] button')].some(x => x.textContent === 'Resume')));
+    check('Pause works and the row says Paused with Resume', await p.evaluate(() => [...document.querySelectorAll('#pop [data-dl] button')].some(x => x.textContent === 'Resume')) && t.core.downloads.get(d.id)?.state === 'paused', t.core.downloads.get(d.id)?.state);
     t.core.panic.resume?.();
+    host.release();
     await p.click('#pop [data-dl] button:has-text("Resume")');
     await until(() => t.core.downloads.get(d.id)?.state === 'done', 30000);
     await until(() => p.evaluate(() => document.getElementById('dl').hidden), 5000);
@@ -385,7 +485,7 @@ async function firstStartChecks() {
     let bx = await box(f.p);
     const plan = (await f.d.call('/api/local-engine/plan')).json;
     check('first start: a ticked box with the model, its engine and the total size, and the plain line', bx.checked && !bx.disabled && bx.text.includes(`${plan.model.name} and its engine, ${plan.totalText}`) && /It runs on this PC and works without the internet/.test(bx.text) && /Choose another/.test(bx.text), bx.text.slice(0, 200));
-    await f.p.click('text=Choose another'); await f.p.waitForTimeout(200);
+    await f.p.click('[data-apd="local-model"] button:has-text("Choose another")'); await f.p.waitForTimeout(200);
     const choices = await f.p.evaluate(() => [...document.querySelectorAll('[name="onb-model"]')].map(r => r.closest('label').textContent));
     check('Choose another lists the plan\'s choices with sizes', choices.length === plan.choices.length && plan.choices.every((c, i) => choices[i].includes(c.name) && choices[i].includes(c.sizeText)), choices.join(' | ').slice(0, 200));
     const small = plan.choices.find(c => c.fits && c.id !== plan.model.id);

@@ -79,3 +79,46 @@ test('menus: the choices are kept per desk through the settings route; they chan
     const js = await fetch(t.base + '/ui/menus.js'); assert.equal(js.status, 200);
   } finally { await t.close(); }
 });
+
+// ---- the owner's name for a place, for the tab title and for module texts (ui.placeName), and the menu's whole places
+import { placeName, tabTitle, cutPlaces } from '../app/ui/menus.js';
+
+test('menus: a place\'s name is the owner\'s name, else its default; a hidden place keeps its name; an unknown place has none', () => {
+  const raw = { names: { bench: 'Night shift' }, hidden: ['mail'] };
+  assert.equal(placeName(PLACES, raw, 'bench'), 'Night shift');
+  assert.equal(placeName(PLACES, raw, 'chat'), 'Chat');
+  assert.equal(placeName(PLACES, raw, 'mail'), 'Mail', 'hidden from the menu, its address still opens it by this name');
+  assert.equal(placeName(PLACES, raw, 'studio'), null);
+  assert.equal(placeName(PLACES, null, 'bench'), 'Bench');
+});
+
+test('menus: the tab title is "<place> · <desk name>", the desk name alone when there is no place', () => {
+  assert.equal(tabTitle('Night shift', 'AP Desk'), 'Night shift · AP Desk');
+  assert.equal(tabTitle(null, 'My desk'), 'My desk');
+  assert.equal(tabTitle('', 'My desk'), 'My desk');
+});
+
+test('menus: a place only partly inside the menu\'s clear area is marked, so no half word is ever shown', () => {
+  const view = { l: 40, r: 300 };
+  const boxes = [{ l: 10, r: 60 }, { l: 60, r: 120 }, { l: 120, r: 300 }, { l: 300, r: 360 }, { l: 280, r: 320 }, { l: 400, r: 460 }, { l: -80, r: -20 }];
+  assert.deepEqual(cutPlaces(boxes, view), [0, 4], 'wholly in view or wholly out of it is fine; across an edge is cut');
+  assert.deepEqual(cutPlaces([{ l: 39.6, r: 300.4 }], view), [], 'a part of a pixel is not a cut');
+  const box = { l: 14, r: 326 };   // the fades: 26 px on each side
+  assert.deepEqual(cutPlaces([{ l: 0, r: 30 }, { l: 310, r: 380 }, { l: 330, r: 390 }, { l: -60, r: 10 }], view, box), [0, 1], 'a place under a fade is cut too');
+});
+
+import fs from 'node:fs';
+import { menuEnds } from '../app/ui/menus.js';
+
+test('menus: an end that hides places shows a "more places" sign there; a menu that fits shows none', () => {
+  assert.deepEqual(menuEnds({ scrollLeft: 0, clientWidth: 600, scrollWidth: 600 }), { l: false, r: false }, 'it fits');
+  assert.deepEqual(menuEnds({ scrollLeft: 0, clientWidth: 600, scrollWidth: 1200 }), { l: false, r: true }, 'at the start');
+  assert.deepEqual(menuEnds({ scrollLeft: 300, clientWidth: 600, scrollWidth: 1200 }), { l: true, r: true }, 'in the middle');
+  assert.deepEqual(menuEnds({ scrollLeft: 600, clientWidth: 600, scrollWidth: 1200 }), { l: true, r: false }, 'at the end');
+  // a hidden place leaves no blank gap without a sign: the menu draws an arrow at each end that hides places
+  const js = fs.readFileSync(new URL('../app/ui/shell.js', import.meta.url), 'utf8'), css = fs.readFileSync(new URL('../app/ui/shell.css', import.meta.url), 'utf8');
+  assert.match(js, /menuEnds\(/, 'the shell asks menuEnds which ends hide places');
+  assert.match(js, /'aria-label': 'More places'/, 'the sign is a button named for what it does');
+  assert.match(css, /\.menu\.over\.fl \.more\.l,\.menu\.over\.fr \.more\.r\{visibility:visible\}/, 'shown only at an end that hides places');
+  assert.doesNotMatch(css, /\.menu\.over\{[^}]*mask-image/, 'no fade that would hide the sign');
+});

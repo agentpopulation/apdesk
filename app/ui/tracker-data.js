@@ -30,11 +30,20 @@ export function agentsNow(agents, jobs) {
   });
 }
 
+/** A running job with no agent is the desk's own work: the newest one, and how many more. */
+export function deskNow(jobs) {
+  const mine = [...jobs].filter(j => shownJob(j) && j.status === 'running' && !j.agentId).sort((a, b) => at(b.created) - at(a.created));
+  const j = mine[0];
+  return { busy: !!j, job: j || null, more: Math.max(0, mine.length - 1), text: j ? `The desk is working: ${j.title || 'a job'}` : '' };
+}
+
 /** Who a job belongs to, in plain words: the agent's name, never its id. */
 export function jobWho(agents, j) {
   if (!j || !j.agentId) return 'The desk';
   return (agents || []).find(a => a.id === j.agentId)?.name || 'An agent';
 }
+/** Who asks for an approval: the agent by name, else the desk itself (the owner's own Get, the desk's own work). */
+export const whoAsks = (agents, a) => `${jobWho(agents, a)} asks`;
 /** The pop-ups that show the downloads list: a 'downloads' event repaints either one while it is open. */
 export const popShowsDownloads = (kind) => kind === 'downloads' || kind === 'tracker';
 

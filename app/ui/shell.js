@@ -3,8 +3,8 @@ import * as kit from '/ui/kit.js';
 import { homePage, ROLES, applyRole, teamFor, STARTING_TEAM } from '/ui/pages/home.js';
 import { settingsPage, coreSettingsSections, ABOUT_MAX, ABOUT_HELP } from '/ui/pages/settings.js';
 import { trackerPage, trackerBody } from '/ui/pages/tracker.js';
-import { MENU_KEY, cleanMenu, arrangeMenu, firstPlace } from '/ui/menus.js';
-import { mergeJob, runningCount, needsYou, updateReady, leftWords, popShowsDownloads } from '/ui/tracker-data.js';
+import { MENU_KEY, cleanMenu, arrangeMenu, firstPlace, placeName, tabTitle, cutPlaces, menuEnds } from '/ui/menus.js';
+import { mergeJob, runningCount, needsYou, updateReady, leftWords, popShowsDownloads, whoAsks, jobWho } from '/ui/tracker-data.js';
 const { $, $$, h, api, toast } = kit;
 
 const OFFICIAL = [['chat', 'Chat'], ['research', 'Research'], ['tasks', 'Tasks'], ['sales', 'Sales'], ['files', 'Files'], ['agents', 'Agents'], ['models', 'Models'], ['settings', 'Settings']];
@@ -22,7 +22,10 @@ const ui = {
   onLeave(fn) { pageCleanup.push(fn); },
   moduleOn: (id) => state.modules.some(m => m.id === id && m.on),
   agent: (id) => state.agents.find(a => a.id === id) || null,
+  whoAsks: (a) => whoAsks(state.agents, a),
   label: (page, fallback) => ownName(page) || roleLabel(page, fallback),
+  /** The owner's name for a menu place (his own name, else the default), for a module's own texts; null when it is not a place. */
+  placeName: (id) => placeName(basePlaces(), state.settings[MENU_KEY], id),
   /** Every menu place in the default order with its default name (Settings › Menu lists these). */
   menuPlaces: () => basePlaces(),
   /** Keep the owner's menu (names, order, hidden, first place) for this desk; null is the default menu. */
@@ -72,7 +75,7 @@ function jobFinished(j) {
   const place = placeOf(j.kind);
   if (state.route.page !== place || document.hidden) { badges.set(place, (badges.get(place) || 0) + 1); paintMenu(); }
   if (document.hidden) {
-    const n = [...badges.values()].reduce((a, b) => a + b, 0); document.title = `(${n}) ${appName()}`;
+    const n = [...badges.values()].reduce((a, b) => a + b, 0); document.title = `(${n}) ${titleNow()}`;
     try { if ('Notification' in window && Notification.permission === 'granted') new Notification(appName(), { body: text, tag: j.id }); } catch {}
   }
 }
@@ -83,11 +86,18 @@ function jobNeedsYou(j) {
   try { if ('Notification' in window && Notification.permission === 'granted') new Notification(appName(), { body: `Needs you: ${j.title || 'a job'}`, tag: j.id + '-waiting' }); } catch {}
 }
 const appName = () => String(state.settings.appName || '').trim() || 'AP Desk';
-document.addEventListener('visibilitychange', () => { if (!document.hidden) document.title = appName(); });
+// the tab says where the owner is, by his own name for the place: "<place> · <desk name>"
+const PAGE_WORDS = { home: 'Home', tracker: 'Tracker' };
+const titleNow = () => { const pg = state.route.page; return tabTitle(placeName(basePlaces(), state.settings[MENU_KEY], pg) || PAGE_WORDS[pg] || ownerOf(pg)?.name || null, appName()); };
+const paintTitle = () => { if (!document.hidden && document.title !== titleNow()) document.title = titleNow(); };
+document.addEventListener('visibilitychange', paintTitle);
 function paintMenu() {
   const off = role()?.off || [];
-  $('#menu').replaceChildren(...menuItems().map(it => h('button', { class: 'nav', 'data-v': it.id, 'aria-current': it.id === state.route.page ? 'page' : null, disabled: off.includes(it.id), title: off.includes(it.id) ? 'Off for this role. Switch it on in Settings.' : null, onclick: () => ui.go(it.id) }, it.label, badges.get(it.id) ? h('span', { class: 'badge', title: 'Finished since you last looked' }, String(badges.get(it.id))) : null)));
+  // at each end that hides places an arrow says so and moves the menu by a view (shown by menuEdges)
+  const more = (side) => h('button', { class: 'more ' + side, tabindex: '-1', 'aria-label': 'More places', title: 'More places', onclick: () => { const m = $('#menu'); m.scrollBy({ left: (side === 'l' ? -1 : 1) * Math.max(60, m.clientWidth - 2 * MENU_FADE), behavior: 'smooth' }); } }, side === 'l' ? '\u2039' : '\u203a');
+  $('#menu').replaceChildren(more('l'), ...menuItems().map(it => h('button', { class: 'nav', 'data-v': it.id, 'aria-current': it.id === state.route.page ? 'page' : null, disabled: off.includes(it.id), title: off.includes(it.id) ? 'Off for this role. Switch it on in Settings.' : null, onclick: () => ui.go(it.id) }, it.label, badges.get(it.id) ? h('span', { class: 'badge', title: 'Finished since you last looked' }, String(badges.get(it.id))) : null)), more('r'));
   fitMenu();
+  paintTitle();
 }
 // ---------- small top bar icons: thin outlines in the text colour (the theme and download icons stay dull until hovered)
 const svg = (d, extra = '') => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}${extra}</svg>`;
@@ -109,7 +119,6 @@ function paintTheme() {
 function paintChrome() {
   paintTheme(); paintDownloads(); paintNet(); paintTracker(); paintUpdate();
   const nameEl = document.querySelector('.bar .name'); if (nameEl && nameEl.textContent !== appName()) nameEl.textContent = appName();
-  if (!document.hidden && document.title !== appName()) document.title = appName();
   const halted = !!state.panic.halted;
   document.body.classList.toggle('halted', halted);
   $('#halt').hidden = !halted; $('#panic').textContent = halted ? 'Stopped' : 'Panic';
@@ -154,11 +163,10 @@ function stoppedSection() {
   return h('div', { class: 'card', 'data-apd': 'stopped', style: { marginBottom: '8px' } },
     h('div', { class: 'row' }, h('h3', null, 'Stopped by Panic'), h('span', { class: 'grow' }), one ? null : kit.btn('Dismiss all', { kind: 'ghost sm', onClick: () => dismissStopped({ all: true }) })),
     h('p', { class: 'sub' }, one ? 'This was waiting for you when you pressed Panic. It was cancelled. Ask again if you still want it.' : 'These were waiting for you when you pressed Panic. They were cancelled. Ask again if you still want them.'),
-    ...list.map(a => kit.line(a.title, `${ui.agent(a.agentId)?.name || a.agentId || 'An agent'} · ${ACTION_WORDS[a.action] || a.action} · stopped ${kit.fmt.when(a.decided)}`,
+    ...list.map(a => kit.line(a.title, `${jobWho(state.agents, a)} · ${ACTION_WORDS[a.action] || a.action} · stopped ${kit.fmt.when(a.decided)}`,
       kit.btn('Dismiss', { kind: 'ghost sm', onClick: () => dismissStopped({ id: a.id }) }))));
 }
 function approvalCard(a) {
-  const agent = ui.agent(a.agentId)?.name || a.agentId || 'An agent';
   // Everything the approval covers is shown, in full: long text scrolls inside its box, nothing is cut or left out.
   const rows = []; const walk = (obj, prefix) => { for (const [k, v] of Object.entries(obj || {})) { if (v == null) continue; if (typeof v === 'object') walk(v, prefix + k + '.'); else rows.push([prefix + k, String(v)]); } };
   if (a.payload && typeof a.payload === 'object') walk(a.payload, ''); else if (a.payload != null) rows.push(['', String(a.payload)]);
@@ -167,7 +175,7 @@ function approvalCard(a) {
     rows.map(([k, v]) => h('div', { style: { marginBottom: '6px' } }, k ? h('span', { class: 'sub', style: { display: 'block' } }, k + (v.length > 400 ? ` (${v.length} characters)` : '')) : null, h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: /code|command|script|body|text|content/i.test(k) && v.length > 120 ? 'var(--mono)' : null, fontSize: v.length > 600 ? '12.5px' : null } }, v)))) : null;
   return h('div', { class: 'card', style: { marginBottom: '8px' } },
     h('div', { class: 'row' }, h('b', null, a.title), kit.pill(ACTION_WORDS[a.action] || a.action, 'wait')),
-    h('div', { class: 'sub' }, `${agent} asks${a.detail ? ' · ' + a.detail : ''}${a.amount ? ' · ' + kit.fmt.money(a.amount, a.currency) : ''}`),
+    h('div', { class: 'sub' }, `${whoAsks(state.agents, a)}${a.detail ? ' · ' + a.detail : ''}${a.amount ? ' · ' + kit.fmt.money(a.amount, a.currency) : ''}`),
     body, total > 1500 ? h('div', { class: 'sub', style: { marginTop: '4px' } }, `Scroll to read all of it: ${total} characters. What you approve is exactly this.`) : null,
     h('div', { class: 'row', style: { marginTop: '8px' } }, h('span', { class: 'grow' }),
       kit.btn('Deny', { kind: 'ghost sm', onClick: () => ui.decide(a.id, 'deny').catch(e => toast(e.message, 'err')) }),
@@ -408,21 +416,36 @@ new MutationObserver(() => {
 function offNote(text, m) {
   return h('div', { class: 'offnote' }, h('b', null, text), m && m.kind !== 'core' ? kit.btn(`Switch on ${m.name}`, { onClick: async () => { try { await api(`modules/${m.id}/on`, { method: 'POST' }); await refresh(); render(); } catch (e) { toast(e.message, 'err'); } } }) : null, m ? h('span', { class: 'sub' }, 'Modules are switched in Settings › Modules.') : null);
 }
-function fitMenu() {
+// The menu never shows half a word: it snaps to whole places (shell.css), a place across an edge or under a fade is not
+// drawn, and the current place is brought wholly into view only when the owner moves (or the window is resized), never
+// on a repaint, so a live event does not undo his own scrolling.
+const MENU_FADE = 26;   // the width of the "more places" arrow at each end in shell.css (.menu .more)
+let menuShown = null;
+function fitMenu(move = false) {
   const menu = $('#menu'); if (!menu) return;
   const over = menu.scrollWidth > menu.clientWidth + 1;
   menu.classList.toggle('over', over);
-  if (over) menu.querySelector('[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  if (over && (move || menuShown !== state.route.page)) {
+    const cur = menu.querySelector('[aria-current="page"]');
+    if (cur) {
+      const m = menu.getBoundingClientRect(), c = cur.getBoundingClientRect();
+      if (c.left < m.left + MENU_FADE || c.right > m.right - MENU_FADE) menu.scrollLeft += c.left - (m.left + MENU_FADE);
+    }
+  }
+  menuShown = state.route.page;
   menuEdges();
   placeNotice();
-  if (!menu._wheel) { menu._wheel = true; menu.addEventListener('wheel', (e) => { if (menu.scrollWidth > menu.clientWidth && Math.abs(e.deltaY) > Math.abs(e.deltaX)) { menu.scrollLeft += e.deltaY; e.preventDefault(); } }, { passive: false }); window.addEventListener('resize', fitMenu); menu.addEventListener('scroll', menuEdges, { passive: true }); }
+  if (!menu._wheel) { menu._wheel = true; menu.addEventListener('wheel', (e) => { if (menu.scrollWidth > menu.clientWidth && Math.abs(e.deltaY) > Math.abs(e.deltaX)) { menu.scrollBy({ left: e.deltaY }); e.preventDefault(); } }, { passive: false }); window.addEventListener('resize', () => fitMenu(true)); menu.addEventListener('scroll', menuEdges, { passive: true }); }
 }
-/** Which ends of the menu hide places: only those ends fade. */
+/** Which ends of the menu hide places: only those ends show the arrow. A place across an edge or under an arrow is not drawn. */
 function menuEdges() {
   const menu = $('#menu'); if (!menu) return;
   const over = menu.classList.contains('over');
-  menu.classList.toggle('fl', over && menu.scrollLeft > 2);
-  menu.classList.toggle('fr', over && menu.scrollLeft + menu.clientWidth < menu.scrollWidth - 2);
+  const { l: fl, r: fr } = over ? menuEnds(menu) : { l: false, r: false };
+  menu.classList.toggle('fl', fl); menu.classList.toggle('fr', fr);
+  const navs = [...menu.querySelectorAll('.nav')], m = menu.getBoundingClientRect();
+  const cut = new Set(over ? cutPlaces(navs.map(n => { const r = n.getBoundingClientRect(); return { l: r.left, r: r.right }; }), { l: m.left + (fl ? MENU_FADE : 0), r: m.right - (fr ? MENU_FADE : 0) }, { l: m.left, r: m.right }) : []);
+  navs.forEach((n, i) => n.classList.toggle('part', cut.has(i)));
 }
 // ---------- notices: in the top bar's free room right of the menu, else one slim line under the bar (the page moves down for it)
 function placeNotice() {
@@ -580,7 +603,14 @@ function connect() {
   let opened = false; es.onopen = () => { if (opened) { loadDownloads(); loadJobs(); } opened = true; };   // events missed while away
 }
 globalOn('panic', (st) => { if (st && 'halted' in st) { state.panic = st; paintChrome(); if (!st.halted) refreshApprovals().catch(() => {}); } });
-globalOn('approval', (a) => { refreshApprovals().catch(() => {}); if (a?.status === 'pending') toast(`Waiting for you: ${a.title}`); });
+// an approval asked while the desk's window is in front opens its card at once (unless he has another pop-up open);
+// the focus stays where the owner is typing
+globalOn('approval', async (a) => {
+  const asked = a?.status === 'pending';
+  if (asked) toast(`Waiting for you: ${a.title}`);
+  try { await refreshApprovals(); } catch { return; }
+  if (asked && !document.hidden && !popKind() && state.pendingApprovals.some(x => x.id === a.id)) showApprovals(true);   // another pop-up he opened stays
+});
 globalOn('modules', async () => {
   loaded.clear(); await refresh(); bootModules();
   // Settings updates in place (its menu, the cards): the owner stays where he was, at the same scroll and focus

@@ -44,7 +44,7 @@ export async function homePage(el, ui) {
     tiles.replaceChildren(tile(d.jobs.summary.running, 'Tasks running', 'tasks'), tile(d.approvals.length + d.jobs.summary.waiting, 'Waiting for you', 'tasks'), tile(d.jobs.summary.done, 'Finished', 'tasks'), tile(d.agents, 'Agents', 'agents'));
     const run = owners(d.jobs.running);
     running.replaceChildren(...(run.length ? run.map(j => h('div', { class: 'line' }, h('div', null, h('b', null, j.title), h('span', { class: 'd' }, `${ui.agent(j.agentId)?.name || 'Agent'} · ${j.detail || 'Working'}`)), meter(j.progress, { live: true, style: { maxWidth: '160px' } }), pill(fmt.pct(j.progress), 'run'))) : [empty('Nothing is running.')]));
-    const waits = [...d.approvals.map(a => line(a.title, `${ui.agent(a.agentId)?.name || 'An agent'} asks · ${ui.ACTION_WORDS[a.action] || a.action}`, btn('Review', { kind: 'ghost sm', onClick: () => ui.openApprovals() }))),
+    const waits = [...d.approvals.map(a => line(a.title, `${ui.whoAsks(a)} · ${ui.ACTION_WORDS[a.action] || a.action}`, btn('Review', { kind: 'ghost sm', onClick: () => ui.openApprovals() }))),
       ...d.jobs.waiting.map(j => line(j.title, j.detail || 'Waiting for you', btn('Open', { kind: 'ghost sm', onClick: () => ui.go('tasks') })))];
     const stopped = ui.stoppedSection?.();
     waiting.replaceChildren(...(waits.length || stopped ? [...waits, stopped].filter(Boolean) : [empty('Nothing is waiting.')]));

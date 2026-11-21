@@ -29,7 +29,6 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 .home{width:32px;height:32px;border-radius:10px;background:var(--fg);color:var(--win);display:grid;place-items:center;flex-shrink:0;transition:transform .15s}
 .home:active{transform:scale(.92)}.name{font-weight:600;white-space:nowrap;letter-spacing:-.01em}
 .menu{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
-.menu.over{-webkit-mask-image:linear-gradient(90deg,transparent,#000 22px,#000 calc(100% - 22px),transparent);mask-image:linear-gradient(90deg,transparent,#000 22px,#000 calc(100% - 22px),transparent);padding:0 14px}
 .nav{padding:6px 13px;border-radius:99px;white-space:nowrap;transition:background .15s,color .15s}
 .nav .badge{display:inline-block;margin-left:6px;min-width:17px;padding:0 5px;border-radius:99px;background:var(--accent);color:var(--on-accent);font-size:11px;font-weight:600;line-height:17px;text-align:center;vertical-align:1px}
 .nav:hover{background:var(--bubble)}.nav[aria-current="page"]{background:var(--fg);color:var(--win)}
@@ -220,9 +219,13 @@ body.halted .wire::after,body.halted .cursor,body.halted .typing span,body.halte
 #net[data-state="up"]{color:var(--ok)}#net[data-state="down"]{color:var(--stop)}#net[data-state="off"]{color:var(--dim)}
 .netstate{margin:0 0 6px;font-size:13px}.netstate .ico-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;vertical-align:1px;background:var(--dim)}
 .netstate[data-state="up"] .ico-dot{background:var(--ok)}.netstate[data-state="down"] .ico-dot{background:var(--stop)}
-/* The menu fades only on a side where more places are hidden */
-.menu.over{--ml:#000;--mr:#000;-webkit-mask-image:linear-gradient(90deg,var(--ml),#000 26px,#000 calc(100% - 26px),var(--mr));mask-image:linear-gradient(90deg,var(--ml),#000 26px,#000 calc(100% - 26px),var(--mr))}
-.menu.over.fl{--ml:transparent}.menu.over.fr{--mr:transparent}
+/* The menu shows an arrow only on a side where more places are hidden (it covers that edge; a press moves by a view) */
+.menu .more{display:none;position:sticky;z-index:1;flex:0 0 26px;width:26px;padding:0;align-items:center;justify-content:center;background:var(--win);color:var(--dim);font-size:19px;line-height:1}
+.menu .more.l{left:0}.menu .more.r{right:0}.menu .more:hover{color:var(--fg)}
+.menu.over .more{display:flex;visibility:hidden}.menu.over.fl .more.l,.menu.over.fr .more.r{visibility:visible}
+/* ...and never shows half a word: it snaps to whole places just inside the arrow, and a place across an edge is not drawn (shell.js menuEdges) */
+.menu.over{scroll-snap-type:x mandatory;scroll-padding-inline:26px}.menu.over .nav{scroll-snap-align:start}
+.menu .nav.part{opacity:0;pointer-events:none}.menu .nav.part:focus-visible{opacity:1}
 /* Phone width: the menu takes its own row under the name and the controls, so it has the whole width */
 @media (max-width:560px){
   .bar{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"l r" "m m";row-gap:2px;padding-top:6px;padding-bottom:4px}
