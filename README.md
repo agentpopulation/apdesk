@@ -222,10 +222,11 @@ This is version **0.1.0**, a first public release. We only state what was measur
 
 | What was measured | Result | When |
 |---|---|---|
-| Automated tests (`npm test`), Linux x64, Node 22 | 256 of 256 pass | 15 Nov 2026 |
-| Start-up check (`node tools/smoke.mjs --quick`): every module loads and every page opens in a real browser | 30 modules found, 16 on, 13 switch on and off, 0 pages with problems | 15 Nov 2026 |
-| 17 acceptance asks, answered by real free models, on this code | 13 passed, 3 failed, 1 not checked | 15 Nov 2026 |
-| Safety probes in `tools/safety` | All hold, with one accepted limit listed below | 15 Nov 2026 |
+| Automated tests (`npm test`), Linux x64, Node 22 | 762 of 762 pass | 21 Nov 2026 |
+| Start-up check (`node tools/smoke.mjs --quick`): every module loads and every page opens in a real browser | 35 modules found, 17 on, 18 switch on and off, 0 pages with problems | 21 Nov 2026 |
+| New features of 20–21 Nov, tried on a real desk with free models (first chat, Bench, Finder, APIs, Tables, CRM, advisors, Doctor, Network) | 9 passed, 8 partial, 1 failed of 19, then corrected and re-checked | 21 Nov 2026 |
+| 17 acceptance asks, answered by real free models | 13 passed, 3 failed, 1 not checked, on the 15 Nov code; not re-run since | 15 Nov 2026 |
+| Safety probes in `tools/safety` | All hold, with one accepted limit listed below | 21 Nov 2026 |
 
 The three that failed, and why:
 

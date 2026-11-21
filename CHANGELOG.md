@@ -196,6 +196,7 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Council seats backed by a hired advisor record their model calls under that advisor, so the Network Desk view and Tasks credit them; bare seats and the chair stay under the desk.
 - People and PINs are built underneath (the second step toward several people sharing one PC): a house store for who is on this PC, a PIN for each person, a session per window, and keeper-only rights for updates, module switches, going Online or Offline, and adding people. Nothing on screen changes yet; the chooser and switcher come next. A desk with one person and no PIN works exactly as before.
 - The PIN wait only ever turns a wrong PIN away: the right PIN enters even during a wait, so one person cannot lock another out. The pairing code and the paid-models switch are the keeper's alone, each person's spend limits stay their own, and one person's file browser cannot reach another's data or the keeper's backups.
+- The README now shows the measured test and check counts as of 21 Nov 2026 (762 of 762 tests), and says plainly that the 17 acceptance asks have not been re-run since 15 Nov.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.
