@@ -171,6 +171,8 @@ export class Modules {
     const t = this.tools.get(name);
     if (!t) throw Object.assign(new Error(`No such tool: ${name}`), { code: 'no_tool' });
     if (this.core.panic.halted) throw Object.assign(new Error('Everything is stopped. Press Resume first.'), { code: 'halted' });
+    // Incognito (contracts/PEOPLE.md) refuses schedules: it is dropped when the person leaves, so a schedule would never fire.
+    if (this.core.incognito && (name === 'schedule_create' || name === 'flow_create')) throw Object.assign(new Error('Schedules do not run in Incognito.'), { code: 'incognito' });
     return this.inSpace(() => t.run(args || {}, { ...call, signal: this.core.panic.child(call.signal) }));
   }
   /** Match /api/m/<id>/... */

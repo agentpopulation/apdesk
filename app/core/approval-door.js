@@ -47,6 +47,10 @@ export class ApprovalDoor {
     this.visited = new Set();     // hostnames the browser already opened (Careful)
     this.granted = new Map();     // id -> { action, usedAt }
     this.spendModuleOn = () => false;
+    // Incognito (contracts/PEOPLE.md): the person's real door. Spend is the one carry-over, so Incognito cannot get
+    // around the limits: this door's day and month totals and its limits are the person's own, and on leaving the
+    // Incognito space writes ONE amount-only row back to the real door (noteIncognitoSpend).
+    this.spendCarry = null;
     this.stoppedByPanic = 0;      // waiting approvals Panic cancelled since the last Resume
     panic.onChange((st) => {
       if (st.halted) { this.cancelAll('halted'); return; }
@@ -81,12 +85,27 @@ export class ApprovalDoor {
     return this.state();
   }
 
-  limits() { return { perItem: this.settings.get('spend.perItem'), perDay: this.settings.get('spend.perDay'), perMonth: this.settings.get('spend.perMonth'), currency: this.settings.get('currency') }; }
+  // Incognito reads the person's real limits, so the same ceiling holds inside it.
+  limits() { const s = this.spendCarry ? this.spendCarry.settings : this.settings; return { perItem: s.get('spend.perItem'), perDay: s.get('spend.perDay'), perMonth: s.get('spend.perMonth'), currency: s.get('currency') }; }
   spent(period) {
     const since = new Date(); if (period === 'day') since.setHours(0, 0, 0, 0); else { since.setDate(1); since.setHours(0, 0, 0, 0); }
     const a = this.s.get("SELECT COALESCE(SUM(amount), 0) AS t FROM approvals WHERE action = 'spend' AND status = 'approved' AND decided >= ?", since.toISOString())?.t || 0;
     const c = this.s.get('SELECT COALESCE(SUM(cost_minor), 0) AS t FROM calls WHERE at >= ?', since.toISOString())?.t || 0;
+    // Incognito spend counts toward the person's own day and month totals.
+    return a + c + (this.spendCarry ? this.spendCarry.spent(period) : 0);
+  }
+  /** Incognito only: everything spent in this space (dropped on leaving), as one figure to carry back as a single amount-only row. */
+  incognitoSpendTotal() {
+    const a = this.s.get("SELECT COALESCE(SUM(amount), 0) AS t FROM approvals WHERE action = 'spend' AND status = 'approved'")?.t || 0;
+    const c = this.s.get('SELECT COALESCE(SUM(cost_minor), 0) AS t FROM calls')?.t || 0;
     return a + c;
+  }
+  /** The one row Incognito leaves on the person's real desk: only the amount, no title content, no payload, no detail. */
+  noteIncognitoSpend(amount) {
+    const amt = Math.round(Number(amount) || 0); if (!(amt > 0)) return null;
+    const row = { id: makeId('ap_'), agentId: null, chatId: null, jobId: null, action: 'spend', title: 'spend', detail: null, payload: null, amount: amt, currency: this.settings.get('currency') };
+    this.insert(row, 'approved', 'incognito');
+    return row.id;
   }
   overLimit(amount) {
     const l = this.limits(); const a = Number(amount) || 0;

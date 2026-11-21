@@ -149,9 +149,41 @@ backups/<id>/
   website rules, data use, keys, approvals and events stay in their space, and that Panic and Offline hold for both.
 - Keys read from the environment (`OPENROUTER_API_KEY` ...) belong to the PC, so every space sees them.
 
+## Modes: Work, Personal and Incognito
+
+A person has a **Work** space (the default, `data/people/<id>/work/`, and the data folder itself for person 1) and may open
+a **Personal** space (`data/people/<id>/personal/`, its own backups in `personal-backups/`). Each is a full space with its
+own chats, memory, agents, leads and jobs. The switcher offers Work and Personal **after** the PIN is given for that person,
+so switching between them needs no new PIN (`POST /api/people/me/space { space }`; it creates Personal on first use). A
+person with only Work sees no choice and behaves exactly as today. Each person's spaces open at desk start.
+
+- **Keys** are each space's own in this version. The full move to a shared `data/people/<id>/keys.sqlite` was deferred: it
+  would rework `modules/backup/archive.js`, whose per-space backup/restore is a keeper gate (`DELETE FROM secrets`, the
+  trusted-restore checks and `13_backup_foreign_restore`), and a half-moved keys store risks either losing keys or leaking
+  them. So a person adds their keys in each space they use. A person's keys are still never seen by another person or by
+  Incognito. (`storage.js`, `modules.js`, `model-door.js`, `service-keys.js`, `vault/server.js`, `backup/archive.js`.)
+
+**Incognito** (`POST /api/people/incognito`) is a full space on an **in-memory** SQLite with a scratch workspace folder
+`data/people/<id>/.incognito-<rand>/` (its own `workspace/`, `profiles/`, `bin/`) and its own browser profile there. Every
+write — chat history, memory, the visit log, the call log, Finder's page library, ratings, approvals, Bench — lands in RAM
+or the scratch folder only. It reads none of the person's real memory, chats, leads or rules: it starts empty. Bench's away
+session (`/api/m/bench/start`), schedules (`/api/m/flows/schedules`, the `schedule_create`/`flow_create` tools) and
+downloads (`/api/local-engine/*`, `/api/downloads/*`) are refused in it, in plain words. Outbound still goes through the
+address guard and the website rules; approvals still apply; Panic still stops it.
+
+- **Spend is the one carry-over.** The Incognito door reads the person's own limits and counts the person's day and month
+  totals, so Incognito cannot get around the limits; `core.approval.spendCarry` holds the real door. On leaving (lock,
+  switch or close) it writes **one** row to the real desk holding only the amount — no title content, no payload, no detail.
+- **Leaving** drops the in-memory database and deletes the scratch folder. A scratch folder left by a crash is wiped at
+  desk start. Deleting the scratch files is **not** a secure wipe on an SSD, and what left the desk (a sent mail, a visit a
+  site logged, money spent) is still known outside it — the Incognito screen says so (`GET /api/people/me` `cautions`).
+- The proof is `test/incognito.test.js`: every durable file's hash is the same after an Incognito session apart from the one
+  amount-only spend row, the canary string is nowhere under `data/`, `backups/` or the OS temp folder, and the scratch
+  folder is gone.
+
 ## What later parts add
 
 - Moving an existing data folder into `data/people/<id>/work/`, with a journal and a safety copy.
 - The person switcher and chooser on screen (the routes are above).
-- Incognito: a space on an in-memory database with a scratch folder.
-- Backup per person and a whole-PC backup; Work and Personal sharing `keys.sqlite`.
+- Keys in a shared `data/people/<id>/keys.sqlite`, once backup/restore can carry it without weakening its keeper gate.
+- A whole-PC backup.

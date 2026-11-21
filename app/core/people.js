@@ -46,8 +46,19 @@ export class People {
   get(id) { return this.shown(this.row(id)); }
   keeper() { return this.shown(this.db.prepare('SELECT * FROM people WHERE keeper = 1').get()); }
   count() { return this.db.prepare('SELECT COUNT(*) AS n FROM people').get().n; }
-  /** The space folder of a person: the data folder itself for person 1. */
-  folderOf(id) { const r = this.row(id); return r ? (r.folder ? path.join(this.dataDir, r.folder) : this.dataDir) : null; }
+  /** The space folder of a person: Work (the data folder itself for person 1) or Personal. */
+  folderOf(id, space = 'work') {
+    const r = this.row(id); if (!r) return null;
+    if (space === 'personal') return path.join(this.dataDir, 'people', id, 'personal');
+    return r.folder ? path.join(this.dataDir, r.folder) : this.dataDir;
+  }
+  /** Has this person opened a Personal space? (A person with only Work sees no Work/Personal choice.) */
+  hasPersonal(id) { const r = this.row(id); return !!r && fs.existsSync(path.join(this.folderOf(id, 'personal'), 'apd.sqlite')); }
+  /** The Incognito scratch folders left in a person's folder (wiped at desk start after a crash). */
+  incognitoScratch(id) {
+    const base = path.join(this.dataDir, 'people', id);
+    try { return fs.readdirSync(base).filter(n => n.startsWith('.incognito-')).map(n => path.join(base, n)); } catch { return []; }
+  }
   async add({ name, emoji = '', colour = '#5b6270', pin }) {
     const look = { name: LOOK.name(name), emoji: LOOK.emoji(emoji), colour: LOOK.colour(colour) };
     pinRule(pin);

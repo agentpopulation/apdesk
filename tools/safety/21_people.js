@@ -87,6 +87,26 @@ try {
   const changed = cB.approval.level !== level || JSON.stringify(cB.settings.all()) !== before || t.desk.people.get(id).keeper;
   line('people-looks', changed || looks.some(s => s !== 400), `${looks.length} bodies with a key other than name, emoji, colour and theme were refused (${[...new Set(looks)].join(', ')}); nothing changed`, `statuses ${looks}, changed ${changed}`);
 
+  // 5. Incognito (contracts/PEOPLE.md): nothing it writes survives leaving; it reads none of the person's real data;
+  // spend still counts toward the person's own day total, so Incognito cannot get around the limits.
+  await b('/api/m/chat/chats', { body: { title: 'real-chat-of-B-for-incognito' } });
+  const spentBefore = cB.approval.spent('day');
+  const incEnter = await b('/api/people/incognito', { method: 'POST' });
+  const incTok = incEnter.json.token; const incSpace = t.desk.spaceForToken(incTok);
+  const incScratch = incSpace?.core.incognito?.scratch;
+  const inc = as(incTok);
+  const incSawReal = (await inc('/api/m/chat/chats')).json.chats.some(c => c.title === 'real-chat-of-B-for-incognito');
+  await inc('/api/m/chat/chats', { body: { title: 'incognito-canary-of-B' } });
+  incSpace.core.storage.run("INSERT INTO calls (at, cost_minor, currency, provider, model, ok) VALUES (?, 250, ?, 'paid', 'm', 1)", new Date().toISOString(), cB.settings.get('currency'));
+  await inc('/api/people/leave', { method: 'POST' });
+  const scratchGone = !!incScratch && !fs.existsSync(incScratch);
+  const tokB2 = (await as(null)('/api/people/enter', { body: { id, pin: '4821' } })).json.token;
+  const realChats = (await as(tokB2)('/api/m/chat/chats')).json.chats.map(c => c.title);
+  const incTrace = realChats.includes('incognito-canary-of-B') || incSawReal || !scratchGone;
+  line('incognito-trace', incTrace, `Incognito wrote nothing durable (its chat is gone, its scratch folder wiped) and read none of B's real chats`, `canary survived ${realChats.includes('incognito-canary-of-B')}, read real ${incSawReal}, scratch gone ${scratchGone}`);
+  const spentAfter = cB.approval.spent('day');
+  line('incognito-spend', spentAfter < spentBefore + 250, `Incognito spend (250) counted toward B's own day total, so the limits still hold`, `day total ${spentBefore} -> ${spentAfter}`);
+
   // control: the keeper's own token
   const ctl = await k('/api/modules/network/off', { method: 'POST' });
   const ctlOff = await k('/api/settings', { body: { online: false } });

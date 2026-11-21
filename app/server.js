@@ -42,7 +42,9 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
   // data folder as it is; every other person has a space of their own in data/people/<id>/work/.
   const people = new People({ dataDir });
   const keeper = people.ensureFirst(settings.get('ownerName'));
-  const personSpaces = new Map([[keeper.id, space]]);   // person id -> their space
+  const personSpaces = new Map([[keeper.id, space]]);   // person id -> their Work space
+  const personalSpaces = new Map();                     // person id -> their Personal space, once opened
+  const incognitoSpaces = new Set();                    // the live Incognito spaces (one per window that is in Incognito)
   // Offline holds in this process: outside calls are refused here, whatever a module or a browser page asks for
   // Each space may call its own local model servers (its Ollama, its LAN model nodes): its own allow list
   const allowsIn = (c) => (url) => { try { const k = hostKey(url); return !!k && offlineAllowList({ settings: c.settings, port: () => core.port }).has(k); } catch { return false; } };
@@ -55,13 +57,15 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
 
   // ---- Windows. One token per window, bound to one person and so to that person's space. A desk with one person and
   // no PIN is "open": its page gets the keeper's token as before, and a read without a token answers from that space.
-  const windows = new Map();       // token -> { token, personId, streams }
+  const windows = new Map();       // token -> { token, personId, space: 'work'|'personal', incognito: space|null, streams }
   const openStreams = new Set();   // event streams opened with no token while the desk was open
-  const issue = (personId) => { const token = crypto.randomBytes(24).toString('hex'); windows.set(token, { token, personId, streams: new Set() }); return token; };
+  const issue = (personId, space = 'work', incognito = null) => { const token = crypto.randomBytes(24).toString('hex'); windows.set(token, { token, personId, space, incognito, streams: new Set() }); return token; };
   /** End one event stream: its space stops writing to it first. */
   const endStream = ({ res, events: ev }) => { for (const c of [...ev.clients]) if (c.res === res) { clearInterval(c.ping); ev.clients.delete(c); } try { res.end(); } catch {} };
-  const endWindow = (token) => { const w = windows.get(token); if (!w) return; windows.delete(token); for (const st of w.streams) endStream(st); };
-  const endPerson = (personId) => { for (const [token, w] of [...windows]) if (w.personId === personId) endWindow(token); };
+  // Ending a window that is in Incognito drops that Incognito space: its spend is carried back as one amount-only row,
+  // its in-memory database is thrown away and its scratch folder deleted (dropIncognito). Returns a promise when it did.
+  const endWindow = (token) => { const w = windows.get(token); if (!w) return null; windows.delete(token); for (const st of w.streams) endStream(st); return w.incognito ? dropIncognito(w.incognito) : null; };
+  const endPerson = (personId) => { const ps = []; for (const [token, w] of [...windows]) if (w.personId === personId) { const p = endWindow(token); if (p) ps.push(p); } return Promise.all(ps); };
   const isOpen = () => people.count() === 1 && !people.keeper()?.hasPin;
   /** After a change that may end "open": a stream with no token no longer belongs to anyone. */
   const closedNow = () => { if (isOpen()) return; for (const st of [...openStreams]) endStream(st); openStreams.clear(); };
@@ -69,7 +73,9 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
   const pageToken = () => { if (!isOpen()) return ''; if (!windows.has(session)) session = issue(keeper.id); return session; };
   const reqWindow = new WeakMap();
   const windowOf = (req) => { if (reqWindow.has(req)) return reqWindow.get(req); const t = req.headers['x-apd-session']; return (typeof t === 'string' && windows.get(t)) || null; };
-  const spaceOfWindow = (w) => (w ? personSpaces.get(w.personId) || null : null);
+  // The space a window answers from: its Incognito space while it is in Incognito, else its person's Work or Personal space.
+  const realSpaceOf = (w) => (w.space === 'personal' ? personalSpaces.get(w.personId) : personSpaces.get(w.personId)) || null;
+  const spaceOfWindow = (w) => (w ? (w.incognito || realSpaceOf(w)) : null);
   /** Any person who has entered (house routes: Panic's Resume, pairing). */
   const sessionOk = (req) => !!windowOf(req);
   /** The token of a person whose space is sp (that space's routes). */
@@ -123,7 +129,7 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
       if (!sessionOk(req)) return sendJson(res, { error: 'Modules are switched in the Module Store on this desk.' }, 403);
       if (!['on', 'off'].includes(params.onoff)) return sendJson(res, { error: 'on or off' }, 400);
       const r = await modules.set(params.id, params.onoff === 'on');    // the keeper's space answers; the switch holds for every person
-      for (const sp of personSpaces.values()) if (sp !== space) { try { await sp.core.modules.set(params.id, params.onoff === 'on'); } catch (e) { log('modules', params.id, e.message); } }
+      for (const sp of [...personSpaces.values(), ...personalSpaces.values()]) if (sp !== space) { try { await sp.core.modules.set(params.id, params.onoff === 'on'); } catch (e) { log('modules', params.id, e.message); } }
       sendJson(res, r);
     },
     'GET /api/agents': (req, res) => sendJson(res, { agents: agents.list() }),
@@ -246,6 +252,15 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
       // A paired browser with no person entered may see who is here, enter, and stop everything. Nothing else.
       if (p.startsWith('/api/') && !sp && p !== '/api/panic' && !(p === '/api/people' && method === 'GET') && !(p === '/api/people/enter' && method === 'POST')) return sendJson(res, { error: 'Choose who you are first.', code: 'no_person' }, 401);
       const target = p.startsWith('/router/') ? space : sp;   // the router for other programs is served from the keeper's space
+      // Incognito refuses Bench, schedules and downloads: it remembers nothing, so these have nothing to work on and would
+      // write nowhere durable. The owner is told plainly, in the same words as when they try it.
+      if (target?.core.incognito && method !== 'GET' && method !== 'HEAD') {
+        const no = p === '/api/m/bench/start' ? 'Bench does not run in Incognito: it remembers nothing, so there is nothing for it to look back on.'
+          : (p.startsWith('/api/downloads/') || p.startsWith('/api/local-engine/')) ? 'Downloads do not run in Incognito.'
+          : (p.startsWith('/api/m/flows/schedules') || p.startsWith('/api/m/flows/chains')) ? 'Schedules do not run in Incognito: the Incognito desk is dropped when you leave, so a schedule would never fire.'
+          : null;
+        if (no) return sendJson(res, { error: no, code: 'incognito' }, 403);
+      }
       // Screen lock (Accounts and Lock module): while the desk is locked nothing answers except what is needed to
       // show the lock, unlock it, and stop everything.
       if ((p.startsWith('/api/') || p.startsWith('/router/')) && target?.core.modules.api('accounts')?.isLocked?.() === true) {
@@ -305,8 +320,8 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
 
   /** Tests only (node --test): a second space on another data folder, in this process. No route, setting or tool reaches it. */
   /** A space other than the keeper's, on its own data folder, in this process. */
-  const openOther = (dir, backups) => {
-    const other = openSpace({ dataDir: dir, backupsDir: backups, panic, main: false, houseSettings: settings, houseStorage: storage, env, log, root: ROOT, app: APP, modulesDir, onlyModules, host, version });
+  const openOther = (dir, backups, extra = {}) => {
+    const other = openSpace({ dataDir: dir, backupsDir: backups, panic, main: false, houseSettings: settings, houseStorage: storage, env, log, root: ROOT, app: APP, modulesDir, onlyModules, host, version, ...extra });
     Object.defineProperty(other.core, 'port', { get: () => core.port, enumerable: true });
     other.core.offlineAllows = allowsIn(other.core);
     other.core.restart = (reason) => core.restart(reason);
@@ -325,7 +340,34 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
   };
   // Every person's space opens when the desk starts, so their jobs, schedules and Bench run while someone else is at the desk.
   const openPerson = (id) => { const dir = people.folderOf(id); const sp = openOther(dir, path.join(path.dirname(dir), 'backups')); personSpaces.set(id, sp); return sp; };
-  for (const p of people.list()) if (p.id !== keeper.id) openPerson(p.id);
+  // A person's Personal space, its own data folder and its own backups folder beside Work. Opened at desk start if it
+  // exists, else on first switch.
+  const openPersonal = (id) => { const dir = people.folderOf(id, 'personal'); const sp = openOther(dir, path.join(path.dirname(dir), 'personal-backups')); personalSpaces.set(id, sp); return sp; };
+  // Incognito (contracts/PEOPLE.md): a full space on an in-memory database with a scratch workspace folder. It reads none
+  // of the person's real data and starts empty; spend is the one carry-over, counted on the space the person came from.
+  const openIncognito = async (fromSpace, personId) => {
+    const scratch = path.join(dataDir, 'people', personId, '.incognito-' + crypto.randomBytes(6).toString('hex'));
+    const inc = openOther(scratch, path.join(scratch, 'backups'), { memory: true, incognito: { personId, scratch } });
+    inc.core.approval.spendCarry = fromSpace.core.approval;   // Incognito cannot get around the person's spend limits
+    incognitoSpaces.add(inc);
+    await inc.start();
+    return inc;
+  };
+  /** Leaving Incognito (lock, switch or close): carry the spend back as one amount-only row, drop the in-memory
+   *  database and delete the scratch folder. Deleting the scratch files is not a secure wipe on an SSD (said on screen). */
+  const dropIncognito = async (inc) => {
+    if (!incognitoSpaces.delete(inc)) return;
+    try { inc.core.approval.spendCarry?.noteIncognitoSpend(inc.core.approval.incognitoSpendTotal()); } catch (e) { log('incognito', 'spend carry', e?.message || e); }
+    const scratch = inc.core.incognito?.scratch;
+    try { await inc.close(); } catch (e) { log('incognito', 'close', e?.message || e); }
+    if (scratch) try { fs.rmSync(scratch, { recursive: true, force: true }); } catch (e) { log('incognito', 'wipe scratch', e?.message || e); }
+  };
+  for (const p of people.list()) {
+    if (p.id !== keeper.id) openPerson(p.id);
+    // A scratch folder left behind by a crash holds no durable value: wipe it. Then open any Personal space.
+    for (const dir of people.incognitoScratch(p.id)) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { log('incognito', 'wipe stale', e?.message || e); } }
+    if (people.hasPersonal(p.id)) openPersonal(p.id);
+  }
 
   // ---- The people routes (house). Who is here and entering need no token; the rest are the window's own person's.
   function peopleRoutes() {
@@ -344,20 +386,51 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
       refused(res, k.id, r); return false;
     };
     const entered = (res, id, token) => sendJson(res, { token, person: people.get(id), notice: people.takeNotice(id) });
+    const spacesOf = (id) => people.hasPersonal(id) ? ['work', 'personal'] : ['work'];
+    // What cannot be undone, said plainly on the Incognito screen (contracts/PEOPLE.md, section 8).
+    const INCOGNITO_CAUTIONS = [
+      'Incognito leaves nothing on this desk: when you leave, its chats, memory, visit log, ratings and approvals are dropped and its scratch files deleted.',
+      'What you do still leaves the desk. A mail you approve is still sent and sits in the provider’s Sent folder. A site still saw your visit. Money spent is spent.',
+      'Spend still counts. The amount is added to your own day and month totals, so Incognito cannot get around your spend limits.',
+      'Outbound still goes through the address guard and your website rules; approvals still apply; Panic still stops it.',
+      'Deleting the Incognito scratch files is not a secure wipe on an SSD.',
+    ];
     return {
-      'GET /api/people': (req, res) => sendJson(res, { people: people.list().map(p => ({ ...p, waiting: personSpaces.get(p.id)?.core.approval.listPending().length || 0 })), you: me(req)?.personId || null }),
-      'GET /api/people/me': (req, res) => { const w = me(req); if (!w) return sendJson(res, { error: 'Choose who you are first.', code: 'no_person' }, 401); sendJson(res, { person: people.get(w.personId), theme: spaceOfWindow(w).core.settings.get('theme') }); },
+      'GET /api/people': (req, res) => sendJson(res, { people: people.list().map(p => ({ ...p, waiting: personSpaces.get(p.id)?.core.approval.listPending().length || 0, spaces: spacesOf(p.id) })), you: me(req)?.personId || null, incognito: !!me(req)?.incognito }),
+      'GET /api/people/me': (req, res) => {
+        const w = me(req); if (!w) return sendJson(res, { error: 'Choose who you are first.', code: 'no_person' }, 401);
+        const incognito = !!w.incognito;
+        sendJson(res, { person: people.get(w.personId), theme: spaceOfWindow(w).core.settings.get('theme'), space: incognito ? 'incognito' : w.space, incognito, spaces: spacesOf(w.personId), ...(incognito ? { cautions: INCOGNITO_CAUTIONS } : {}) });
+      },
       'POST /api/people/enter': async (req, res, { body }) => {
         const id = String(body?.id || ''); if (!people.get(id)) return sendJson(res, { error: 'No such person on this desk.' }, 404);
         const r = await people.verify(id, body?.pin); if (!r.ok) return refused(res, id, r);
         entered(res, id, issue(id));
       },
-      'POST /api/people/leave': (req, res) => { endWindow(me(req).token); sendJson(res, { ok: true }); },
+      'POST /api/people/leave': async (req, res) => { await endWindow(me(req).token); sendJson(res, { ok: true }); },
       'POST /api/people/switch': async (req, res, { body }) => {
         const id = String(body?.id || ''); if (!people.get(id)) return sendJson(res, { error: 'No such person on this desk.' }, 404);
         const r = await people.verify(id, body?.pin); if (!r.ok) return refused(res, id, r);
-        const was = me(req).token; const token = issue(id); endWindow(was);
+        const was = me(req).token; const token = issue(id); await endWindow(was);   // leaving Incognito here drops it
         entered(res, id, token);
+      },
+      // Work and Personal of the same person: the PIN was already given for this person, so no PIN here. A person with only
+      // Work never calls this. Leaving Incognito by switching space drops the Incognito space.
+      'POST /api/people/me/space': async (req, res, { body }) => {
+        const w = me(req); const which = body?.space === 'personal' ? 'personal' : body?.space === 'work' ? 'work' : null;
+        if (!which) return sendJson(res, { error: 'Choose Work or Personal.' }, 400);
+        if (which === 'personal' && !personalSpaces.has(w.personId)) await openPersonal(w.personId).start();
+        const token = issue(w.personId, which, null); await endWindow(w.token);
+        const sp = (which === 'personal' ? personalSpaces : personSpaces).get(w.personId);
+        sendJson(res, { token, person: people.get(w.personId), space: which, spaces: spacesOf(w.personId), theme: sp.core.settings.get('theme') });
+      },
+      // Open an Incognito space for the person in this window. A full space on an in-memory database with a scratch folder.
+      'POST /api/people/incognito': async (req, res) => {
+        const w = me(req);
+        if (w.incognito) return sendJson(res, { error: 'This window is already in Incognito.' }, 409);
+        const inc = await openIncognito(realSpaceOf(w), w.personId);
+        const token = issue(w.personId, w.space, inc); await endWindow(w.token);
+        sendJson(res, { token, person: people.get(w.personId), incognito: true, space: w.space, cautions: INCOGNITO_CAUTIONS });
       },
       'POST /api/people/me/pin': async (req, res, { body }) => {
         const w = me(req); const p = people.get(w.personId);
@@ -390,8 +463,10 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
         const p = people.get(params.id); if (!p) return sendJson(res, { error: 'No such person on this desk.' }, 404);
         if (p.keeper) return sendJson(res, { error: 'The keeper of this PC stays.' }, 409);
         if (!(await keeperPinOk(req, res, body?.pin))) return;
-        endPerson(p.id); const sp = personSpaces.get(p.id); personSpaces.delete(p.id);
-        try { await sp?.close(); } finally { endPerson(p.id); }
+        await endPerson(p.id);
+        const sp = personSpaces.get(p.id); personSpaces.delete(p.id);
+        const psp = personalSpaces.get(p.id); personalSpaces.delete(p.id);
+        try { await sp?.close(); await psp?.close(); } finally { await endPerson(p.id); }
         const { folder } = people.remove(p.id);
         approval.activity({ action: 'people.remove', title: `${p.name} was taken off this desk`, how: 'keeper', detail: 'The folder stays: ' + folder });
         sendJson(res, { ok: true, folder, message: `${p.name} is no longer on this desk. Their folder was not deleted. It is here: ${folder}` });
@@ -401,7 +476,7 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
         if (!(await keeperPinOk(req, res, body?.pin))) return;
         const by = people.get(me(req).personId);
         await people.resetPin(p.id, body?.newPin, by.id);
-        if (p.id !== by.id) endPerson(p.id);
+        if (p.id !== by.id) await endPerson(p.id);
         noteIn(p.id, `Your PIN was reset by ${by.name}`, 'people.pin.reset');
         approval.activity({ action: 'people.pin.reset', title: `The PIN of ${p.name} was reset`, how: 'keeper' });
         sendJson(res, { person: people.get(p.id) });
@@ -414,11 +489,13 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
     core, server, modules, state, restartRequested: null, onRestart: null, pairCode: pairing ? pairCode : null, openTestSpace, people,
     /** The keeper's window token (the page carries it while the desk is open). */
     get session() { return session; },
-    /** A person's space, or null. For the desk and its tests; no route or module reaches it. */
-    spaceOf: (id) => personSpaces.get(id) || null,
+    /** A person's Work (default) or Personal space, or null. For the desk and its tests; no route or module reaches it. */
+    spaceOf: (id, which = 'work') => (which === 'personal' ? personalSpaces.get(id) : personSpaces.get(id)) || null,
+    /** The space a window token answers from, Incognito included. For the desk and its tests; no route or module reaches it. */
+    spaceForToken: (token) => { const w = windows.get(String(token || '')); return w ? spaceOfWindow(w) : null; },
     async start() {
       await space.start();
-      for (const sp of personSpaces.values()) if (sp !== space) await sp.start();
+      for (const sp of [...personSpaces.values(), ...personalSpaces.values()]) if (sp !== space) await sp.start();
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
       core.port = server.address().port;
       log(`AP Desk ${core.version} on http://${host}:${core.port}  data: ${dataDir}`);
@@ -429,6 +506,7 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
     },
     async stop() {
       unguard();
+      for (const inc of [...incognitoSpaces]) await dropIncognito(inc);   // carry spend, drop RAM, wipe scratch before shutdown
       await panic.stopAll('Shutting down').catch(() => {});
       const all = [...spaces].reverse(); spaces.clear();
       for (const s of all) await s.stop();   // Panic's stop hooks of every space ran just above

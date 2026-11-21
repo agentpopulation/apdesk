@@ -3,15 +3,18 @@ import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 
-export function openStorage(dataDir, backupsDir) {
+export function openStorage(dataDir, backupsDir, { memory = false } = {}) {
   fs.mkdirSync(dataDir, { recursive: true });
   if (backupsDir) fs.mkdirSync(backupsDir, { recursive: true });
   for (const d of ['workspace', 'workspace/reports', 'workspace/tables', 'workspace/drafts', 'workspace/inbox', 'profiles', 'bin']) {
     fs.mkdirSync(path.join(dataDir, d), { recursive: true });
   }
-  const file = path.join(dataDir, 'apd.sqlite');
+  // Incognito (contracts/PEOPLE.md): the database is held in RAM only; the workspace, profiles and bin are a scratch
+  // folder (dataDir) that the desk deletes on leaving. Nothing of it reaches apd.sqlite or any durable file.
+  const file = memory ? ':memory:' : path.join(dataDir, 'apd.sqlite');
   const db = new DatabaseSync(file);
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+  if (!memory) db.exec('PRAGMA journal_mode = WAL;');
+  db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
   db.exec(`
     CREATE TABLE IF NOT EXISTS migrations (module TEXT NOT NULL, version INTEGER NOT NULL, applied TEXT NOT NULL, PRIMARY KEY (module, version));
     CREATE TABLE IF NOT EXISTS kv (ns TEXT NOT NULL, key TEXT NOT NULL, value TEXT, PRIMARY KEY (ns, key));

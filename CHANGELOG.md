@@ -199,6 +199,8 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - The README now shows the measured test and check counts as of 21 Nov 2026 (762 of 762 tests), and says plainly that the 17 acceptance asks have not been re-run since 15 Nov.
 - Build housekeeping: temporary agent worktrees under `.claude/` are ignored by git, so they can never be caught by a commit.
 - The Payments page no longer shows a stray "null" under the Spent heading on a day when no call has an unknown cost.
+- Incognito mode (remember nothing): a person can open an Incognito space that runs entirely in memory with a scratch folder. Nothing is kept — not chats, memory, the visit log, ratings or Bench — and it reads none of your real data; on leaving, the memory is dropped and the scratch folder deleted. The one thing that still counts is spend, so Incognito cannot get around your limits. The screen says plainly what still leaves the desk (a mail you approve is still sent, a site still saw you, money spent is spent) and that deleting the scratch files is not a secure wipe.
+- Each person can keep a separate Work and Personal space, each with its own chats, memory, leads and jobs. For now keys are added per space (a safe step short of one shared key store); a person's keys are never seen by another person or by Incognito.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.
