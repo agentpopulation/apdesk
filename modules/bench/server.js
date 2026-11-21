@@ -5,9 +5,9 @@
 import si from 'systeminformation';
 import { spawn as realSpawn } from 'node:child_process';
 import { TIERS, ACTIVITIES, BUDGET, KINDS, tierFor, freshPlan, nextActivity, modelOrder, buildNote, noteText, activity as activityDef } from './engine.js';
-import { RUN } from './activities.js';
+import { RUN, fieldWord } from './activities.js';
 import { OPTIONS, OPTION_WORDS, LIMITS, LIMIT_WORDS, GATE_DEFAULTS, gateReady, effectiveMode, limitStatus, cleanCap, cleanLimits } from './spendgate.js';
-import { BEAT_MS, BEAT_KEEP_MS, gapBetween, gapText, todoList, hasWork, DRAFT_TYPES, DRAFT_WORDS, cleanDraft, draftText, makeDraft, draftPick, zoneDay, pickFind, answerFind, rulesIn, RULE_WORDS, weeklyNote } from './extras.js';
+import { BEAT_MS, BEAT_KEEP_MS, gapBetween, gapText, todoList, hasWork, DRAFT_TYPES, DRAFT_WORDS, cleanDraft, draftText, makeDraft, draftPick, draftable, zoneDay, zoneDayStart, pickFind, answerFind, rulesIn, RULE_WORDS, weeklyNote } from './extras.js';
 import { keepAwake } from './keepawake.js';
 
 /** Tests set these: a fake clock (ms), a fake battery reading, no pause between calls, smaller budgets. */
@@ -47,6 +47,8 @@ export async function activate(ctx) {
   const cfg = () => ({ enabled: kv.get('enabled', false) === true, startAfter: START_AFTER.includes(kv.get('startAfter', 30)) ? kv.get('startAfter', 30) : 30,
     models: MODEL_MODES.includes(kv.get('models', 'free')) ? kv.get('models', 'free') : 'free', battery: Math.max(0, Math.min(100, Number(kv.get('battery', 30)) || 0)), site: String(kv.get('site', '') || '') });
   const budget = () => testHooks.budget || BUDGET;
+  /** The owner's own name for Bench's menu place (Settings, Menu), else "Bench". */
+  const placeName = () => { const n = ctx.settings.get('ui.menu')?.names?.bench; return typeof n === 'string' && n.trim() ? n.replace(/\s+/g, ' ').trim().slice(0, 30) : 'Bench'; };
   const online = () => ctx.settings.get('online') !== false;
   if (!kv.get('lastSeen', 0)) kv.set('lastSeen', nowMs());   // switched on just now: the owner is here
 
@@ -77,9 +79,13 @@ export async function activate(ctx) {
     emit({ change: 'gate' });
     return gate();
   };
-  // today's spend (minor units) from the model-call log; the owner's zone day is what model-door.usage() groups by
-  const daySpend = () => (ctx.model.usage().today || []).reduce((a, r) => a + (Number(r.cost) || 0), 0);
-  const sessionSpend = (s) => s ? (ctx.db.get('SELECT COALESCE(SUM(cost_minor), 0) AS c FROM calls WHERE at >= ?', s.started)?.c || 0) : 0;
+  // paid spend (minor units) from the model-call log: the door prices every call by its list price, so a call on a free-tier key
+  // (Gemini, Groq, ...) carries a cost it never charged; only paid providers count, and OpenRouter, whose free models cost 0
+  const paidSince = (sinceIso) => { const tiers = providerTiers(); return ctx.db.all('SELECT provider, COALESCE(SUM(cost_minor), 0) AS c FROM calls WHERE at >= ? GROUP BY provider', sinceIso)
+    .reduce((a, r) => a + (r.provider === 'openrouter' || tiers[r.provider] !== 'free-signup' ? Number(r.c) || 0 : 0), 0); };
+  const dayStartIso = () => iso(zoneDayStart(nowMs(), ctx.settings.get('timeZone')));   // the owner's day, in his zone
+  const daySpend = () => paidSince(dayStartIso());
+  const sessionSpend = (s) => s ? paidSince(s.started) : 0;
   const sessionUsed = (s) => ({ tasks: Object.values(s.plan || {}).filter((p) => p.status !== 'pending').length, sources: s.used.pages || 0, steps: s.used.calls || 0, minutes: Math.round((s.used.ms || 0) / 60000) });
   const effMode = (s) => effectiveMode(gate(), { daySpend: daySpend(), sessionSpend: sessionSpend(s) });
 
@@ -140,6 +146,9 @@ export async function activate(ctx) {
 
   const providerTiers = () => Object.fromEntries(Object.entries(ctx.model.providers()).map(([k, v]) => [k, v.tier]));
   /** Paid use already allowed for a provider: OpenRouter's own paid switch; any other paid provider only when the owner's chain uses its key. */
+  /** One model route by name; a second try avoids the routes named (when another is left; the Free API picks its next host). */
+  const routeKey = (m) => `${m.provider}:${m.model || ''}`;
+  const pick = (order, avoid) => { const rest = order.filter((m) => !(avoid || []).includes(routeKey(m))); return rest.length ? rest : order; };
   const paidAllowed = (p) => p === 'openrouter' ? ctx.settings.get('openrouter.allowPaid') === true : (ctx.settings.get('model.defaultChain') || []).some((x) => x === 'keyed' || x === p);
 
   /** The helper one activity gets: the doors through Bench's limits. */
@@ -164,7 +173,7 @@ export async function activate(ctx) {
         // the gate decides the model mode; at 80% of a session limit a paid mode winds down to free
         const g = gate(); const em = effectiveMode(g, { daySpend: daySpend(), sessionSpend: sessionSpend(sess()) });
         let mode = em.mode || 'local'; if (limitStatus(g.limits, sessionUsed(sess())).winding && mode === 'paid') mode = 'free';
-        const order = modelOrder(await ctx.model.active(), { mode, tiers: providerTiers(), paidAllowed });
+        const order = pick(modelOrder(await ctx.model.active(), { mode, tiers: providerTiers(), paidAllowed }), o.avoid);
         if (!order.length) throw fail('nomodel', online() ? 'no model was set up for Bench' : 'the desk is offline and no local model is running');
         let retryAt = 0; const errs = [];
         for (const m of order) {
@@ -172,8 +181,8 @@ export async function activate(ctx) {
           const wait = lastCall + pace - Date.now(); if (wait > 0) await sleep(wait, job.signal);
           lastCall = Date.now(); use('calls'); const t1 = Date.now();
           try {
-            const { agentId: _a, model: _m, signal: _s, ...rest } = o;
-            const r = await ctx.model.chat({ ...rest, model: { provider: m.provider, model: m.model }, signal: job.signal });
+            const { agentId: _a, model: _m, signal: _s, avoid: _v, ...rest } = o;
+            const r = { ...await ctx.model.chat({ ...rest, model: { provider: m.provider, model: m.model }, signal: job.signal }), route: routeKey(m) };
             const s = sess(); if (!s.models.includes(r.label)) { s.models.push(r.label); saveSession(s); }
             addStep(job.id, 'scout', { action: 'asked a model', provider: r.provider || m.provider, model: r.model || m.model, ms: r.ms || (Date.now() - t1), outcome: 'answered' });
             return r;
@@ -200,6 +209,8 @@ export async function activate(ctx) {
         return id;
       },
       sessionItems: () => items(sid),
+      /** Bench's own findings of one kind, in every session and whatever the owner decided (so one is not proposed twice). */
+      everItems: (kind) => ctx.db.all('SELECT * FROM m_bench_items WHERE kind = ?', kind).map(itemOut),
       /** File writes are allowed by the level itself only at Open; at Careful or Strict they would ask, so Bench does not try. */
       mayWriteFiles: () => ctx.settings.get('security.level') === 'open',
       who: () => ({ agentId: 'scout', jobId: job.id, signal: job.signal }),
@@ -283,41 +294,56 @@ export async function activate(ctx) {
     const pick = draftPick(a.id, list.filter((i) => i.activity === a.id && i.state === 'new' && i.kind !== 'draft'), have);
     if (!pick.item) return;
     const d = await makeDraft((o) => b.ask(o), pick.item, pick.type);
-    b.item(draftItem(pick.type, pick.item, d));
+    const x = draftItem(pick.type, pick.item, d); b.item({ ...x, data: { ...x.data, route: d.route } });
   }
   /** A model answer for something the owner pressed, inside his spend choice (no session budget: he is here). */
   async function ownerAsk(o, signal) {
     const g = gate(); if (!gateReady(g)) throw fail('gate', 'Choose how Bench may spend first.');
     const em = effectiveMode(g, { daySpend: daySpend(), sessionSpend: 0 });
-    const order = modelOrder(await ctx.model.active(), { mode: em.mode || 'local', tiers: providerTiers(), paidAllowed });
+    const order = pick(modelOrder(await ctx.model.active(), { mode: em.mode || 'local', tiers: providerTiers(), paidAllowed }), o.avoid);
     if (!order.length) throw fail('nomodel', 'No model is set up for Bench.');
     for (const m of order) {
-      try { const { agentId: _a, model: _m, signal: _s, ...rest } = o; return await ctx.model.chat({ ...rest, model: { provider: m.provider, model: m.model }, signal }); }
+      try { const { agentId: _a, model: _m, signal: _s, avoid: _v, ...rest } = o; return { ...await ctx.model.chat({ ...rest, model: { provider: m.provider, model: m.model }, signal }), route: routeKey(m) }; }
       catch (e) { if (signal?.aborted || e.code === 'aborted' || e.code === 'halted') throw fail('aborted', 'Stopped'); }
     }
     throw fail('nomodel', 'No model answered.');
   }
-  /** The owner asked for a draft (or another go at one): a job he can see, waited for here. */
-  async function ownerDraft(from, type) {
-    const job = await ctx.jobs.start({ kind: 'bench.draft', title: `Bench: a ${DRAFT_WORDS[type]}`, input: { itemId: from.id, type }, async run(j) { return { draft: await makeDraft((o) => ownerAsk(o, j.signal), from, type) }; } });
+  /** The owner asked for a draft (or another go at one), and waits for it on the page: the answer is the reply he sees, so the
+   *  job is quiet and ends done either way; a draft that was not made is told to him there, not left as an unfinished task. */
+  async function ownerDraft(from, type, avoid = []) {
+    if (!draftable(from)) throw fail('nothing', 'There is nothing to draft: this finding has nothing more to say than its own words.');
+    const job = await ctx.jobs.start({ kind: 'bench.draft', title: `${placeName()}: a ${DRAFT_WORDS[type]}`, quiet: true, input: { itemId: from.id, type }, async run(j) {
+      try { const d = await makeDraft((o) => ownerAsk(o, j.signal), from, type, { avoid }); return { draft: d, route: d.route }; }
+      catch (e) { if (e.code === 'aborted' || j.signal.aborted) throw e; return { draft: null, code: e.code || 'nomodel', why: String(e.message || e).slice(0, 160) }; }
+    } });
     const done = await ctx.jobs.wait(job.id, 10 * 60000);
-    if (done?.status !== 'done' || !done.output?.draft) throw fail('nomodel', done?.error ? `The draft was not made: ${String(done.error).slice(0, 160)}` : 'The draft was not made.');
-    return { d: done.output.draft, jobId: job.id };
+    if (done?.status === 'done' && done.output?.draft) return { d: done.output.draft, jobId: job.id, route: done.output.route || '' };
+    const why = done?.output?.why || done?.error || '';
+    if (done?.output?.code === 'nothing') throw fail('nothing', why);
+    throw fail('nomodel', why ? `The draft was not made: ${String(why).replace(/\.$/, '')}.` : 'The draft was not made.');
+  }
+  /** Another go at a draft, in place: another model than the one that made the last version, when one is set up (the same ask
+   *  to the same model can come back word for word from the provider's own store). */
+  async function redraft(it, from) {
+    const { d, jobId, route } = await ownerDraft(from, it.data.draft.type, it.data.route ? [it.data.route] : []);
+    return updItem(it.id, { body: draftText(d), data: { ...it.data, draft: d, route, version: (it.data.version || 1) + 1, _jobId: jobId } });
   }
   async function draftAct(act, it, body) {
     if (act === 'draft') {
       if (['draft', 'needs'].includes(it.kind)) throw fail('bad', 'Make a draft from a finding.');
       const type = DRAFT_TYPES.includes(body?.type) ? body.type : null; if (!type) throw fail('bad', 'A one-pager or a next-actions list.');
-      const { d, jobId } = await ownerDraft(it, type);
-      return getItem(insertItem(it.sessionId, it.tier, 'draft', draftItem(type, it, d), jobId));
+      // a draft of this type from this finding is already waiting: another press makes that one again, not a copy
+      const open = items(it.sessionId).find((x) => x.kind === 'draft' && x.state === 'new' && x.data?.fromItem === it.id && x.data?.draft?.type === type);
+      if (open) return redraft(open, it);
+      const { d, jobId, route } = await ownerDraft(it, type);
+      return getItem(insertItem(it.sessionId, it.tier, 'draft', { ...draftItem(type, it, d), data: { ...draftItem(type, it, d).data, route } }, jobId));
     }
     if (it.kind !== 'draft' || !it.data?.draft) throw fail('bad', 'This is not a draft.');
     if (it.state !== 'new') throw fail('decided', 'This one was already decided.');
     const type = it.data.draft.type;
     if (act === 'redo') {
       const from = getItem(it.data.fromItem); if (!from) throw fail('gone', 'The finding this draft came from is gone.');
-      const { d, jobId } = await ownerDraft(from, type);
-      return updItem(it.id, { body: draftText(d), data: { ...it.data, draft: d, version: (it.data.version || 1) + 1, _jobId: jobId } });
+      return redraft(it, from);
     }
     if (act === 'edit') {
       const d = cleanDraft(type, { ...it.data.draft, ...(body?.draft || {}) }, it.data.draft.sources || []);
@@ -462,7 +488,7 @@ export async function activate(ctx) {
     if (want) awake.hold(); else awake.release();
   }
   const awakeView = () => ({ on: kv.get('keepAwake', false) === true, ...awake.state(), platform: testHooks.platform || process.platform,
-    note: 'Keeps this PC from sleeping only while Bench has work queued or running; the screen may still turn off. It uses the system\'s own tool and nothing else: no clicks or keys are made. It was tested with a stand-in only and has not been run for real on Windows or macOS.' });
+    note: `Keeps this PC from sleeping only while ${placeName()} has work queued or running; the screen may still turn off. It uses the system\'s own tool and nothing else: no clicks or keys are made. It was tested with a stand-in only and has not been run for real on Windows or macOS.` });
 
   // ---------------- today's find: once a day, one question from the owner's own history in the desk
   const findCfg = () => ({ off: kv.get('findOff', false) === true, avoid: (kv.get('findAvoid', []) || []).filter((x) => typeof x === 'string'), pin: String(kv.get('findPin', '') || '') });
@@ -473,7 +499,9 @@ export async function activate(ctx) {
   function findCandidates() {
     const out = [];
     for (const j of ctx.jobs.list({ status: 'done', limit: 200 })) if (!j.quiet && !String(j.kind).startsWith('bench.') && j.title) out.push({ topic: j.title, why: `It comes from a task you ran: "${String(j.title).slice(0, 120)}".`, at: j.finished || j.created });
-    for (const r of ctx.db.all("SELECT title, decided FROM m_bench_items WHERE state = 'kept' AND kind NOT IN ('draft', 'needs') ORDER BY decided DESC LIMIT 50")) out.push({ topic: String(r.title).replace(/: (new|already a customer|already in your pipeline)$/, ''), why: 'You kept this Bench finding.', at: r.decided });
+    // a kept name from the owner's market (a competitor, a possible customer, a free tool) is asked about with his field word
+    const fw = fieldWord(ctx.settings.get('business.about') || '');
+    for (const r of ctx.db.all("SELECT title, kind, decided FROM m_bench_items WHERE state = 'kept' AND kind NOT IN ('draft', 'needs') ORDER BY decided DESC LIMIT 50")) out.push({ topic: String(r.title).replace(/: (new|already a customer|already in your pipeline)$/, ''), why: 'You kept this Bench finding.', at: r.decided, ...(fw && ['competitor', 'lead', 'tool'].includes(r.kind) ? { about: fw } : {}) });
     for (const r of ctx.db.all("SELECT * FROM m_bench_ratings WHERE thumb = 'up' OR research = 'good' ORDER BY rated_at DESC LIMIT 50")) { const t = titleOf(ratingOut(r)); if (t) out.push({ topic: t, why: 'You rated this good.', at: r.rated_at }); }
     return out;
   }
@@ -485,6 +513,15 @@ export async function activate(ctx) {
     const q = pickFind(findCandidates(), { avoid: f.avoid, pin: f.pin, recent });
     if (!q) { kv.set('findDay', day); return null; }
     return { ...q, day };
+  }
+  /** Why there is no find to show, in one line. */
+  function noFindWhy() {
+    if (findCfg().off) return "Today's find is off in its settings.";
+    if (!cfg().enabled) return `${placeName()} is off, so there is no find.`;
+    if (!gateReady(gate())) return 'There is no find until you choose how it may spend.';
+    const f = findCfg(); const recent = ctx.db.all('SELECT topic FROM m_bench_finds ORDER BY created DESC LIMIT 14').map((r) => r.topic);
+    if (!pickFind(findCandidates(), { avoid: f.avoid, pin: f.pin, recent })) return findCandidates().length ? 'Every topic from your history was asked lately or is one to avoid.' : 'No finished tasks or ratings to pick a question from yet.';
+    return `The find is picked while ${placeName()} works.`;
   }
   async function startFind(s, q) {
     kv.set('findDay', q.day);
@@ -543,7 +580,7 @@ export async function activate(ctx) {
 
   // ---------------- the note
   const lastEnded = () => sessionOut(ctx.db.get("SELECT * FROM m_bench_sessions WHERE state != 'running' ORDER BY ended DESC LIMIT 1"));
-  const noteFor = (s) => { const list = items(s.id); const n = buildNote(s, list, { now: nowMs() }); return { session: s, note: n, text: noteText(n), items: list }; };
+  const noteFor = (s) => { const list = items(s.id); const n = buildNote(s, list, { now: nowMs(), name: placeName() }); return { session: s, note: n, text: noteText(n), items: list }; };
   /** The money choice with today's spend and this session's limit status, for the page header and the gate card. */
   function gateView() {
     const g = gate(); const s = current(); const ds = daySpend(); const ss = sessionSpend(s);
@@ -579,12 +616,12 @@ export async function activate(ctx) {
     const drafts = (ctx.approval.listPending?.() || []);
     const jobCard = (j) => ({ kind: 'job', id: j.id, jobId: j.id, title: j.title, summary: twoLines(j.output?.summary || j.detail), sources: jobSources(j), status: j.status, finished: j.finished || j.updated, agentId: j.agentId, chatId: j.chatId, steps: stepCount(j.id), rating: getRating('job', j.id) });
     const itemCard = (i) => ({ kind: 'bench', id: i.id, jobId: i.data?._jobId || null, title: i.title, summary: twoLines(i.body), sources: (i.evidence || []).map((e) => ({ title: e.title || e.url || 'Your desk', url: e.url || null })), itemKind: i.kind, complete: i.complete, steps: i.data?._jobId ? stepCount(i.data._jobId) : 0, rating: getRating('bench_item', i.id) });
-    const note = s ? buildNote(s, items(s.id), { now: nowMs() }) : null;
+    const note = s ? buildNote(s, items(s.id), { now: nowMs(), name: placeName() }) : null;
     const workedMs = (s?.used?.ms || 0) + doneJobs.reduce((a, j) => a + (j.finished && j.created ? Math.max(0, Date.parse(j.finished) - Date.parse(j.created)) : 0), 0);
     const recentGaps = gaps().filter((g) => Date.parse(g.to) >= nowMs() - 48 * 3600000).slice(-5).map((g) => ({ ...g, text: gapText({ from: Date.parse(g.from), to: Date.parse(g.to) }, place()) }));
     const find = findOut(ctx.db.get('SELECT * FROM m_bench_finds ORDER BY created DESC, rowid DESC LIMIT 1'));
     return {
-      gaps: recentGaps, find, weekly: weekly(),
+      gaps: recentGaps, find, findWhy: find ? '' : noFindWhy(), weekly: weekly(),
       headline: { finished: doneJobs.length + resultItems.length, needsYou: waitingJobs.length + needItems.length + drafts.length, workedMs, spendTodayMinor: daySpend(), currency: ctx.settings.get('currency') || '', since: s ? s.started : null },
       results: [...resultItems.map(itemCard), ...doneJobs.map(jobCard)],
       needs: [
@@ -603,9 +640,8 @@ export async function activate(ctx) {
   // We do NOT instrument new tool kinds: model calls already pass the model door (the `calls` table) and Bench's own
   // searches/reads/model calls are in m_bench_steps. Other tool/app/API kinds have no single choke point to read, so they
   // are left out rather than scattered log calls across the desk.
-  const startOfDayIso = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.toISOString(); };
   function usagePanel() {
-    const day = startOfDayIso();
+    const day = dayStartIso();
     const agents = ctx.db.all("SELECT COALESCE(agent_id, '(desk)') AS agent, COUNT(*) AS calls, SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END) AS errors, COALESCE(SUM(input_tokens), 0) AS input, COALESCE(SUM(output_tokens), 0) AS output, COALESCE(SUM(cost_minor), 0) AS cost FROM calls WHERE at >= ? GROUP BY agent ORDER BY calls DESC", day)
       .map((r) => ({ agent: r.agent, calls: r.calls, errors: r.errors, inputTokens: r.input, outputTokens: r.output, costMinor: r.cost }));
     const benchSteps = ctx.db.all("SELECT action, COUNT(*) AS n, COALESCE(SUM(ms), 0) AS ms FROM m_bench_steps WHERE at >= ? GROUP BY action ORDER BY n DESC", day).map((r) => ({ action: r.action, count: r.n, ms: r.ms }));
@@ -633,7 +669,7 @@ export async function activate(ctx) {
   ctx.route('POST', '/seen', (req, res, { owner }) => { if (ownerOnly(res, owner)) return; ctx.json(res, ownerSeen()); });
   ctx.route('GET', '/state', (req, res) => ctx.json(res, view()));
   ctx.route('GET', '/sessions', (req, res) => ctx.json(res, { sessions: ctx.db.all('SELECT * FROM m_bench_sessions ORDER BY started DESC LIMIT 50').map(sessionOut).map((s) => ({ ...s, counts: Object.fromEntries(KINDS.map((k) => [k, items(s.id, { kind: k }).length]).filter(([, n]) => n)) })) }));
-  const withRating = (i) => ({ ...i, rating: getRating('bench_item', i.id) });
+  const withRating = (i) => ({ ...i, rating: getRating('bench_item', i.id), draftable: !['draft', 'needs'].includes(i.kind) && draftable(i) });
   ctx.route('GET', '/sessions/:id', (req, res, { params, query }) => { const s = getSession(params.id); if (!s) return ctx.json(res, { error: 'No such session.' }, 404); const n = noteFor(s); ctx.json(res, { ...n, todo: todoFor(s), items: items(s.id, { kind: query.kind || undefined, state: query.state || undefined }).map(withRating) }); });
   ctx.route('POST', '/sessions/:id/seen', (req, res, { params, owner }) => { if (ownerOnly(res, owner)) return; const s = getSession(params.id); if (!s) return ctx.json(res, { error: 'No such session.' }, 404); s.seen = iso(nowMs()); saveSession(s); emit({ change: 'seen', id: s.id }); ctx.json(res, { ok: true }); });
   ctx.route('POST', '/settings', (req, res, { body, owner }) => {
@@ -654,12 +690,12 @@ export async function activate(ctx) {
   ctx.route('POST', '/start', async (req, res, { owner }) => {
     if (ownerOnly(res, owner)) return;
     if (ctx.panic.halted) return ctx.json(res, { error: 'Everything is stopped. Press Resume first.' }, 409);
-    if (!cfg().enabled) return ctx.json(res, { error: 'Switch Bench mode on first.' }, 409);
-    if (!gateReady(gate())) return ctx.json(res, { error: 'Choose how Bench may spend first: Local only, Free, or Paid, capped.' }, 409);
+    if (!cfg().enabled) return ctx.json(res, { error: `Switch ${placeName()} on first.` }, 409);
+    if (!gateReady(gate())) return ctx.json(res, { error: `Choose how ${placeName()} may spend first: Local only, Free, or Paid, capped.` }, 409);
     const s = current(); if (s) return ctx.json(res, { ok: true, id: s.id, already: true });
     const t = nowMs(); const n = createSession({ awaySince: t - TIERS[0].hours * 3600000, manual: true });
     tick().catch((e) => ctx.log('tick', e.message));
-    ctx.json(res, { ok: true, id: n.id, text: 'Bench started. It stops when you next use the desk, after one minute.' });
+    ctx.json(res, { ok: true, id: n.id, text: `${placeName()} started. It stops when you next use the desk, after one minute.` });
   });
   ctx.route('POST', '/items/:id/:act', async (req, res, { params, owner, body }) => {
     if (ownerOnly(res, owner)) return;

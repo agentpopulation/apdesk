@@ -15,7 +15,7 @@ try {
   await t.core.modules.set('bench', true);
   await t.call('/api/m/bench/settings', { body: { enabled: true, models: 'free' } });
   const at = new Date(base - 2 * H).toISOString();
-  for (const [role, text, status] of [['user', 'Find 10 leads for my payroll software in Pune', 'done'], ['assistant', 'Looking for companies in Pune that…', 'stopped']]) t.core.storage.run('INSERT INTO m_chat_messages (chat_id, role, text, cards, status, meta, at, updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', 'c1', role, text, '[]', status, '{}', at, at);
+  for (const [role, text, meta] of [['user', 'Find 10 leads for my payroll software in Pune', '{}'], ['assistant', 'Looking for companies in Pune that…', '{}'], ['assistant', 'Here are some companies in Pune…', '{"again":true}']]) t.core.storage.run('INSERT INTO m_chat_messages (chat_id, role, text, cards, status, meta, at, updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', 'c1', role, text, '[]', 'done', meta, at, at);
   const bench = t.core.modules.api('bench');
   const run = async (hours, until) => { clock.t = base + hours * H; for (let i = 0; i < 12; i++) { if (!await bench.tick()) { if (until?.()) break; await new Promise((r) => setTimeout(r, 5000)); if (!await bench.tick()) break; } await bench.idle(); if (until?.()) break; } };
   await run(0.6);

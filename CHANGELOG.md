@@ -183,6 +183,9 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Hiring an advisor for the first time says "joined your team"; a re-hire says "back on your team". Seats can still write a source that does not exist; nothing marks that yet.
 - The Doctor page tells a refused key from a provider that is only busy: a busy provider is no longer called a key problem. The built-in Free API route is listed with its own last result.
 - Tables no longer offers page furniture (edit links, menus, footers) as a list, and each saved list shows the date it was read.
+- Bench drafts now use only the finding's own words: a one-pager or next-actions list is made only when the finding has more to say than its own line, a cut-off reply is retried on another model, and a draft never invents points. Pressing One-pager runs quietly and never leaves a stuck task.
+- A task you stopped yourself is no longer treated as a mistake to learn from, and the same lesson is not proposed twice. The return page says in one line when there is no "Today's find" yet, fills the usage table, counts the owner's day in your zone, and shows "No paid spend" on a free run.
+- The Rulebook now finds rules written as a plain list under a rules heading, the count line reads in grammar, and your own name for Bench is used across its pages.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

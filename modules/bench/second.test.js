@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { benchDesk, H } from './fixtures.js';
 import { testHooks } from './server.js';
-import { todoList, gapBetween, gapText, cleanDraft, pickFind, rulesIn, weeklyNote, zoneTime } from './extras.js';
+import { todoList, gapBetween, gapText, cleanDraft, pickFind, rulesIn, weeklyNote, zoneTime, hasMore } from './extras.js';
 import { awakeCommand, keepAwake } from './keepawake.js';
 import { freshPlan } from './engine.js';
 
@@ -191,16 +191,16 @@ test('drafts: a result comes with a Draft; the owner opens, edits, makes again, 
     assert.deepEqual(e.json.item.data.draft.sources, d.data.draft.sources, 'an edit keeps the finding\'s sources');
     // make again
     const again = await t.call(`/api/m/bench/items/${d.id}/redo`, { body: {} });
-    assert.equal(again.status, 200, JSON.stringify(again.json)); assert.match(again.json.item.body, /^Summary: A rival sells payroll/); assert.equal(again.json.item.data.version, 2);
+    assert.equal(again.status, 200, JSON.stringify(again.json)); assert.match(again.json.item.body, /^Summary: Kappa HR: Aims at startups/); assert.equal(again.json.item.data.version, 2);
     // a next-actions list from a finding, on the owner's press
-    const comp = list.find((i) => i.kind === 'competitor');
+    const comp = list.find((i) => i.kind === 'competitor' && hasMore(i));
     const na = await t.call(`/api/m/bench/items/${comp.id}/draft`, { body: { type: 'actions' } });
     assert.equal(na.status, 200, JSON.stringify(na.json)); assert.equal(na.json.item.data.draft.actions.length, 7);
     assert.ok(na.json.item.data.draft.actions.every((x) => x.effort && x.why));
     // hand over to Mail drafts: only on the press; nothing sent; no approval asked by Bench
     const ho = await t.call(`/api/m/bench/items/${d.id}/handover`, { body: { to: 'partner@example.com' } });
     assert.equal(ho.status, 200, JSON.stringify(ho.json));
-    assert.equal(mail.drafts.length, 1); assert.equal(mail.drafts[0].to, 'partner@example.com'); assert.match(mail.drafts[0].body, /^Summary: A rival/);
+    assert.equal(mail.drafts.length, 1); assert.equal(mail.drafts[0].to, 'partner@example.com'); assert.match(mail.drafts[0].body, /^Summary: Kappa HR/);
     assert.equal(mail.sent, 0, 'never sent from Bench'); assert.deepEqual(asked, [], 'no approval asked');
     assert.equal(bench.items(s.id).find((i) => i.id === d.id).state, 'kept');
     // accept and discard

@@ -87,15 +87,15 @@ export const BEST_RULE = 'Findings whose every line has a page or a record that 
  * The note, built by code from the session and its items only. A model writes only inside items (a line summarising a page).
  * -> { head: [lines], best: [items], groups: [{ kind, words, items }], needs: [items], notDone: [lines] }
  */
-export function buildNote(session, items, { now = Date.now() } = {}) {
+export function buildNote(session, items, { now = Date.now(), name = 'Bench' } = {}) {
   const shown = items.filter((i) => i.state === 'new');
   const ended = session.ended ? Date.parse(session.ended) : now;
   const ran = span(ended - Date.parse(session.started));
   const models = [...new Set(session.models || [])];
   const head = [
-    session.state === 'running' ? `Bench has been working for ${ran}.` : `Bench ran for ${ran}${session.endWhy ? `; ${session.endWhy}` : ''}.`,
+    session.state === 'running' ? `${name} has been working for ${ran}.` : `${name} ran for ${ran}${session.endWhy ? `; ${session.endWhy}` : ''}.`,
     models.length ? `The work was done by ${models.join(', ')}.` : 'No model was used.',
-    `${shown.length} finding${shown.length === 1 ? '' : 's'} wait for you${shown.length ? ': Keep, Dismiss or Turn into a task' : ''}.`,
+    !shown.length ? 'No findings wait for you.' : `${shown.length} finding${shown.length === 1 ? ' waits' : 's wait'} for you: Keep, Dismiss or Turn into a task.`,
   ];
   const best = bestItems(shown);
   const bestIds = new Set(best.map((i) => i.id));

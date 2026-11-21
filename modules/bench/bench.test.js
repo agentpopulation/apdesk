@@ -38,7 +38,7 @@ test('model order: local first, then free; paid only when Bench says "also paid"
   assert.deepEqual(ids(modelOrder(active, { mode: 'paid', tiers, paidAllowed: (p) => p === 'openai' })), ['ollama', 'router', 'gemini', 'openrouter:openrouter/free', 'openai']);
 });
 
-test('signals: Stop, Try again and asking again in nearly the same words come from the chat store, not from wording', () => {
+test('signals: Try again and asking again in nearly the same words come from the chat store, not from wording; the owner\'s own Stop is none', () => {
   const at = (m) => new Date(Date.UTC(2026, 10, 20, 10, m)).toISOString();
   const s = turnSignals([
     { chatId: 'a', role: 'user', text: 'Find 10 leads for my payroll software', at: at(0) }, { chatId: 'a', role: 'assistant', text: 'Looking…', status: 'stopped', at: at(1) },
@@ -46,7 +46,7 @@ test('signals: Stop, Try again and asking again in nearly the same words come fr
     { chatId: 'c', role: 'user', text: 'List payroll software firms in Pune with prices', at: at(0) }, { chatId: 'c', role: 'assistant', text: 'Here.', status: 'done', at: at(1) }, { chatId: 'c', role: 'user', text: 'List payroll software firms in Pune with their prices', at: at(3) },
     { chatId: 'd', role: 'user', text: 'Thanks, that is wrong and bad', at: at(0) }, { chatId: 'd', role: 'assistant', text: 'Sorry.', status: 'done', at: at(1) },
   ]);
-  assert.deepEqual(s.map((x) => x.kind), ['stopped', 'again', 'asked again'], 'words like "wrong" alone are no signal');
+  assert.deepEqual(s.map((x) => x.kind), ['again', 'asked again'], 'a Stop, and words like "wrong" alone, are no signal');
   const g = askGroups([1, 2, 3].flatMap((i) => [{ role: 'user', text: `Research topic ${i}` }, { role: 'assistant', status: 'done', meta: { steps: [{ tool: 'research_deep', status: 'done' }] }, cards: [{ kind: 'report' }] }]));
   assert.equal(g.length, 1); assert.equal(g[0].key, 'research_deep -> report');
 });
@@ -63,7 +63,7 @@ test('a 108-hour session: tiers unlock in order, the note is built from the item
     const sales = t.core.modules.api('sales'); sales.addLead({ company: 'Lyra Foods' });
     fs.mkdirSync(t.core.storage.workspacePath('knowledge'), { recursive: true });
     fs.writeFileSync(t.core.storage.workspacePath('knowledge', 'our-customers.csv'), 'Company,Site\nOrion Textiles,orion-textiles.example\n');
-    addTurns(t, [{ role: 'user', text: 'Find 10 leads for my payroll software' }, { role: 'assistant', text: 'Looking…', status: 'stopped' },
+    addTurns(t, [{ role: 'user', text: 'Find 10 leads for my payroll software' }, { role: 'assistant', text: 'Looking…' }, { role: 'assistant', text: 'Here.', meta: { again: true } },
       ...[1, 2, 3].flatMap((i) => [{ role: 'user', text: `Research the payroll market ${i}` }, { role: 'assistant', text: 'Done', meta: { steps: [{ tool: 'research_deep', status: 'done' }] }, cards: [{ kind: 'report' }] }])]);
     t.core.storage.run("INSERT INTO jobs (id, kind, title, status, progress, detail, input, error, created, updated, finished) VALUES ('job_x1', 'tasks.run', 'Compare three payroll tools', 'failed', 0, 'Failed', '{}', 'No model answered. Free API: busy', ?, ?, ?)", new Date().toISOString(), new Date().toISOString(), new Date().toISOString());
     const counts = () => ({ memory: t.core.storage.get("SELECT COUNT(*) AS c FROM m_memory_items").c, skills: (t.core.modules.api('agents').catalog().skills.filter((s) => s.custom)).length, leads: sales.listLeads().length });
@@ -128,7 +128,7 @@ test('owner activity stops a running session at once; Panic stops it and it does
   const d = await benchDesk({ modules: ['bench', 'chat', 'search'] });
   const { t, bench, clock } = d;
   try {
-    addTurns(t, [{ role: 'user', text: 'Find 10 leads' }, { role: 'assistant', text: '…', status: 'stopped' }]);
+    addTurns(t, [{ role: 'user', text: 'Find 10 leads' }, { role: 'assistant', text: '…' }, { role: 'assistant', text: '…', meta: { again: true } }]);
     // a slow model: the lessons activity is running when the owner comes back
     let release; const gate = new Promise((r) => { release = r; });
     const real = t.core.model.chat.bind(t.core.model); t.core.model.chat = async (o) => { await Promise.race([gate, new Promise((r, j) => o.signal?.addEventListener('abort', () => j(Object.assign(new Error('Stopped'), { code: 'aborted' })), { once: true }))]); return real(o); };
@@ -163,7 +163,7 @@ test('offline: only the activities that need no web run; battery below the level
   try {
     // a local model (the fake, as Ollama): the only model the desk may use offline
     t.core.settings.set('ollama.baseUrl', d.t.fake.ollamaUrl); t.core.model.cache.clear();
-    addTurns(t, [{ role: 'user', text: 'Find 10 leads' }, { role: 'assistant', text: '…', status: 'stopped' }]);
+    addTurns(t, [{ role: 'user', text: 'Find 10 leads' }, { role: 'assistant', text: '…' }, { role: 'assistant', text: '…', meta: { again: true } }]);
     t.core.settings.set('online', false);
     testHooks.battery = async () => ({ hasBattery: true, acConnected: false, isCharging: false, percent: 12 });
     await at(13);
@@ -180,6 +180,7 @@ test('offline: only the activities that need no web run; battery below the level
     // budgets: one model call per activity, three per session
     t.core.settings.set('online', true);
     testHooks.budget = { activity: { calls: 1, pages: 1, searches: 1, minutes: 25 }, session: { calls: 3, pages: 2, searches: 2, minutes: 60 } };
+    addTurns(t, [{ chat: 'c2', role: 'user', text: 'Compare payroll tools' }, { chat: 'c2', role: 'assistant', text: '…' }, { chat: 'c2', role: 'assistant', text: '…', meta: { again: true } }]);   // a turn not learned from yet
     const calls0 = t.fake.calls.length; const reads0 = reads.length;
     clock.t += 200 * H; await bench.tick(); await bench.idle();
     for (let i = 0; i < 20; i++) { if (!await bench.tick()) break; await bench.idle(); }
@@ -196,7 +197,7 @@ test('paid models: never used unless Bench says "also paid" and paid use is alre
   try {
     t.core.model.addKey('openai', 'sk-fake-123456789', 'test', { baseUrl: t.fake.baseUrl });
     t.core.settings.set('router.enabled', false); t.core.model.cache.clear();   // no free model: only the paid key could answer
-    addTurns(t, [{ role: 'user', text: 'Find 10 leads' }, { role: 'assistant', text: '…', status: 'stopped' }]);
+    addTurns(t, [{ role: 'user', text: 'Find 10 leads' }, { role: 'assistant', text: '…' }, { role: 'assistant', text: '…', meta: { again: true } }]);
     const paidCalls = () => t.core.storage.get("SELECT COUNT(*) AS c FROM calls WHERE provider = 'openai'").c;
     const run = async () => { clock.t += 3 * H; for (let i = 0; i < 5; i++) { if (!await bench.tick()) break; await bench.idle(); } await t.call('/api/m/bench/seen', { body: {} }); };
     await run(); assert.equal(paidCalls(), 0, 'default (local then free): no paid call');
