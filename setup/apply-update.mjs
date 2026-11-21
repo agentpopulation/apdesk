@@ -13,6 +13,11 @@ const SELF = fileURLToPath(import.meta.url);
 const NEVER = new Set(['data', 'backups', 'runtime', '.git']);
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 const versionOf = (root) => readJson(path.join(root, 'app', 'version.json'))?.version || readJson(path.join(root, 'package.json'))?.version || 'the version you had';
+/** modules/shipped.json: the top-level entries of the modules folder as a release shipped them. A folder in the old
+ *  modules that is in neither the old record nor the new release was added by hand, and is carried over. */
+const SHIPPED = 'shipped.json';
+const shippedOf = (modulesDir) => { const r = readJson(path.join(modulesDir, SHIPPED)); return Array.isArray(r?.entries) ? new Set(r.entries.map(String)) : null; };
+const plainName = (n) => typeof n === 'string' && n && !/[\\/]/.test(n) && n !== '.' && n !== '..';
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 /** The same hash as app/core/update.js treeHash: "path, size, sha256" lines of every file, sorted. */
@@ -69,6 +74,7 @@ export function applyStaged({ root, data, say = (l) => console.log(l), move = re
   const done = [];
   const undo = () => {
     for (const s of [...done].reverse()) {
+      if (s.undo) { try { s.undo(); } catch {} continue; }
       try { if (s.newAt) { if (fs.existsSync(s.newAt)) fs.rmSync(s.newAt, { recursive: true, force: true }); } } catch {}
       try { if (s.oldMoved) mv(path.join(prev, s.name), path.join(root, s.name)); } catch {}
     }
@@ -92,7 +98,14 @@ export function applyStaged({ root, data, say = (l) => console.log(l), move = re
   } catch (e) { return fail('the downloaded files could not be checked (' + plainError(e) + ')'); }
   fs.rmSync(prev, { recursive: true, force: true }); fs.mkdirSync(prev, { recursive: true });
   const order = [...names.filter(n => n !== 'setup'), ...names.filter(n => n === 'setup')];   // setup, where this script lives, last
-  let batLater = false;
+  let batLater = false; const kept = [];
+  // added by hand: in the old modules folder, not in its release's record (no record: not known to be from it), not in the new release
+  const oldMods = path.join(root, 'modules'); const newMods = path.join(staged, 'modules');
+  const oldRecord = fs.existsSync(oldMods) ? shippedOf(oldMods) : null;
+  const handAdded = names.includes('modules') && fs.existsSync(newMods) && fs.existsSync(oldMods) ? (() => {
+    const shipped = oldRecord || new Set(); const incoming = new Set(fs.readdirSync(newMods));
+    return fs.readdirSync(oldMods, { withFileTypes: true }).filter(e => e.isDirectory() && !shipped.has(e.name) && !incoming.has(e.name) && e.name !== SHIPPED).map(e => e.name).sort();
+  })() : [];
   try {
     for (const name of order) {
       const target = path.join(root, name); const src = path.join(staged, name);
@@ -105,11 +118,23 @@ export function applyStaged({ root, data, say = (l) => console.log(l), move = re
       const s = { name, oldMoved: false, newAt: null }; done.push(s);
       if (fs.existsSync(target)) { mv(target, path.join(prev, name)); s.oldMoved = true; }
       mv(src, target); s.newAt = target;
+      if (name === 'modules') {
+        fs.writeFileSync(path.join(target, SHIPPED), JSON.stringify({ version: ready.version, entries: [...new Set([...fs.readdirSync(target), SHIPPED])].sort() }));
+        for (const k of handAdded) {
+          const at = path.join(target, k), was = path.join(prev, 'modules', k);
+          mv(was, at); kept.push(k);
+          done.push({ name: 'modules/' + k, undo: () => mv(at, was) });
+        }
+      }
     }
   } catch (e) { return fail(plainError(e)); }
-  fs.writeFileSync(path.join(dir, 'applied.json'), JSON.stringify({ from, to: ready.version, at: new Date().toISOString(), notes: ready.notes || [], replaced: done.map(s => ({ name: s.name, hadOld: s.oldMoved })), confirmed: false }, null, 1));
+  fs.writeFileSync(path.join(dir, 'applied.json'), JSON.stringify({ from, to: ready.version, at: new Date().toISOString(), notes: ready.notes || [], replaced: done.filter(s => !s.undo).map(s => ({ name: s.name, hadOld: s.oldMoved })), keptModules: kept, confirmed: false }, null, 1));
   for (const f of [readyFile, path.join(dir, 'result.json'), path.join(dir, 'next')]) { try { fs.rmSync(f, { recursive: true, force: true }); } catch {} }
   say(`AP Desk was updated from ${from} to ${ready.version}.`);
+  // with no record of the old release's modules, a folder the new one does not include may be the owner's or one the
+  // release dropped: it is kept, and the line says only what is known
+  if (kept.length && oldRecord) say(`Kept the module folder${kept.length === 1 ? '' : 's'} you added: ${kept.join(', ')}.`);
+  else if (kept.length) say(`Kept ${kept.length === 1 ? 'a module folder' : kept.length + ' module folders'} that ${ready.version} does not include: ${kept.join(', ')}. This copy had no list of the modules ${from} came with, so none were removed.`);
   if (batLater) say(swapBatLater(root, waitPid || process.ppid) ? 'The new start.bat is put in place when this window closes.' : 'The new start.bat is saved as start.bat.new. Rename it to start.bat after the desk has stopped.');
   return { ok: true, line: `AP Desk was updated from ${from} to ${ready.version}.` };
 }
@@ -120,6 +145,11 @@ function putBackIfNeverStarted({ root, dir, say, mv }) {
   if (!a || a.confirmed || !fs.existsSync(prev) || versionOf(root) !== a.to) return { ok: true, line: null };
   const failed = path.join(dir, 'did-not-start'); fs.rmSync(failed, { recursive: true, force: true }); fs.mkdirSync(failed, { recursive: true });
   try {
+    // the module folders the owner added go back into the old modules folder first, so they stay through the rollback
+    if (fs.existsSync(path.join(prev, 'modules'))) for (const k of Array.isArray(a.keptModules) ? a.keptModules : []) {
+      if (!plainName(k) || !fs.existsSync(path.join(root, 'modules', k)) || fs.existsSync(path.join(prev, 'modules', k))) continue;
+      mv(path.join(root, 'modules', k), path.join(prev, 'modules', k));
+    }
     for (const r of [...(a.replaced || [])].reverse()) {
       if (typeof r?.name !== 'string' || !r.name || /[\\/]/.test(r.name) || r.name === '..' || NEVER.has(r.name.toLowerCase())) continue;
       const target = path.join(root, r.name);

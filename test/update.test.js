@@ -239,9 +239,12 @@ test('the install is only the owner\'s: no session, a module, a tool call, a wro
       assert.equal(row.status, 'denied', `${level}${auto ? ' + auto-approve' : ''} asks the owner`);
       const out = await run; assert.equal(out.ok, false); assert.match(out.line, /You said no/);
     }
-    // the plain door outside updates is unchanged: an install request is still covered by the window
-    const other = await core.approval.request({ action: 'install', title: 'Download a local model', payload: { model: 'x' } });
-    assert.equal(other.how, 'auto');
+    // every install asks inside the window, not only a desk update
+    const other = core.approval.request({ action: 'install', title: 'Download a local model', payload: { model: 'x' } });
+    await new Promise(r => setTimeout(r, 30));
+    const card = core.approval.listPending().find(a => a.title === 'Download a local model');
+    assert.ok(card, 'an install asks inside an auto-approve window'); core.approval.decide(card.id, 'deny');
+    assert.equal((await other).reason, 'denied');
     assert.deepEqual(snapshot(root), before);
   } finally { await desk.stop(); await s.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
@@ -346,6 +349,64 @@ test('apply: a new version that never started is put back on the next start', as
     const now = snapshot(root);
     for (const f of Object.keys(old)) if (!f.startsWith('data/')) assert.equal(now[f], old[f], f);
   } finally { await s.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+/** Stage 0.1.1 (alpha only; the old release had alpha and beta) on a fake install with a module added by hand. */
+async function stagedWithHandModule(opts = {}) {
+  const s = await standIn(); const k = makeKeys(); const root = fakeInstall(opts);
+  fs.mkdirSync(path.join(root, 'modules', 'gamma', 'data'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'modules', 'gamma', 'module.json'), JSON.stringify({ id: 'gamma', name: 'Added by hand' }));
+  fs.writeFileSync(path.join(root, 'modules', 'gamma', 'data', 'notes.txt'), 'the owner\'s module\n');
+  const zip = releaseZip('0.1.1'); s.publish(release('0.1.1', zip, k), zip);
+  const d = await deskFor(root, s, [k]);
+  try { const run = d.core.updater.install(SETTINGS_TOKEN); await approveWhenAsked(d.core); assert.equal((await run).ok, true); } finally { await d.close(); await s.close(); }
+  return root;
+}
+const gammaHere = (root) => fs.existsSync(path.join(root, 'modules', 'gamma', 'module.json')) && fs.readFileSync(path.join(root, 'modules', 'gamma', 'data', 'notes.txt'), 'utf8') === 'the owner\'s module\n';
+
+test('apply: a module folder added by hand stays through an update and a rollback; one the new release removed goes', async () => {
+  const root = await stagedWithHandModule();
+  try {
+    const out = runApply(root);
+    assert.match(out.stdout, /updated from 0\.1\.0 to 0\.1\.1/, out.stdout + out.stderr);
+    assert.match(out.stdout, /Kept the module folder you added: gamma\./);
+    assert.ok(gammaHere(root), 'added by hand: left in place');
+    assert.ok(!fs.existsSync(path.join(root, 'modules', 'beta')), 'in the old release, not in the new one: removed');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'modules', 'alpha', 'module.json'), 'utf8')).marker, 'new');
+    const rec = JSON.parse(fs.readFileSync(path.join(root, 'modules', 'shipped.json'), 'utf8'));
+    assert.deepEqual(rec, { version: '0.1.1', entries: ['alpha', 'shipped.json'] }, 'the record of what this release shipped');
+    // the new desk never started: the rollback puts the old modules back, the hand-added one with them
+    const back = runApply(root);
+    assert.match(back.stdout, /did not start\. The desk is back on 0\.1\.0\./, back.stdout + back.stderr);
+    assert.ok(gammaHere(root), 'still there after the rollback');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'modules', 'beta', 'module.json'), 'utf8')).marker, 'old', 'the old release is back whole');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'modules', 'alpha', 'module.json'), 'utf8')).marker, 'old');
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'modules', 'shipped.json'), 'utf8')).entries, ['alpha', 'beta', 'shipped.json']);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('apply: a failure after the modules were swapped puts the hand-added module back with the old ones', async () => {
+  const root = await stagedWithHandModule();
+  try {
+    const before = snapshot(root);
+    const { applyStaged } = await import(pathToFileURL(path.join(root, 'setup', 'apply-update.mjs')).href + '?h=' + Date.now());
+    const r = applyStaged({ root, data: path.join(root, 'data'), say: () => {}, move: (from, to) => { if (to === path.join(root, 'setup') && from.includes(path.sep + 'next' + path.sep)) throw Object.assign(new Error('no space'), { code: 'ENOSPC' }); fs.renameSync(from, to); } });
+    assert.equal(r.ok, false);
+    assert.deepEqual(snapshot(root), before, 'everything is back as it was, the hand-added module too');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('apply: an install with no record of what its release shipped keeps every module folder the new release does not name', async () => {
+  const root = await stagedWithHandModule({ shipped: false });
+  try {
+    const out = runApply(root);
+    assert.match(out.stdout, /updated from 0\.1\.0 to 0\.1\.1/, out.stdout + out.stderr);
+    assert.ok(gammaHere(root));
+    assert.ok(fs.existsSync(path.join(root, 'modules', 'beta', 'module.json')), 'not known to be from the old release: kept, never deleted');
+    assert.doesNotMatch(out.stdout, /you added/, 'with no record the run cannot know who added them, so it does not say the owner did');
+    assert.match(out.stdout, /Kept 2 module folders that 0\.1\.1 does not include: beta, gamma\. This copy had no list of the modules 0\.1\.0 came with, so none were removed\./);
+    assert.ok(fs.existsSync(path.join(root, 'modules', 'shipped.json')), 'from now on the record is there');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test('the tree hash in apply-update.mjs is the same as the desk\'s', async () => {

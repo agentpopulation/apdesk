@@ -66,14 +66,16 @@ export async function standIn() {
   return s;
 }
 
-/** A fake zip install of version 0.1.0 in the temp folder, with the owner's data inside it. */
-export function fakeInstall({ version = '0.1.0', git = false, source = false } = {}) {
+/** A fake zip install of version 0.1.0 in the temp folder, with the owner's data inside it. shipped: its modules
+ *  folder carries the record of what the release shipped (modules/shipped.json), as an updated install does. */
+export function fakeInstall({ version = '0.1.0', git = false, source = false, shipped = true } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'apd-upd-root-'));
   const w = (rel, data) => { const f = path.join(root, rel); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, data); };
   w('app/server.js', '// old server\n');
   if (!source) w('app/version.json', JSON.stringify({ version, built: '2026-11-14T18:22:00.000Z' }));
   w('modules/alpha/module.json', JSON.stringify({ id: 'alpha', marker: 'old' }));
   w('modules/beta/module.json', JSON.stringify({ id: 'beta', marker: 'old' }));
+  if (shipped) w('modules/shipped.json', JSON.stringify({ version, entries: ['alpha', 'beta', 'shipped.json'] }));
   if (source) w('package.json', JSON.stringify({ name: 'agent-population-desk', version })); else w('setup/package.json', JSON.stringify({ version }));
   w('setup/apply-update.mjs', fs.readFileSync(APPLY));
   w('start.bat', 'rem old\r\n'); w('README.md', 'old readme\n');

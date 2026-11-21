@@ -60,7 +60,12 @@ export class LocalEngine {
     return Math.min(ram * 0.6, free * 0.85);
   }
   fits(m, hw, build) { return m.needsGb <= this.budget(hw, build); }
-  pickModel(hw, build) { return [...this.pins.models.list].sort((a, b) => b.size - a.size).find(m => this.fits(m, hw, build)) || null; }
+  /** The largest model that fits. With no graphics card the engine can use (a processor build), at most noGpuMax. */
+  pickModel(hw, build, { capped = true } = {}) {
+    const cap = capped ? this.noGpuCap(build) : null;
+    return [...this.pins.models.list].sort((a, b) => b.size - a.size).find(m => (!cap || m.size <= cap.size) && this.fits(m, hw, build)) || null;
+  }
+  noGpuCap(build) { return build?.gpu === 'cpu' ? this.pin(this.pins.models.noGpuMax) : null; }
   pin(id) { return this.pins.models.list.find(m => m.id === id) || null; }
   nameOf(id) { return this.pin(id)?.name || id; }
 
@@ -68,6 +73,8 @@ export class LocalEngine {
   async plan(modelId = null) {
     const hw = await this.hardware(); const build = this.pickBuild(hw); const c = this.cfg();
     const rec = build ? this.pickModel(hw, build) : null;
+    const cap = this.noGpuCap(build); const uncapped = build ? this.pickModel(hw, build, { capped: false }) : null;
+    const note = cap && rec && uncapped && uncapped.id !== rec.id ? `No graphics card was found that the engine can use, so the largest model offered is ${cap.name}. A larger model can still be chosen by hand under "Choose another".` : null;
     const want = modelId ? this.pin(modelId) : (this.pin(c.choice) || rec);
     if (modelId && !want) throw Object.assign(new Error('That model is not on the list.'), { status: 400 });
     const engineHere = !!(c.engine && build && c.engine.build === build.id && fs.existsSync(this.serverPath(c.engine)));
@@ -79,7 +86,7 @@ export class LocalEngine {
       ok: !reason && !!want && this.fits(want, hw, build), reason: reason || (want && !this.fits(want, hw, build) ? `${want.name} needs about ${want.needsGb} GB, more than this PC has free for it (about ${round1(this.budget(hw, build))} GB).` : null),
       engine: build ? { id: build.id, name: `llama.cpp ${this.pins.engine.release}`, label: build.label, gpu: build.gpu, size: build.size, sizeText: sizeText(build.size), here: engineHere, licence: this.pins.engine.licence } : null,
       model: want ? this.modelOut(want, hw, build, modelHere) : null,
-      recommended: rec?.id || null,
+      recommended: rec?.id || null, note,
       choices: this.pins.models.list.map(m => this.modelOut(m, hw, build, !!(c.model && c.model.id === m.id && fs.existsSync(this.modelPath(c.model))))),
       engineBytes, modelBytes, totalBytes: engineBytes + modelBytes, totalText: sizeText(engineBytes + modelBytes),
       licences: [`llama.cpp ${this.pins.engine.release} (${this.pins.engine.licence}) from github.com/ggml-org/llama.cpp`, ...(want ? [`${want.name} by ${want.publisher} (${want.licence}) from huggingface.co/${want.repo}`] : [])],

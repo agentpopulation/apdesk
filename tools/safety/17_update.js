@@ -75,6 +75,26 @@ const background = [
 ];
 const control = await attempt('control: good release from the owner', good, owner);
 
+// the standing yes: only the owner's switch, only for a desk update, never from a module
+const standing = await (async () => {
+  const root = fakeInstall(); const desk = await createDesk({ dataDir: path.join(root, 'data'), port: 0, quiet: true, env: {}, modulesDir: MDIR }); await desk.start();
+  const dl = desk.core.downloads; const out = [];
+  const spec = (kind = 'desk-update', file = 'u.zip') => ({ title: 'AP Desk 0.1.1 (update)', url: 'https://github.com/agentpopulation/apdesk/releases/download/v0.1.1/u.zip', allowHosts: ['github.com'], size: 10, sha256: 'ab'.repeat(32), to: path.join(root, 'data', 'update-staged', 'download', file), kind, file });
+  const tryIt = async (name, fn) => { try { await fn(); out.push({ name, passed: true }); } catch (e) { out.push({ name, passed: e.code !== 'forbidden', why: e.code }); } };
+  try {
+    desk.core.settings.set('online', false);   // nothing may leave this PC in the probe
+    await tryIt('switch off', () => dl.start(spec(), { standingYes: 'update.background' }));
+    desk.core.settings.set('update.background', true);
+    await desk.core.modules.set('evil', true);
+    await tryIt('a module passes it', () => dl.forModule('evil').start(spec('desk-update', 'm.zip'), { standingYes: 'update.background' }));
+    await tryIt('another kind', () => dl.start(spec('local-engine', 'e.zip'), { standingYes: 'update.background' }));
+    await tryIt('another name', () => dl.start(spec('desk-update', 'n.zip'), { standingYes: 'local-engine' }));
+    await tryIt('a made-up marker', () => dl.start(spec('desk-update', 'o.zip'), { standingYes: 'owner switch: update.background' }));
+    const queued = dl.all().filter(d => d.state !== 'waiting').length;
+    return { out, queued };
+  } finally { await desk.stop(); fs.rmSync(root, { recursive: true, force: true }); }
+})();
+
 const line = (tag, list, what) => { const bad = list.filter(x => x.changed); console.log(bad.length ? `BYPASS(${tag}): ${bad.map(x => `${x.name} (${x.why})`).join('; ')}` : `HELD(${tag}): ${list.length} ${what} changed nothing: ${list.map(x => x.name).join(', ')}`); };
 line('update-tamper', tamper, 'tampered releases');
 line('update-downgrade', downgrade, 'downgrade tries');
@@ -82,4 +102,5 @@ line('update-unknown-key', unknown, 'release signed by another key');
 line('update-not-owner', notOwner, 'installs from outside the owner\'s window');
 line('update-channel', channel, 'preview tries');
 line('update-background', background, 'background download tries');
+{ const bad = standing.out.filter(x => x.passed); console.log(!bad.length && !standing.queued ? `HELD(update-standing-yes): ${standing.out.length} tries refused (${standing.out.map(x => x.name).join(', ')}); only the owner's switch skips the question, for desk updates only` : `BYPASS(update-standing-yes): ${bad.map(x => x.name).join(', ')} queued=${standing.queued}`); }
 console.log(control.changed ? 'HELD(update-control): a good release from the owner\'s window was staged and the desk asked to restart' : `BYPASS(update-control): the good release was not staged (${control.why})`);

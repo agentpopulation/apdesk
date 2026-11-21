@@ -8,10 +8,10 @@ import { id as makeId, now } from './storage.js';
 export const SETTINGS_TOKEN = Symbol('apd.settings.token');
 export const LEVELS = ['open', 'careful', 'strict'];
 export const ACTIONS = ['file.write', 'file.delete', 'file.read.outside', 'shell.run', 'browser.open', 'browser.act', 'net.post', 'send.person', 'spend', 'module.toggle', 'install', 'login', 'calendar.write', 'custom'];
-const ALWAYS_ASK = new Set(['send.person']);
-// A desk update replaces the program itself: it asks the owner at every level and inside an auto-approve window.
-// (A request can only make the door stricter this way; installing is done by core/update.js, never by the grant.)
-const alwaysAsks = (action, req) => ALWAYS_ASK.has(action) || (action === 'install' && req?.payload?.kind === 'desk-update');
+// An install (a desk update, a module's packages, a local engine or model, any program) asks the owner each time, at
+// every level and inside an auto-approve window. Installing a desk update is done by core/update.js, never by the grant.
+const ALWAYS_ASK = new Set(['send.person', 'install']);
+const alwaysAsks = (action) => ALWAYS_ASK.has(action);
 const ASK_ONCE = { careful: new Set(['file.write', 'browser.act']), strict: new Set() };
 // allow | ask | once  per level
 const POLICY = {
@@ -106,7 +106,7 @@ export class ApprovalDoor {
     const scope = req.jobId || req.chatId || 'none';
     const onceKey = `${action}|${req.agentId || ''}|${scope}`;
     let decide = null;
-    if (alwaysAsks(action, req)) decide = 'ask';
+    if (alwaysAsks(action)) decide = 'ask';
     else if (action === 'spend') {
       const amt = Number(req.amount);
       const cur = req.currency || this.settings.get('currency');
@@ -123,14 +123,15 @@ export class ApprovalDoor {
     else if (rule === 'folder') { const f = String(req.payload?.folder || req.payload?.path || ''); decide = f && (this.settings.get('files.allowedFolders') || []).some(x => insideFolder(f, x)) ? 'allow' : 'ask'; }
     else decide = 'ask';
 
-    // auto-approve window never covers send.person or spend over the limit
-    if (decide === 'ask' && this.autoApproveUntil && !alwaysAsks(action, req) && action !== 'spend') decide = 'auto';
+    // auto-approve window never covers send.person, install or spend over the limit
+    if (decide === 'ask' && this.autoApproveUntil && !alwaysAsks(action) && action !== 'spend') decide = 'auto';
     if (decide === 'ask' && this.autoApproveUntil && action === 'spend' && Number.isFinite(Number(req.amount)) && Number(req.amount) > 0 && !this.overLimit(req.amount)) decide = 'auto';
 
     // The card must be able to show everything the grant covers. A payload too large to show is refused, never cut.
     let payloadSize = 0; try { payloadSize = JSON.stringify(req.payload ?? null).length; } catch { return { ok: false, reason: 'bad_payload', id: null }; }
     if (payloadSize > MAX_PAYLOAD) return { ok: false, reason: 'too_large', id: null };
-    const row = { id: makeId('ap_'), agentId: req.agentId || null, chatId: req.chatId || null, jobId: req.jobId || null, action, title: String(req.title || action).slice(0, 300), detail: req.detail ? String(req.detail).slice(0, 1000) : null, payload: SHOW_ALL.has(action) ? (req.payload ?? null) : redact(req.payload), amount: req.amount != null ? Math.round(Number(req.amount)) : null, currency: req.currency || this.settings.get('currency') };
+    const detail = action === 'install' ? installDetail(req) : req.detail ? String(req.detail).slice(0, 1000) : null;
+    const row = { id: makeId('ap_'), agentId: req.agentId || null, chatId: req.chatId || null, jobId: req.jobId || null, action, title: String(req.title || action).slice(0, 300), detail, payload: SHOW_ALL.has(action) ? (req.payload ?? null) : redact(req.payload), amount: req.amount != null ? Math.round(Number(req.amount)) : null, currency: req.currency || this.settings.get('currency') };
     if (decide === 'allow' || decide === 'auto') {
       const how = decide === 'allow' ? 'level' : 'auto';
       this.insert(row, 'approved', how);
@@ -261,5 +262,12 @@ export function insideFolder(f, a) {
   let x = P.resolve(String(f)), y = P.resolve(String(a));
   if (win) { x = x.toLowerCase(); y = y.toLowerCase(); }
   return x === y || x.startsWith(y.endsWith(P.sep) ? y : y + P.sep);
+}
+/** An install card says where it comes from: the asker's `from`, else the host of payload.url; if neither, it says so. */
+function installDetail(req) {
+  const d = req.detail ? String(req.detail).slice(0, 1000) : '';
+  const from = typeof req.from === 'string' && req.from.trim() ? req.from.trim().slice(0, 200) : hostOf(req.payload?.url);
+  if (!from) return (d ? d.replace(/\s*$/, ' ') : '') + 'Where it comes from was not stated.';
+  return d.toLowerCase().includes(from.toLowerCase()) ? d : `From ${from}.${d ? ' ' + d : ''}`;
 }
 function hostOf(url) { try { return new URL(String(url)).hostname.toLowerCase(); } catch { return null; } }

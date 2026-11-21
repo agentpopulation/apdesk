@@ -217,7 +217,8 @@ test('background: off by default; on only through the owner\'s switch; then the 
     st = (await d.call('/api/update')).json;
     assert.match(st.download.line, /downloaded and checked\. Installing it still asks you/);
     const act = d.core.approval.activityList(50).map(a => a.title).join('\n');
-    assert.match(act, /Download updates in the background: on/); assert.match(act, /Downloading AP Desk 0\.1\.1 in the background/);
+    assert.match(act, /Download updates in the background: on/); assert.match(act, /Downloading AP Desk 0\.1\.1 \(update\) in the background/);
+    assert.equal(d.core.downloads.get(list[0].id).approvalId, 'owner switch: update.background', 'the switch is recorded in place of an approval');
     assert.ok(!fs.existsSync(path.join(root, 'data', 'update-staged', 'ready.json')), 'downloaded, never installed by itself');
     assert.equal(d.desk.restartRequested, null);
 

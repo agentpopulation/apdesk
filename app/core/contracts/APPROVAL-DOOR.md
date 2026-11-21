@@ -31,7 +31,8 @@ A request that must ask creates a pending approval (storage table `approvals`), 
 | `browser.open` a site | allow | allow for sites already visited, else ask | ask |
 | `browser.act` (click, type, submit; never a login or payment form) | allow | ask once per task | ask |
 | `net.post` (an API write that is not a message to a person) | allow | ask | ask |
-| `calendar.write`, `module.toggle`, `install`, `login`, `custom` | ask | ask | ask |
+| `calendar.write`, `module.toggle`, `login`, `custom` | ask | ask | ask |
+| **`install`** (a desk update, a module's packages, a local engine or model, any program) | **ask, always** | **ask, always** | **ask, always** |
 | **`send.person`** (mail, chat message, post, SMS, call: anything a person receives) | **ask, always** | **ask, always** | **ask, always** |
 | **`spend`** | within limits: allow; over: **ask, always** | within: ask; over: ask | ask |
 
@@ -41,7 +42,11 @@ The level is **Open on first run**. It changes only in Settings › Security thr
 
 ## Auto-approve window
 
-A control beside the level: **15 minutes**, **1 hour**, **today**, or off. While the window is open, actions that Careful or Strict would ask for are allowed with `how: 'auto'`, and a line is written to the activity log. The window never covers `send.person` or `spend` over the limit. Nor does it cover an `install` whose payload is `kind: 'desk-update'` (a desk update, UPDATES.md): that asks at every level and inside the window. It is set only from the Settings route and the chip under the message box, both served by the shell with the session token.
+A control beside the level: **15 minutes**, **1 hour**, **today**, or off. While the window is open, actions that Careful or Strict would ask for are allowed with `how: 'auto'`, and a line is written to the activity log. The window never covers `send.person`, `install` or `spend` over the limit. Every `install` (a desk update, UPDATES.md; a module's packages; the local engine or a model; any program) asks the owner each time, at every level and inside the window. Its card says what will be installed and from where: the title names the thing (and its size for a download), the detail names the host, and the payload carries the address. The door makes sure the detail says where it comes from: the asker passes `from` (a host or registry, for example `registry.npmjs.org`) beside `title` and `detail`, or the host of `payload.url` is used; the door puts "From <it>." in front of the detail unless the detail already names it. When neither is there, the card says "Where it comes from was not stated." `from` is not part of the payload, so it does not change what `assertGranted` checks. A download the owner starts with a button that already names the file is one card per file, never two. The one exception to a card is the standing yes of the downloads service (below). It is set only from the Settings route and the chip under the message box, both served by the shell with the session token.
+
+## The standing yes for update downloads
+
+`downloads.start(spec, { standingYes: 'update.background' })` is the only way a download is queued without a card. It is accepted only for `kind: 'desk-update'` and only while the owner-only setting `update.background` is on (UPDATES.md); the download then carries the marker `owner switch: update.background` in place of an approval id, and the activity log gets one line (`update.download`, how `owner switch`). No approval row is made. Any other name, any other kind, the switch off, or a module (`downloads.forModule(id).start` refuses the option) is refused with `forbidden`. A paused download whose switch has since gone off asks the owner on Resume. Installing a downloaded update still asks every time.
 
 ## Spend limits
 

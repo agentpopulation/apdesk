@@ -87,4 +87,21 @@ try {
       const held = loop && r.provider === 'llama' && !reachable.length;
       say(held, 'loopback', held ? `answers on 127.0.0.1:${port}; refused on ${others.map(i => i.address).join(', ') || '(this PC has no other address; checked the --host flag only)'}` : `loop=${loop} reachable=${reachable.join(',')}`);
     } finally { ok.stop(); await t.close(); } }
+
+  // 5. inside an auto-approve window, at every level, each download of the engine and its model still asks the owner
+  for (const level of ['open', 'careful', 'strict']) {
+    const t = await desk(host, {});
+    try {
+      await t.call('/api/settings/security', { body: { level } }); await t.call('/api/settings/auto-approve', { body: { window: 60 } });
+      const before = host.hits.length;
+      await t.core.localEngine.get({ owner: true });
+      await until(() => t.core.approval.listPending().length >= 2, 3000);
+      await new Promise(r => setTimeout(r, 150));
+      const cards = t.core.approval.listPending().filter(a => a.action === 'install');
+      const fetched = host.hits.length - before; const auto = t.core.approval.listRecent(20).filter(a => a.action === 'install' && a.how === 'auto').length;
+      const held = cards.length === 2 && fetched === 0 && auto === 0 && cards.every(c => /From 127\.0\.0\.1/.test(c.detail || '') && c.payload?.url);
+      say(held, 'install-window-' + level, held ? `${level} with auto-approve on: two cards (engine, model), each naming the file and its host; nothing fetched before the owner answers` : JSON.stringify({ cards: cards.length, fetched, auto }));
+      for (const c of cards) t.core.approval.decide(c.id, 'deny');
+    } finally { await t.close(); }
+  }
 } finally { await host.close(); fs.rmSync(scratch, { recursive: true, force: true }); }

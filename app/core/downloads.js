@@ -16,6 +16,10 @@ const MAX_REDIRECTS = 5;
 const LOOP = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
 /** States: waiting (for the owner's approval), queued, running, paused, done, failed, cancelled. */
 const OPEN = new Set(['waiting', 'queued', 'running', 'paused']);
+/** The one standing yes: the owner's "Download updates in the background" switch (owner-only route), for desk updates.
+ *  It is recorded on the download in place of an approval id. No other name, kind or caller can skip the question. */
+const STANDING = Object.freeze({ 'update.background': Object.freeze({ kind: 'desk-update', setting: 'update.background', marker: 'owner switch: update.background' }) });
+const STANDING_MARKERS = new Set(Object.values(STANDING).map(x => x.marker));
 
 /** 1.2 GB, 954 MB: the same rounding the screen uses (app/ui/kit.js fmt.bytes). */
 export function sizeText(n) { n = Number(n) || 0; const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return (i ? n.toFixed(1) : n) + ' ' + u[i]; }
@@ -88,17 +92,38 @@ export class Downloads {
    * start({ id?, title, url, allowHosts, size, sha256, to, kind, approval? }) -> the stored download, at once.
    * The owner is asked (action install) with a title that says what and how big; the transfer starts when he says yes.
    * approval: { agentId, chatId } passed to the door. Refused while Panic holds, and for a kind that is blocked.
+   * standingYes: 'update.background' only, for kind 'desk-update', only while that owner-only switch is on: the
+   * download is queued without a card, the switch is recorded in place of an approval, and the activity log says so.
    */
-  async start(spec, { agentId = null, chatId = null } = {}) {
+  async start(spec, { agentId = null, chatId = null, standingYes = null } = {}) {
     if (this.panic.halted) throw Object.assign(new Error('Everything is stopped. Press Resume first.'), { code: 'halted', status: 503 });
     const d = this.check(spec);
+    const yes = standingYes == null ? null : this.standing(standingYes, d.kind);
     const block = this.blocks.get(d.kind); if (block) throw Object.assign(new Error(block), { code: 'blocked', status: 409 });
     const same = this.all().find(x => OPEN.has(x.state) && x.to === d.to);
     if (same) return this.out(same);                                  // one download per file
+    if (yes) {
+      const rec = this.put({ ...d, id: d.id || makeId('dl_'), state: 'queued', done: 0, total: d.size, created: now(), reason: null, approvalId: yes.marker, agentId: null, chatId: null });
+      try { this.approval.activity?.({ action: 'update.download', title: `Downloading ${d.title} in the background`, how: 'owner switch', detail: 'Download updates in the background is on. Installing still asks you.' }); } catch {}
+      this.emit(rec, true); this.pump();
+      return this.out(rec);
+    }
     const rec = this.put({ ...d, id: d.id || makeId('dl_'), state: 'waiting', done: 0, total: d.size, created: now(), reason: 'Waiting for your approval', approvalId: null, agentId, chatId });
     this.emit(rec, true);
     this.ask(rec.id);
     return this.out(rec);
+  }
+  /** The standing yes named, if it holds right now for this kind; otherwise refused. */
+  standing(name, kind) {
+    const y = typeof name === 'string' && Object.hasOwn(STANDING, name) ? STANDING[name] : null;
+    if (!y || kind !== y.kind || this.settings.get(y.setting) !== true) throw Object.assign(new Error('This download needs your approval.'), { code: 'forbidden', status: 403 });
+    return y;
+  }
+  /** A download that holds a standing yes whose switch is now off goes back to asking. */
+  stillAllowed(d) {
+    if (!STANDING_MARKERS.has(d.approvalId)) return !!d.approvalId;
+    const y = Object.values(STANDING).find(x => x.marker === d.approvalId);
+    return d.kind === y.kind && this.settings.get(y.setting) === true;
   }
   check(spec) {
     const fail = (m) => { throw Object.assign(new Error(m), { status: 400, code: 'bad_download' }); };
@@ -137,7 +162,7 @@ export class Downloads {
     if (d.state !== 'paused' && d.state !== 'failed') return this.out(d);
     const block = this.blocks.get(d.kind); if (block) throw Object.assign(new Error(block), { code: 'blocked', status: 409 });
     if (this.settings.get('online') === false) throw Object.assign(new Error('The desk is offline. Go online to download.'), { code: 'offline', status: 409 });
-    if (!d.approvalId) { const n = this.patch(id, { state: 'waiting', pausedBy: null, reason: 'Waiting for your approval' }); this.ask(id); return this.out(n); }
+    if (!this.stillAllowed(d)) { const n = this.patch(id, { state: 'waiting', pausedBy: null, approvalId: null, reason: 'Waiting for your approval' }); this.ask(id); return this.out(n); }
     const n = this.patch(id, { state: 'queued', pausedBy: null, reason: null, finished: null });
     this.pump();
     return this.out(n);
@@ -290,7 +315,10 @@ export class Downloads {
     const mine = (d) => d && d.kind === 'm.' + moduleId;
     const dir = path.join(this.roots[0], 'downloads', moduleId);
     return Object.freeze({
-      start: (spec, who) => this.start({ ...spec, kind: 'm.' + moduleId, to: path.join(dir, path.basename(String(spec?.file || spec?.to || 'file'))) }, who),
+      start: (spec, who) => {
+        if (who?.standingYes != null) return Promise.reject(Object.assign(new Error('A module\'s download always asks the owner.'), { code: 'forbidden', status: 403 }));
+        return this.start({ ...spec, kind: 'm.' + moduleId, to: path.join(dir, path.basename(String(spec?.file || spec?.to || 'file'))) }, { agentId: who?.agentId ?? null, chatId: who?.chatId ?? null });
+      },
       get: (id) => { const d = this.get(id); return mine(d) ? this.out(d) : null; },
       list: () => this.all().filter(mine).map(d => this.out(d)),
       cancel: (id) => { const d = this.get(id); return mine(d) ? this.cancel(id) : null; },

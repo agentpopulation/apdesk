@@ -9,7 +9,6 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
 import { SETTINGS_TOKEN } from './approval-door.js';
-import { now } from './storage.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const KEYS_FILE = path.join(HERE, 'update-keys.json');
@@ -27,8 +26,6 @@ export const NOTES_MAX = { lines: 30, chars: 300 };
 export const CHANNELS = ['stable', 'preview'];
 /** Preview also looks at this many of the newest releases in the feed (pre-releases are never the "latest" one). */
 const PREVIEW_TAGS = 3;
-/** The owner's "Download updates in the background" switch is his yes for these downloads only; nothing else. */
-const STANDING_YES = 'owner switch: update.background';
 const MAX_FILES = 100000;
 const MAX_UNPACKED = 3 * 1024 ** 3;
 const DAY = 24 * 3600 * 1000;
@@ -346,13 +343,14 @@ export class Updater {
     if (have && have.sha256 === c.file.sha256 && have.state !== 'failed') return have;
     if (have) dl.forget(id);
     const host = (h) => new URL('http://' + h).hostname;
-    const spec = dl.check({ id, title: `AP Desk ${c.release.version} (update)`, url: `${this.repo}/releases/download/v${c.release.version}/${c.file.name}`, allowHosts: this.hosts.map(host), size: c.file.size, sha256: c.file.sha256, to: this.bgFile(c.file), kind: 'desk-update' });
-    if (dl.all().some(x => x.to === spec.to && x.id !== id && ['waiting', 'queued', 'running', 'paused'].includes(x.state))) return null;
-    try { fs.rmSync(spec.to, { force: true }); } catch {}
-    const rec = dl.put({ ...spec, id, state: 'queued', done: 0, total: spec.size, created: now(), reason: null, approvalId: STANDING_YES, agentId: null, chatId: null });
+    const to = path.resolve(this.bgFile(c.file));
+    if (dl.all().some(x => x.to === to && x.id !== id && ['waiting', 'queued', 'running', 'paused'].includes(x.state))) return null;
+    try { fs.rmSync(to, { force: true }); } catch {}
+    // the downloads service checks the switch, records it in place of an approval and writes the activity line
+    dl.start({ id, title: `AP Desk ${c.release.version} (update)`, url: `${this.repo}/releases/download/v${c.release.version}/${c.file.name}`, allowHosts: this.hosts.map(host), size: c.file.size, sha256: c.file.sha256, to, kind: 'desk-update' }, { standingYes: 'update.background' })
+      .catch((e) => this.core.log?.('update', 'background download not started', e.message));
+    const rec = dl.get(id); if (!rec) return null;                      // refused: start() checks before it stores
     this.core.settings.set('update.bg', { id, version: c.release.version, name: c.file.name, size: c.file.size, sha256: c.file.sha256 });
-    this.core.approval.activity({ action: 'update.download', title: `Downloading AP Desk ${c.release.version} in the background`, how: 'owner switch', detail: 'Download updates in the background is on. Installing still asks you.' });
-    dl.emit(rec, true); dl.pump();
     dl.whenDone(id).then(() => this.emit(), () => {});
     return rec;
   }
@@ -403,7 +401,7 @@ export class Updater {
       const { release, file } = c;
       const payload = { kind: 'desk-update', from: c.from, version: release.version, file: file.name, size: file.size, sha256: file.sha256, manifest: c.manifestSha };
       this.busy = 'asking'; this.emit();
-      const d = await this.core.approval.request({ action: 'install', title: `Update AP Desk from ${c.from} to ${release.version}`, detail: 'A signed release from GitHub. A backup of your data is made first; then the desk restarts.', payload, signal: this.core.panic.child() });
+      const d = await this.core.approval.request({ action: 'install', title: `Update AP Desk from ${c.from} to ${release.version}`, from: 'github.com/agentpopulation/apdesk', detail: 'A signed release from GitHub. A backup of your data is made first; then the desk restarts.', payload, signal: this.core.panic.child() });
       if (!d.ok) return refuse(d.reason === 'denied' ? 'You said no, so nothing was changed.' : d.reason === 'halted' ? 'Stopped by Panic. Nothing was changed.' : 'The update was not approved, so nothing was changed.');
       if (d.how !== 'owner') return refuse('An update needs your own approval. Nothing was changed.');
       this.core.approval.assertGranted(d.id, 'install', payload);

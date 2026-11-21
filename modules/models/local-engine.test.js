@@ -53,12 +53,33 @@ test('local engine: picks a build and the largest model that fits, never one tha
   e.platform = 'darwin'; e.arch = 'arm64'; assert.equal(e.pickBuild({}).id, 'mac-arm64');
   e.platform = 'freebsd'; assert.equal(e.pickBuild({}), null);
   e.platform = 'linux'; e.arch = 'x64'; const b = e.pickBuild({});
-  assert.equal(e.pickModel({ ramGb: 16, ramFreeGb: 12 }, b).id, 'granite-4.2-8b');
+  assert.equal(e.pickModel({ ramGb: 16, ramFreeGb: 12 }, b).id, 'granite-4.2-3b', 'no graphics card: 3B at most');
+  e.platform = 'darwin'; e.arch = 'arm64'; assert.equal(e.pickModel({ ramGb: 16, ramFreeGb: 12 }, e.pickBuild({})).id, 'granite-4.2-8b', 'Apple graphics: the largest that fits');
+  e.platform = 'win32'; e.arch = 'x64'; const gpu = { ramGb: 16, ramFreeGb: 12, gpu: { dedicated: true, vramGb: 8 } };
+  assert.equal(e.pickModel(gpu, e.pickBuild(gpu)).id, 'granite-4.2-8b', 'a graphics card: the largest that fits');
+  e.platform = 'linux'; e.arch = 'x64';
   assert.equal(e.pickModel({ ramGb: 16, ramFreeGb: 4 }, b).id, 'granite-4.2-3b', 'free memory counts, not only the total');
   assert.equal(e.pickModel({ ramGb: 8, ramFreeGb: 3 }, b).id, 'granite-4.0-1b');
   assert.equal(e.pickModel({ ramGb: 4, ramFreeGb: 1 }, b), null, 'nothing that needs more than the PC has free');
   for (const m of PINS.models.list) { assert.match(m.sha256, /^[0-9a-f]{64}$/); assert.ok(m.size > 0); assert.ok(/^Apache-2\.0$|^MIT$/.test(m.licence)); assert.ok(m.url.includes(m.commit) && m.url.endsWith('/' + m.file)); }
   for (const x of PINS.engine.builds) { assert.match(x.sha256, /^[0-9a-f]{64}$/); assert.ok(x.url.endsWith('/' + x.file)); }
+});
+
+test('local engine: no graphics card, the plan offers 3B at most and says why in one line; the 8B can still be chosen by hand', async () => {
+  const e = Object.create(LocalEngine.prototype);
+  Object.assign(e, { pins: PINS, platform: 'linux', arch: 'x64', hw: null, dir: path.join(os.tmpdir(), 'apd-no-engine-here'), cfg: () => ({ on: true, choice: null, engine: null, model: null, downloads: {} }) });
+  e.hardwareFn = async () => ({ ramGb: 32, ramFreeGb: 24, gpu: null, line: 'Test PC with 32 GB of RAM.' });
+  const p = await e.plan();
+  assert.equal(p.recommended, 'granite-4.2-3b'); assert.equal(p.model.id, 'granite-4.2-3b'); assert.equal(p.ok, true);
+  assert.equal(typeof p.note, 'string'); assert.ok(!p.note.includes('\n'), 'one line');
+  assert.match(p.note, /graphics card/); assert.match(p.note, /Granite 4\.2 3B/); assert.match(p.note, /Choose another/);
+  const big = p.choices.find(c => c.id === 'granite-4.2-8b'); assert.equal(big.fits, true, 'still offered under Choose another');
+  const byHand = await e.plan('granite-4.2-8b'); assert.equal(byHand.ok, true); assert.equal(byHand.model.id, 'granite-4.2-8b');
+  // a graphics card, or a PC where 3B is the largest that fits anyway: no such line
+  e.platform = 'darwin'; e.arch = 'arm64'; e.hw = null;
+  const mac = await e.plan(); assert.equal(mac.recommended, 'granite-4.2-8b'); assert.equal(mac.note, null);
+  e.platform = 'linux'; e.arch = 'x64'; e.hw = null; e.hardwareFn = async () => ({ ramGb: 8, ramFreeGb: 5, gpu: null });
+  const small = await e.plan(); assert.equal(small.recommended, 'granite-4.2-3b'); assert.equal(small.note, null);
 });
 
 test('local engine: the plan for the first-start box, refused without the owner, and the full flow to an answer on loopback', { skip: NO_SH }, async () => {
