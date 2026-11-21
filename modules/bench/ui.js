@@ -1,11 +1,13 @@
 // Bench mode: the page (sessions and the note "While you were away"), the settings card, and the card Home shows on return.
 const API = 'm/bench/';
-const KIND_WORDS = { needs: 'Needs you', work: 'Unfinished work', doubt: 'Doubt', lesson: 'Lesson', profile: 'Your business', competitor: 'Competitor', skill: 'Skill draft', lead: 'Possible customer', funding: 'Money and credits', tool: 'Free tool', report: 'Market report', table: 'Pricing table', plan: '30-day plan' };
+const KIND_WORDS = { needs: 'Needs you', work: 'Unfinished work', doubt: 'Doubt', lesson: 'Lesson', profile: 'Your business', competitor: 'Competitor', skill: 'Skill draft', lead: 'Possible customer', funding: 'Money and credits', tool: 'Free tool', report: 'Market report', table: 'Pricing table', plan: '30-day plan', draft: 'Draft' };
 const STATE_WORDS = { new: 'Waiting for you', kept: 'Kept', dismissed: 'Dismissed', task: 'Turned into a task' };
 const put = (el, ...xs) => el.replaceChildren(...xs.flat().filter((x) => x != null && x !== false));
 const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
 const REASONS = [['wrong facts', 'Wrong facts'], ['weak sources', 'Weak sources'], ['missed the point', 'Missed the point'], ['too long', 'Too long'], ['too short', 'Too short'], ['outdated', 'Outdated'], ['other', 'Other']];
 const spendLine = (ui, g) => g.daySpendMinor > 0 ? ui.fmt.money(g.daySpendMinor, g.currency) + ' today' : 'No paid spend today';
+const TODO_WORDS = { queued: 'Queued', running: 'Running', done: 'Done', skipped: 'Skipped' };
+const leftWords = (ms) => ms == null ? '—' : ms <= 0 ? 'nothing queued now' : ms < 60000 ? 'under a minute' : `about ${Math.round(ms / 60000)} minute${Math.round(ms / 60000) === 1 ? '' : 's'}`;
 const stat = (ui, value, label) => ui.h('div', null, ui.h('b', { style: { fontSize: '20px', display: 'block' } }, String(value)), ui.h('span', { class: 'sub' }, label));
 
 /** The quiet rating controls shown under an answer or a finding. Owner-only (the route refuses others). */
@@ -64,11 +66,32 @@ function itemCard(ui, it, onDone) {
       onDone?.();
     } catch (e) { toast(e.message, 'err'); }
   };
+  const draftAct = (a, body = {}) => async () => {
+    try { const r = await ui.api(`${API}items/${it.id}/${a}`, { body }); toast(a === 'handover' ? r.item?.result || 'Handed over.' : 'Draft ready.', 'ok'); onDone?.(); } catch (e) { toast(e.message, 'err'); }
+  };
+  const editDraft = async () => {
+    const d = it.data?.draft; if (!d) return;
+    if (d.type === 'onepager') {
+      const summary = await ui.ask('Summary', { value: d.summary, multiline: true }); if (summary == null) return;
+      const points = await ui.ask('Key points, one per line', { value: d.points.join('\n'), multiline: true }); if (points == null) return;
+      const recommendation = await ui.ask('Recommendation', { value: d.recommendation || '', multiline: true }); if (recommendation == null) return;
+      return draftAct('edit', { draft: { summary, points: points.split('\n'), recommendation } })();
+    }
+    const lines = await ui.ask('One action per line: action | effort | why', { value: d.actions.map((x) => `${x.action} | ${x.effort} | ${x.why}`).join('\n'), multiline: true }); if (lines == null) return;
+    return draftAct('edit', { draft: { actions: lines.split('\n').map((l) => { const [action, effort, ...why] = l.split('|').map((x) => x.trim()); return { action, effort, why: why.join(' | ') }; }) } })();
+  };
+  const handover = async () => { const to = await ui.ask('Hand this to Mail drafts. Who is it for? (optional e-mail address)', { value: '' }); if (to == null) return; draftAct('handover', { to })(); };
+  const isDraft = it.kind === 'draft';
+  const draftRow = it.state !== 'new' ? null : isDraft
+    ? h('div', { class: 'row', style: { marginTop: '6px', flexWrap: 'wrap', gap: '6px' } }, h('span', { class: 'sub' }, 'A rough draft, not checked line by line.'), h('span', { class: 'grow' }),
+      btn('Edit', { kind: 'ghost sm', onClick: editDraft }), btn('Make again', { kind: 'ghost sm', onClick: draftAct('redo') }), btn('Hand to Mail drafts', { kind: 'ghost sm', onClick: handover }))
+    : it.kind === 'needs' ? null
+    : h('div', { class: 'row', style: { marginTop: '6px', flexWrap: 'wrap', gap: '6px' } }, h('span', { class: 'sub' }, 'Make a draft:'), btn('One-pager', { kind: 'ghost sm', onClick: draftAct('draft', { type: 'onepager' }) }), btn('Next actions', { kind: 'ghost sm', onClick: draftAct('draft', { type: 'actions' }) }));
   const go = it.data?.go ? btn('Open', { kind: 'ghost sm', onClick: () => { const [p, ...rest] = String(it.data.go).split('/'); ui.go(p, ...rest); } }) : null;
   const decided = it.state !== 'new';
   return card({ class: 'bench-item', 'data-kind': it.kind },
     h('div', { class: 'row' }, pill(KIND_WORDS[it.kind] || it.kind, it.kind === 'needs' ? 'wait' : ''), h('span', { class: 'grow' }),
-      it.kind === 'needs' ? null : pill(it.complete ? 'Every line has its source' : 'Some lines not checked', it.complete ? 'ok' : '')),
+      it.kind === 'needs' ? null : isDraft ? pill(it.data?.handedOver ? 'Draft, handed to Mail' : 'Draft', 'wait') : pill(it.complete ? 'Every line has its source' : 'Some lines not checked', it.complete ? 'ok' : '')),
     h('b', { style: { display: 'block', marginTop: '6px', overflowWrap: 'anywhere' } }, it.title),
     it.body ? h('p', { class: 'sub', style: { whiteSpace: 'pre-wrap', marginTop: '6px', overflowWrap: 'anywhere' } }, it.body) : null,
     (it.evidence || []).length ? h('div', { style: { marginTop: '6px' } }, it.evidence.map((e) => h('div', { class: 'sub', style: { marginTop: '4px', overflowWrap: 'anywhere' } },
@@ -77,7 +100,9 @@ function itemCard(ui, it, onDone) {
     h('div', { class: 'row', style: { marginTop: '8px' } },
       decided ? h('span', { class: 'sub' }, `${STATE_WORDS[it.state]}${it.decided ? ' ' + fmt.when(it.decided) : ''}${it.result ? ': ' + it.result : ''}`) : null,
       h('span', { class: 'grow' }), go,
-      decided ? null : [it.kind === 'needs' ? null : btn('Keep', { kind: 'sm', onClick: act('keep') }), btn('Dismiss', { kind: 'ghost sm', onClick: act('dismiss') }), btn('Turn into a task', { kind: 'ghost sm', onClick: act('task') })]),
+      decided ? null : isDraft ? [btn('Accept', { kind: 'sm', onClick: act('keep') }), btn('Discard', { kind: 'ghost sm', onClick: act('dismiss') })]
+        : [it.kind === 'needs' ? null : btn('Keep', { kind: 'sm', onClick: act('keep') }), btn('Dismiss', { kind: 'ghost sm', onClick: act('dismiss') }), btn('Turn into a task', { kind: 'ghost sm', onClick: act('task') })]),
+    draftRow,
     stepsBlock(ui, it.data?._jobId),
     ratingBar(ui, 'bench_item', it.id, it.rating));
 }
@@ -104,19 +129,49 @@ function noteView(ui, data, { filter, onChange }) {
     showBest ? h('div', { class: 'stack' }, h('h3', { style: { margin: 0 } }, 'Best first'), h('p', { class: 'sub' }, note.rule), ...note.best.map((i) => itemCard(ui, full(i), refresh))) : null,
     ...[...byKind.entries()].sort((a, b) => (a[0] === 'needs' ? -1 : b[0] === 'needs' ? 1 : 0)).map(([k, list]) => h('div', { class: 'stack' }, h('h3', { style: { margin: 0 } }, `${KIND_WORDS[k] || k} (${list.length})`), ...list.map((i) => itemCard(ui, i, refresh)))),
     !want.length ? ui.empty('Nothing here with this filter.') : null,
-    note.notDone.length ? card(h('h3', null, 'What Bench could not do'), ...note.notDone.map((l) => h('p', { class: 'sub' }, l))) : null);
+    note.notDone.length ? card(h('h3', null, 'What Bench could not do'), ...note.notDone.map((l) => h('p', { class: 'sub' }, l))) : null,
+    data.todo ? card(todoView(ui, data.todo, { ended: session.state !== 'running' })) : null);
+}
+
+/** The session's activities as a to-do list, with the time left from earlier measured durations (a dash when none). */
+function todoView(ui, todo, { ended = false } = {}) {
+  const { h } = ui;
+  if (!todo) return null;
+  return h('div', { class: 'stack', 'data-apd': 'bench-todo', style: { gap: '2px' } },
+    h('div', { class: 'row' }, h('b', null, ended ? 'To do, as it was left' : 'To do'), h('span', { class: 'grow' }), ended ? null : h('span', { class: 'sub' }, `Time left: ${leftWords(todo.leftMs)}`)),
+    ...todo.items.map((i) => h('div', { class: 'sub', style: { overflowWrap: 'anywhere' } }, `${TODO_WORDS[i.status] || i.status} · ${i.title}${i.why ? ' (' + i.why + ')' : ''}`)),
+    !ended && todo.leftMs == null ? h('p', { class: 'sub' }, 'No earlier work has been timed yet, so there is no estimate.') : null);
+}
+
+/** The Rulebook tab: rules proposed from your own files (read only), each with its file and line; you confirm, edit or reject. */
+async function rulebookView(el, ui) {
+  const { h, card, btn, line, empty, toast } = ui;
+  const paint = async () => {
+    let r; try { r = await ui.api(API + 'rules'); } catch (e) { return put(el, empty(e.message)); }
+    const act = (id, a, body = {}) => async () => { try { await ui.api(`${API}rules/${id}/${a}`, { body }); paint(); } catch (e) { toast(e.message, 'err'); } };
+    const edit = (x) => async () => { const t = await ui.ask('Edit the rule', { value: x.text, multiline: true }); if (t != null) act(x.id, 'edit', { text: t })(); };
+    const where = (x) => `${x.kindWord} · ${x.file}, line ${x.line}`;
+    put(el, card({ 'data-apd': 'bench-rulebook' },
+      h('div', { class: 'row' }, h('h3', { style: { margin: 0 } }, 'Rulebook'), h('span', { class: 'grow' }),
+        btn('Look in my files', { kind: 'sm', onClick: async () => { try { const s = await ui.api(API + 'rules/scan', { body: {} }); toast(`${s.filesRead} file${s.filesRead === 1 ? '' : 's'} read`, 'ok'); paint(); } catch (e) { toast(e.message, 'err'); } } })),
+      h('p', { class: 'sub' }, 'Rules are proposed from the text files you put in your workspace, word for word, with the file and line. Your files are only read, never changed. ' + r.later)),
+      card(h('h3', null, `Proposed (${r.proposed.length})`), ...(r.proposed.length ? r.proposed.map((x) => line(x.text, where(x), h('span', { class: 'row', style: { gap: '6px', flexWrap: 'wrap' } }, btn('Confirm', { kind: 'sm', onClick: act(x.id, 'confirm') }), btn('Edit', { kind: 'ghost sm', onClick: edit(x) }), btn('Reject', { kind: 'ghost sm', onClick: act(x.id, 'reject') })))) : [empty('Nothing waiting. Press "Look in my files" to look again.')])),
+      card(h('h3', null, `Confirmed (${r.confirmed.length})`), ...(r.confirmed.length ? r.confirmed.map((x) => line(x.text, where(x) + (x.text !== x.original ? ' · edited by you' : ''))) : [empty('No confirmed rules yet.')])));
+  };
+  await paint();
 }
 
 export const pages = {
   bench: {
     title: 'Bench',
     async render(el, ui, route) {
-      const { h, card, line, btn, pill, fmt, empty, toast } = ui;
+      const { h, card, line, btn, pill, fmt, empty, toast, seg } = ui;
       el.classList.add('scroll');
       const now = h('div', { class: 'stack' }); const list = h('div'); const main = h('div', { class: 'stack' }); const gateEl = h('div');
-      let filter = { kind: '', state: 'new' }; let picked = route?.parts?.[0] || null;
+      let filter = { kind: '', state: 'new' }; let picked = route?.parts?.[0] || null; let tab = 0;
+      const tabs = h('div');
       el.append(h('div', { class: 'row' }, h('h2', { style: { margin: 0 } }, 'Bench'), h('span', { class: 'grow' }), btn('While you were away', { kind: 'ghost sm', onClick: () => ui.go('bench-return') }), btn('Bench settings', { kind: 'ghost sm', onClick: () => ui.go('settings', 'bench') })),
-        gateEl,
+        gateEl, tabs,
         h('div', { class: 'cols' }, main, h('div', { class: 'stack' }, card(h('h3', null, 'Now'), now), card(h('h3', null, 'Sessions'), list))));
       function paintGate(v) {
         const g = v.gate;
@@ -133,6 +188,8 @@ export const pages = {
           : !v.gate.ready ? line('Waiting for your spend choice', 'Choose Local only, Free, or Paid, capped in Bench settings.', btn('Choose', { kind: 'sm', onClick: () => ui.go('settings', 'bench') }))
           : r ? [line(`Running since ${fmt.when(r.started)}`, `Stage ${r.tier} of 4${r.now ? ' · ' + r.now : ''}${r.waiting ? ' · ' + r.waiting : ''}`, pill('Working', 'run')),
             line('Used so far', `${r.used.calls} model calls, ${r.used.pages} pages read, ${Math.round((r.used.ms || 0) / 60000)} minutes of work`),
+            todoView(ui, r.todo),
+            v.keepAwake?.held ? h('p', { class: 'sub' }, 'Keeping this PC awake while work is queued.') : null,
             h('p', { class: 'sub' }, 'It stops as soon as you use the desk.')]
             : line('Waiting for you to be away', `Starts after ${v.settings.startAfter} minutes without a click or a key in this window.`, pill('Idle')));
         return v;
@@ -144,6 +201,8 @@ export const pages = {
           h('div', null, h('b', null, fmt.when(s.started)), h('span', { class: 'd' }, `${s.state === 'running' ? 'Running' : s.state === 'stopped' ? 'Stopped' : 'Finished'}${s.endWhy ? ': ' + s.endWhy : ''} · ${Object.values(s.counts).reduce((a, b) => a + b, 0)} findings`)))) : [empty('No sessions yet.')]);
       }
       async function paintMain() {
+        put(tabs, seg(['Findings', 'Rulebook'], tab, (_, i) => { tab = i; paintMain().catch((e) => toast(e.message, 'err')); }));
+        if (tab === 1) return rulebookView(main, ui);
         if (!picked) return put(main, card(h('h3', null, 'While you were away'), empty('When you leave the desk for a while, Bench looks back at its own work and looks up your market. The note waits here.')));
         const qs = new URLSearchParams(); if (filter.kind) qs.set('kind', filter.kind);
         const data = await ui.api(`${API}sessions/${picked}`);
@@ -184,15 +243,31 @@ export const pages = {
         const usageCard = u.agents.length ? card(h('div', { class: 'row' }, h('h3', { style: { margin: 0 } }, 'Usage today'), h('span', { class: 'grow' }), btn('Download CSV', { kind: 'ghost sm', onClick: downloadCsv })),
           h('div', { class: 'scroll' }, table(['Agent', 'Calls', 'Errors', 'Tokens', 'Spend'], u.agents.map((a) => [a.agent, String(a.calls), String(a.errors), String(a.inputTokens + a.outputTokens), a.costMinor > 0 ? fmt.money(a.costMinor, u.currency) : '—']))),
           u.benchSteps.length ? h('p', { class: 'sub' }, 'Bench steps: ' + u.benchSteps.map((s) => `${s.action} ${s.count}`).join(', ')) : null) : null;
+        const srcLine = (list) => (list || []).length ? h('div', { class: 'sub', style: { overflowWrap: 'anywhere' } }, 'Sources: ', ...list.flatMap((s, i) => [i ? ', ' : '', s.url ? h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer' }, s.title || hostOf(s.url)) : h('span', null, s.title || 'Your desk')])) : h('div', { class: 'sub' }, 'Sources: none');
+        const f = p.find;
+        const findCard = f ? card({ 'data-apd': 'bench-find' }, h('h3', null, "Today's find"), h('b', { style: { display: 'block', overflowWrap: 'anywhere' } }, f.question),
+          h('p', { class: 'sub' }, `Why this one: ${f.why}`),
+          h('p', { style: { overflowWrap: 'anywhere' } }, f.answer || f.status), f.answer ? srcLine(f.sources) : null,
+          h('p', { class: 'sub' }, 'Picked by the desk from your own tasks, ratings and Bench findings. Change it in Bench settings.')) : null;
+        const w = p.weekly;
+        const weeklyCard = w && w.rated ? card({ 'data-apd': 'bench-weekly' }, h('h3', null, 'What I learned this week'),
+          h('p', { class: 'sub' }, `From ${w.rated} rating${w.rated === 1 ? '' : 's'} you left in the last 7 days.`),
+          w.good.length ? h('div', null, h('b', null, 'Rated good'), ...w.good.map((x) => h('div', { class: 'sub', style: { overflowWrap: 'anywhere' } }, `• ${x.title}`))) : null,
+          w.poor.length ? h('div', null, h('b', null, 'Rated poor'), ...w.poor.map((x) => h('div', { class: 'sub', style: { overflowWrap: 'anywhere' } }, `• ${x.title}${x.reasons.length ? ': ' + x.reasons.join(', ') : ''}${x.comment ? ` ("${x.comment}")` : ''}`))) : null,
+          w.suggestions.length ? h('div', null, h('b', null, 'Suggested changes'), ...w.suggestions.map((x) => h('div', { class: 'sub', style: { overflowWrap: 'anywhere' } }, `• ${x.change} (${x.reason}, ${x.times} time${x.times === 1 ? '' : 's'})`))) : null,
+          h('p', { class: 'sub' }, w.note)) : null;
+        const gapCard = (p.gaps || []).length ? card({ 'data-apd': 'bench-gaps' }, h('h3', null, 'When the desk was not running'), ...p.gaps.map((g) => h('p', { class: 'sub' }, g.text))) : null;
         put(wrap,
           card(h('h2', { style: { margin: '0 0 8px' } }, 'While you were away'),
             h('div', { class: 'row', style: { gap: '20px', flexWrap: 'wrap' } },
               stat(ui, hl.finished, 'finished'), stat(ui, hl.needsYou, 'need you'), stat(ui, Math.round((hl.workedMs || 0) / 60000) + 'm', 'worked'), stat(ui, spend, 'spent today'))),
+          gapCard, findCard,
           usageCard,
           p.results.length ? card(h('h3', null, "What I did"), ...p.results.map(resultCard)) : null,
           p.needs.length ? card(h('h3', null, 'Needs you'), ...p.needs.map((n) => line(n.title, n.detail || '', n.kind === 'job' ? btn('Open', { kind: 'ghost sm', onClick: () => ui.go('home') }) : null))) : null,
           p.didntGetTo.length ? card(h('h3', null, "What I didn't get to"), ...p.didntGetTo.map((d) => h('div', { style: { marginTop: '6px' } }, h('b', { style: { display: 'block', overflowWrap: 'anywhere' } }, d.title), d.why ? h('span', { class: 'sub' }, d.why) : null, d.next ? h('p', { class: 'sub', style: { margin: '2px 0 0' } }, 'Next: ' + d.next) : null))) : null,
-          !p.results.length && !p.needs.length && !p.didntGetTo.length ? empty('Nothing to show yet. When Bench runs or a job finishes, it shows up here.') : null);
+          weeklyCard,
+          !p.results.length && !p.needs.length && !p.didntGetTo.length && !f && !gapCard ? empty('Nothing to show yet. When Bench runs or a job finishes, it shows up here.') : null);
       }
       await paint();
       ui.on('bench', () => paint().catch((e) => toast(e.message, 'err')));
@@ -223,6 +298,7 @@ export const settings = {
             line('Start after I have been away for', 'Away means no click or key in this window. The desk cannot see the rest of your PC.', seg(['15 minutes', '30 minutes', '60 minutes'], [15, 30, 60].indexOf(c.startAfter), (_, i) => save({ startAfter: [15, 30, 60][i] }).catch((e) => toast(e.message, 'err')))),
             line('Stop on battery below', 'A PC with no battery, or on mains power, is never stopped.', h('span', { class: 'field' }, battery)),
             line('Your site address', 'Optional. Bench reads your own pages to propose a short profile.', h('span', { class: 'field' }, site)),
+            line('Keep this PC awake while Bench works', v.keepAwake.note + (v.keepAwake.error ? ` Not working here: ${v.keepAwake.error}.` : ''), sw(v.keepAwake.on, 'Keep this PC awake while Bench works', (on) => save({ keepAwake: on }).catch((e) => toast(e.message, 'err')))),
             line('Start a bench session now', 'To try it. It stops when you next use the desk, after one minute.', btn('Start now', { kind: 'ghost sm', disabled: !c.enabled || v.halted || !g.ready, onClick: async () => { try { const r = await ui.api(API + 'start', { body: {} }); toast(r.text || 'Bench is already running.', 'ok'); } catch (e) { toast(e.message, 'err'); } } }))),
           card(h('h3', null, 'Spending'),
             h('p', { class: 'sub' }, 'Bench must have a money choice before it runs. Keys and paid switching stay in Models; "Paid, capped" only lets Bench prefer a paid route where you already allow paid use there.'),
@@ -230,6 +306,11 @@ export const settings = {
             g.option === 'paid' ? line('Caps', `Local first; paid only when it clearly helps, up to these caps in ${cur}. 0 means no cap. At a cap Bench winds down to free.`, h('div', { class: 'row', style: { gap: '12px', flexWrap: 'wrap' } }, capInput('Per session', g.capSessionMinor, 'capSessionMinor'), capInput('Per day', g.capDayMinor, 'capDayMinor'))) : null,
             line('Session limits', 'Whatever the money choice: at 80% of any limit Bench winds down to cheaper or local routes; at 100% it stops, checkpoints and lists what is left.', h('div', { class: 'row', style: { gap: '12px', flexWrap: 'wrap' } }, limInput('Tasks', g.limits.tasks, 'tasks'), limInput('Sources', g.limits.sources, 'sources'), limInput('Steps', g.limits.steps, 'steps'), limInput('Minutes', g.limits.minutes, 'minutes'))),
             g.ready ? line('Today', `${spendLine(ui, g)}. This session so far: ${g.limitStatus.used.sources} sources, ${g.limitStatus.used.steps} steps, ${g.limitStatus.used.minutes} minutes.`) : null),
+          card(h('h3', null, "Today's find"),
+            h('p', { class: 'sub' }, 'Once a day while Bench works, the desk picks one question from your own tasks, ratings and Bench findings in the desk (not your browser), and answers it from pages within your spend choice.'),
+            line("Today's find", c.find.off ? 'Off' : 'On', sw(!c.find.off, "Today's find", (on) => save({ findOff: !on }).catch((e) => toast(e.message, 'err')))),
+            line('Topics to avoid', 'Separate with commas.', h('span', { class: 'field' }, h('input', { type: 'text', value: c.find.avoid.join(', '), placeholder: 'salaries, health', 'aria-label': 'Topics to avoid', onchange: (e) => save({ findAvoid: e.target.value }).catch((er) => toast(er.message, 'err')) }))),
+            line('One pinned topic', 'Asked about first, every day, until you clear it.', h('span', { class: 'field' }, h('input', { type: 'text', value: c.find.pin, placeholder: 'Optional', 'aria-label': 'Pinned topic', onchange: (e) => save({ findPin: e.target.value }).catch((er) => toast(er.message, 'err')) })))),
           card(h('h3', null, 'Stages'), h('p', { class: 'sub' }, 'What runs depends on how long you have been away. Earlier stages that have not run go first.'),
             ...v.tiers.map((t) => line(`After ${t.hours} hour${t.hours === 1 ? '' : 's'}`, v.activities.filter((a) => a.tier === t.n).map((a) => a.title).join(', ')))));
       }

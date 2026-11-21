@@ -271,7 +271,11 @@ export async function customers(b) {
   const r = await sales.searchLeads({ query: `Companies that would buy this: ${p.about}`.slice(0, 300), count: 8, signal: b.signal, model: b.modelFor('research'), budget: { totalMinutes: Math.max(2, Math.min(12, left.minutes)), searchMinutes: Math.max(1, Math.min(6, left.minutes)), firstRounds: 1, extraRounds: 0, siteMinutes: 0, pages: Math.max(4, left.pages), searches: Math.max(2, left.searches) } });
   b.spent({ pages: r.pagesRead || 0, searches: r.searches || 0 });
   const pipeline = sales.listLeads(); const custLines = customerLines(b.workspace);
-  const isCustomer = (l) => custLines.some((line) => { const site = (line.match(/\b[a-z0-9-]+(?:\.[a-z0-9-]+)+\b/i) || [])[0]; const name = line.split(/[,;\t|]/)[0]; return sales.sameCompany(name, l.company) || (site && l.website && host('https://' + site.replace(/^https?:\/\//, '')) === host(l.website)); });
+  // the Sales customers list ([{ name, host }] from its exposed customers()), and the Knowledge file
+  let crm = []; try { const c = typeof sales.customers === 'function' ? await sales.customers() : null; crm = Array.isArray(c) ? c : Array.isArray(c?.customers) ? c.customers : []; } catch {}
+  const siteHost = (w) => host(/^https?:\/\//i.test(String(w || '')) ? w : 'https://' + w);
+  const inCrm = (l) => crm.some((c) => (c && sales.sameCompany(String(c.name || ''), l.company)) || (c?.host && l.website && siteHost(c.host) === siteHost(l.website)));
+  const isCustomer = (l) => inCrm(l) || custLines.some((line) => { const site = (line.match(/\b[a-z0-9-]+(?:\.[a-z0-9-]+)+\b/i) || [])[0]; const name = line.split(/[,;\t|]/)[0]; return sales.sameCompany(name, l.company) || (site && l.website && host('https://' + site.replace(/^https?:\/\//, '')) === host(l.website)); });
   let n = 0;
   for (const l of r.leads.slice(0, 10)) {
     const there = pipeline.find((x) => sales.sameCompany(x.company, l.company));

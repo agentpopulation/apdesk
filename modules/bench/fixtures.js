@@ -47,6 +47,9 @@ export function script({ evil = false } = {}) {
     }
     if (/30-day plan/.test(sys)) return say({ steps: [{ week: 1, step: 'Compare your price with Kappa HR.', finding: 1 }, { week: 2, step: 'Read the grant rules.', finding: 2 }, { week: 3, step: 'A step tied to nothing.', finding: 99 }] });
     if (/You plan web searches/.test(sys)) return say({ queries: ['payroll buyers pune'] });
+    if (/rough one-pager/.test(sys)) return say({ summary: 'A rival sells payroll to small firms.', points: ['They aim at startups.', 'Their price is on their page.'], recommendation: 'Compare your price with theirs.' });
+    if (/rough list of next actions/.test(sys)) return say({ actions: [1, 2, 3, 4, 5, 6, 7, 8].map((i) => ({ action: `Step ${i}`, effort: 'small', why: `Because of finding ${i}` })) });
+    if (/Answer the owner's question/.test(sys)) { const p = pagesIn(user)[0]; return say({ answer: p ? [{ sentence: 'Small firms in Pune are growing.', page: p.n, quote: 'Orion Textiles Pvt Ltd is a garment maker in Pune' }, { sentence: 'A made-up line.', page: p.n, quote: 'this quote is on no page at all anywhere' }] : [] }); }
     if (/list the real companies/.test(sys)) {
       const names = ['Orion Textiles Pvt Ltd', 'Lyra Foods', 'Vega Tools'];
       const leads = []; const blocks = user.split('--- PAGE ').slice(1);

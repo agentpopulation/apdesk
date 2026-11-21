@@ -25,8 +25,8 @@ export const BUDGET = Object.freeze({
   activity: { calls: 14, pages: 16, searches: 8, minutes: 25 },
   session: { calls: 140, pages: 140, searches: 60, minutes: 6 * 60 },
 });
-export const KINDS = ['needs', 'work', 'doubt', 'lesson', 'profile', 'competitor', 'skill', 'lead', 'funding', 'tool', 'report', 'table', 'plan'];
-export const KIND_WORDS = { needs: 'Needs you', work: 'Unfinished work', doubt: 'Doubts about earlier work', lesson: 'Lessons', profile: 'Your business', competitor: 'Competitors', skill: 'Skill drafts', lead: 'Possible customers', funding: 'Money and credits', tool: 'Free tools and data', report: 'Market report', table: 'Pricing table', plan: 'A 30-day plan' };
+export const KINDS = ['needs', 'work', 'doubt', 'lesson', 'profile', 'competitor', 'skill', 'lead', 'funding', 'tool', 'report', 'table', 'plan', 'draft'];
+export const KIND_WORDS = { needs: 'Needs you', work: 'Unfinished work', doubt: 'Doubts about earlier work', lesson: 'Lessons', profile: 'Your business', competitor: 'Competitors', skill: 'Skill drafts', lead: 'Possible customers', funding: 'Money and credits', tool: 'Free tools and data', report: 'Market report', table: 'Pricing table', plan: 'A 30-day plan', draft: 'Drafts' };
 
 export const HOUR = 3600000;
 /** The highest tier open after this long away (0 before the first hour). */
@@ -78,7 +78,7 @@ export function span(ms) {
 
 /** The stated rule for "best": items with complete evidence first, newest tier first, then newest. Needs-you items are never "best". */
 export function bestItems(items, n = 3) {
-  return items.filter((i) => i.state === 'new' && !['needs', 'plan'].includes(i.kind) && i.complete)
+  return items.filter((i) => i.state === 'new' && !['needs', 'plan', 'draft'].includes(i.kind) && i.complete)
     .sort((a, b) => b.tier - a.tier || String(b.created).localeCompare(String(a.created))).slice(0, n);
 }
 export const BEST_RULE = 'Findings whose every line has a page or a record that says it, from the latest stage of the session (the plan and the items that need you are not counted).';

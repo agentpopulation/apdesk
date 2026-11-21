@@ -3,12 +3,15 @@
 // Bench item with its evidence; the owner's Keep applies one through the module that owns it. Bench never sends, applies,
 // signs up, approves or changes a setting: it uses the read-only settings view and other modules' exposed functions only.
 import si from 'systeminformation';
+import { spawn as realSpawn } from 'node:child_process';
 import { TIERS, ACTIVITIES, BUDGET, KINDS, tierFor, freshPlan, nextActivity, modelOrder, buildNote, noteText, activity as activityDef } from './engine.js';
 import { RUN } from './activities.js';
 import { OPTIONS, OPTION_WORDS, LIMITS, LIMIT_WORDS, GATE_DEFAULTS, gateReady, effectiveMode, limitStatus, cleanCap, cleanLimits } from './spendgate.js';
+import { BEAT_MS, BEAT_KEEP_MS, gapBetween, gapText, todoList, hasWork, DRAFT_TYPES, DRAFT_WORDS, cleanDraft, draftText, makeDraft, draftPick, zoneDay, pickFind, answerFind, rulesIn, RULE_WORDS, weeklyNote } from './extras.js';
+import { keepAwake } from './keepawake.js';
 
 /** Tests set these: a fake clock (ms), a fake battery reading, no pause between calls, smaller budgets. */
-export const testHooks = { clock: null, battery: null, paceMs: null, budget: null };
+export const testHooks = { clock: null, battery: null, paceMs: null, budget: null, spawn: null, platform: null };
 const nowMs = () => (typeof testHooks.clock === 'function' ? testHooks.clock() : Date.now());
 const iso = (ms) => new Date(ms).toISOString();
 const J = (x, f) => { try { return x ? JSON.parse(x) : f; } catch { return f; } };
@@ -33,6 +36,13 @@ export async function activate(ctx) {
     CREATE UNIQUE INDEX IF NOT EXISTS m_bench_ratings_target ON m_bench_ratings (target_type, target_id);
     CREATE TABLE IF NOT EXISTS m_bench_steps (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, seq INTEGER, agent_id TEXT, action TEXT, provider TEXT, model TEXT, ms INTEGER, outcome TEXT, at TEXT);
     CREATE INDEX IF NOT EXISTS m_bench_steps_job ON m_bench_steps (job_id, seq);`);
+  // v3: heartbeats (kept 24 hours), gaps when the desk was not running, today's find, and the rulebook.
+  ctx.db.migrate(3, `
+    CREATE TABLE IF NOT EXISTS m_bench_heartbeats (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, running TEXT, session_id TEXT, spend_minor INTEGER DEFAULT 0, currency TEXT);
+    CREATE INDEX IF NOT EXISTS m_bench_heartbeats_at ON m_bench_heartbeats (at);
+    CREATE TABLE IF NOT EXISTS m_bench_gaps (id TEXT PRIMARY KEY, from_at TEXT NOT NULL, to_at TEXT NOT NULL, noted TEXT);
+    CREATE TABLE IF NOT EXISTS m_bench_finds (day TEXT PRIMARY KEY, session_id TEXT, topic TEXT, question TEXT, why TEXT, answer TEXT, sources TEXT, status TEXT, created TEXT);
+    CREATE TABLE IF NOT EXISTS m_bench_rules (id TEXT PRIMARY KEY, kind TEXT, text TEXT, original TEXT, file TEXT, line INTEGER, state TEXT, created TEXT, decided TEXT);`);
   const kv = ctx.kv;
   const cfg = () => ({ enabled: kv.get('enabled', false) === true, startAfter: START_AFTER.includes(kv.get('startAfter', 30)) ? kv.get('startAfter', 30) : 30,
     models: MODEL_MODES.includes(kv.get('models', 'free')) ? kv.get('models', 'free') : 'free', battery: Math.max(0, Math.min(100, Number(kv.get('battery', 30)) || 0)), site: String(kv.get('site', '') || '') });
@@ -49,6 +59,8 @@ export async function activate(ctx) {
   const items = (sessionId, { kind, state } = {}) => ctx.db.all('SELECT * FROM m_bench_items WHERE session_id = ? ORDER BY created, rowid', sessionId).map(itemOut).filter((i) => (!kind || i.kind === kind) && (!state || i.state === state));
   const getItem = (id) => itemOut(ctx.db.get('SELECT * FROM m_bench_items WHERE id = ?', id));
   const emit = (d) => { try { ctx.events.emit('bench', d); } catch {} };
+  // keep awake (off by default): the system's own tool only, held while work is queued or running
+  const awake = keepAwake({ spawn: (...a) => (testHooks.spawn || realSpawn)(...a), platform: testHooks.platform || process.platform, pid: process.pid, log: (...a) => ctx.log(...a) });
 
   // ---------------- the spend gate: the money choice Bench must have before it spends, with its caps and session limits
   const gateRow = () => ctx.db.get("SELECT * FROM m_bench_spendgate WHERE id = 'gate'");
@@ -206,12 +218,13 @@ export async function activate(ctx) {
   }
 
   async function startActivity(s, a) {
-    s.plan[a.id] = { ...s.plan[a.id], status: 'running', tries: (s.plan[a.id]?.tries || 0) + 1, why: '' };
+    const t0 = Date.now();
+    s.plan[a.id] = { ...s.plan[a.id], status: 'running', tries: (s.plan[a.id]?.tries || 0) + 1, why: '', startedMs: t0 };
     saveSession(s);
     let resolveDone; const done = new Promise((r) => { resolveDone = r; });
     const rec = { jobId: null, activity: a.id, done };
     live.set(s.id, rec);
-    const finish = (patch) => { const cur = getSession(s.id); if (!cur) return; cur.plan[a.id] = { ...cur.plan[a.id], ...patch, at: iso(nowMs()) }; saveSession(cur); emit({ change: 'activity', id: s.id, activity: a.id }); };
+    const finish = (patch) => { const cur = getSession(s.id); if (!cur) return; cur.plan[a.id] = { ...cur.plan[a.id], ...patch, ...(patch.status !== 'pending' ? { ms: Date.now() - t0 } : {}), at: iso(nowMs()) }; saveSession(cur); emit({ change: 'activity', id: s.id, activity: a.id }); };
     try {
       const job = await ctx.jobs.start({ kind: 'bench.' + a.id, title: 'Bench: ' + a.title, quiet: true, input: { sessionId: s.id, activity: a.id },
         async run(j) {
@@ -219,13 +232,18 @@ export async function activate(ctx) {
           try {
             const out = await RUN[a.id](b);
             if (j.signal.aborted) throw fail('aborted', 'Stopped');
+            await autoDraft(b, a, s.id).catch((e) => ctx.log('draft', e.message));   // a rough Draft with a result; optional
+            if (j.signal.aborted) throw fail('aborted', 'Stopped');
             const stop = b.lastStop;
             if (stop?.code === 'busy') finish({ status: 'done', summary: out.summary, why: 'the free models were busy for part of it' });
             else finish({ status: out.skip ? 'skipped' : 'done', summary: out.summary, why: out.skip || (stop?.code === 'budget' ? stop.message : '') });
             return { summary: out.summary };
           } catch (e) {
             const cur = getSession(s.id); const tries = cur?.plan[a.id]?.tries || 1;
-            if (e.code === 'aborted' || j.signal.aborted) finish({ status: 'pending', why: rec.stopWhy || 'stopped' });
+            // the desk itself is stopping (desk.stop, an update restart): leave it "running", as a desk that was cut off, so the next
+            // start deletes its half-made findings and runs it again from the start
+            if ((e.code === 'aborted' || j.signal.aborted) && ctx.panic.halted && (!rec.stopWhy || shuttingDown)) { /* resumed on the next start */ }
+            else if (e.code === 'aborted' || j.signal.aborted) finish({ status: 'pending', why: rec.stopWhy || 'stopped' });
             else if (e.code === 'busy') { if (cur) { cur.waitUntil = e.retryAt; saveSession(cur); } finish(tries >= 3 ? { status: 'skipped', why: 'the free models stayed busy' } : { status: 'pending', why: 'the free models were busy; tried again later' }); }
             else if (e.code === 'nomodel') finish(tries >= 2 ? { status: 'skipped', why: e.message } : { status: 'pending', why: e.message });
             else if (e.code === 'budget') finish({ status: 'done', summary: 'Stopped early: ' + e.message, why: e.message });
@@ -235,11 +253,85 @@ export async function activate(ctx) {
           } finally { b.finish(); }
         } });
       rec.jobId = job.id;
-      ctx.jobs.wait(job.id, 24 * 3600000).finally(() => { if (live.get(s.id) === rec) live.delete(s.id); resolveDone(); });
+      ctx.jobs.wait(job.id, 24 * 3600000).finally(() => { if (live.get(s.id) === rec) live.delete(s.id); resolveDone(); syncAwake(); });
     } catch (e) {
       live.delete(s.id); resolveDone();
       finish({ status: 'pending', why: e.code === 'halted' ? 'everything was stopped' : e.message });
     }
+  }
+
+  // ---------------- drafts: a rough one-pager or next-actions list that comes with a result (a Bench item of kind "draft")
+  const insertItem = (sid, tier, activityId, x, jobId) => {
+    const id = rid('bi_');
+    ctx.db.run('INSERT INTO m_bench_items (id, session_id, kind, tier, activity, title, body, evidence, complete, state, data, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      id, sid, x.kind, tier || 0, activityId, String(x.title || '').slice(0, 300), String(x.body || '').slice(0, 8000), JSON.stringify((x.evidence || []).slice(0, 6)), x.complete ? 1 : 0, 'new', JSON.stringify({ ...(x.data || {}), ...(jobId ? { _jobId: jobId } : {}) }), iso(nowMs()));
+    return id;
+  };
+  const updItem = (id, patch) => {
+    const it = getItem(id); if (!it) return null;
+    const n = { ...it, ...patch };
+    ctx.db.run('UPDATE m_bench_items SET title = ?, body = ?, data = ?, state = ?, decided = ?, result = ? WHERE id = ?', n.title, String(n.body || '').slice(0, 8000), JSON.stringify(n.data || {}), n.state, n.decided || null, n.result || null, id);
+    emit({ change: 'item', id, state: n.state });
+    return getItem(id);
+  };
+  const draftTitle = (type, from) => `Draft: ${DRAFT_WORDS[type]} ${type === 'onepager' ? 'on' : 'from'} ${String(from.title || '').slice(0, 200)}`;
+  const draftItem = (type, from, d, version = 1) => ({ kind: 'draft', title: draftTitle(type, from), body: draftText(d), evidence: from.evidence || [], complete: false, data: { draft: d, fromItem: from.id, version } });
+  /** After an activity: one one-pager per session (from a finding with full evidence) and one next-actions list (from the plan). */
+  async function autoDraft(b, a, sid) {
+    const list = items(sid); const drafts = list.filter((i) => i.kind === 'draft');
+    const have = { onepager: drafts.some((d) => d.data?.draft?.type === 'onepager'), actions: drafts.some((d) => d.data?.draft?.type === 'actions') };
+    const pick = draftPick(a.id, list.filter((i) => i.activity === a.id && i.state === 'new' && i.kind !== 'draft'), have);
+    if (!pick.item) return;
+    const d = await makeDraft((o) => b.ask(o), pick.item, pick.type);
+    b.item(draftItem(pick.type, pick.item, d));
+  }
+  /** A model answer for something the owner pressed, inside his spend choice (no session budget: he is here). */
+  async function ownerAsk(o, signal) {
+    const g = gate(); if (!gateReady(g)) throw fail('gate', 'Choose how Bench may spend first.');
+    const em = effectiveMode(g, { daySpend: daySpend(), sessionSpend: 0 });
+    const order = modelOrder(await ctx.model.active(), { mode: em.mode || 'local', tiers: providerTiers(), paidAllowed });
+    if (!order.length) throw fail('nomodel', 'No model is set up for Bench.');
+    for (const m of order) {
+      try { const { agentId: _a, model: _m, signal: _s, ...rest } = o; return await ctx.model.chat({ ...rest, model: { provider: m.provider, model: m.model }, signal }); }
+      catch (e) { if (signal?.aborted || e.code === 'aborted' || e.code === 'halted') throw fail('aborted', 'Stopped'); }
+    }
+    throw fail('nomodel', 'No model answered.');
+  }
+  /** The owner asked for a draft (or another go at one): a job he can see, waited for here. */
+  async function ownerDraft(from, type) {
+    const job = await ctx.jobs.start({ kind: 'bench.draft', title: `Bench: a ${DRAFT_WORDS[type]}`, input: { itemId: from.id, type }, async run(j) { return { draft: await makeDraft((o) => ownerAsk(o, j.signal), from, type) }; } });
+    const done = await ctx.jobs.wait(job.id, 10 * 60000);
+    if (done?.status !== 'done' || !done.output?.draft) throw fail('nomodel', done?.error ? `The draft was not made: ${String(done.error).slice(0, 160)}` : 'The draft was not made.');
+    return { d: done.output.draft, jobId: job.id };
+  }
+  async function draftAct(act, it, body) {
+    if (act === 'draft') {
+      if (['draft', 'needs'].includes(it.kind)) throw fail('bad', 'Make a draft from a finding.');
+      const type = DRAFT_TYPES.includes(body?.type) ? body.type : null; if (!type) throw fail('bad', 'A one-pager or a next-actions list.');
+      const { d, jobId } = await ownerDraft(it, type);
+      return getItem(insertItem(it.sessionId, it.tier, 'draft', draftItem(type, it, d), jobId));
+    }
+    if (it.kind !== 'draft' || !it.data?.draft) throw fail('bad', 'This is not a draft.');
+    if (it.state !== 'new') throw fail('decided', 'This one was already decided.');
+    const type = it.data.draft.type;
+    if (act === 'redo') {
+      const from = getItem(it.data.fromItem); if (!from) throw fail('gone', 'The finding this draft came from is gone.');
+      const { d, jobId } = await ownerDraft(from, type);
+      return updItem(it.id, { body: draftText(d), data: { ...it.data, draft: d, version: (it.data.version || 1) + 1, _jobId: jobId } });
+    }
+    if (act === 'edit') {
+      const d = cleanDraft(type, { ...it.data.draft, ...(body?.draft || {}) }, it.data.draft.sources || []);
+      if (!d) throw fail('bad', type === 'onepager' ? 'A one-pager needs a summary and at least one key point.' : 'A next-actions list needs 3 to 7 actions, each with its effort and why.');
+      return updItem(it.id, { body: draftText(d), data: { ...it.data, draft: d, edited: true } });
+    }
+    if (act === 'handover') {
+      // never sent from Bench: the draft goes to Mail's drafts, where only the owner's "Approve and send" sends it
+      const mail = ctx.modules.api('mail'); if (!mail?.draft) throw fail('off', 'Mail is off, so there is no drafts list to hand it to.');
+      const to = String(body?.to || '').trim().slice(0, 300);
+      await mail.draft({ to, subject: it.title.replace(/^Draft: /, '').slice(0, 300), body: draftText(it.data.draft) });
+      return updItem(it.id, { state: 'kept', decided: iso(nowMs()), result: 'Handed to Mail drafts. Nothing is sent until you approve it there.', data: { ...it.data, handedOver: true } });
+    }
+    throw fail('bad', 'Unknown action.');
   }
 
   // ---------------- the battery: a PC with no battery, or on mains power, is never "low"
@@ -292,8 +384,10 @@ export async function activate(ctx) {
       saveSession(s);
       const a = nextActivity(s.plan, { tier: s.tier, online: isOnline });
       if (a) { await startActivity(s, a); return true; }
+      const q = isOnline ? findDue() : null;
+      if (q) { await startFind(s, q); return true; }
       return false;
-    })().finally(() => { ticking = null; });
+    })().finally(() => { ticking = null; syncAwake(); });
     return ticking;
   }
 
@@ -306,7 +400,8 @@ export async function activate(ctx) {
   }
 
   // Panic: the running activity stops with every other job; the session ends and never resumes by itself.
-  const offPanic = ctx.panic.onStop((reason) => { if (reason === 'Shutting down') return; kv.set('panicAt', nowMs()); const s = current(); if (s) endSession(s, 'stopped', 'Panic stopped it'); });
+  let shuttingDown = false;
+  const offPanic = ctx.panic.onStop((reason) => { awake.release(); if (reason === 'Shutting down') { shuttingDown = true; return; } kv.set('panicAt', nowMs()); const s = current(); if (s) endSession(s, 'stopped', 'Panic stopped it'); });
   // Safety net: an approval that would wait for the owner, asked by a job Bench started, stops that job at once.
   const offEvents = ctx.events.on((type, d) => {
     if (type !== 'approval' || d?.status !== 'pending' || !d.jobId) return;
@@ -320,9 +415,125 @@ export async function activate(ctx) {
   // a session that was running when the desk stopped resumes from its stored state; the activity that was running starts again
   for (const r of ctx.db.all("SELECT id FROM m_bench_sessions WHERE state = 'running'")) {
     const s = getSession(r.id); let changed = false;
-    for (const p of Object.values(s.plan)) if (p.status === 'running') { p.status = 'pending'; p.why = 'the desk restarted'; changed = true; }
+    for (const [k, p] of Object.entries(s.plan)) if (p.status === 'running') {
+      p.status = 'pending'; p.why = 'the desk restarted'; changed = true;
+      ctx.db.run("DELETE FROM m_bench_items WHERE session_id = ? AND activity = ? AND state = 'new'", s.id, k);   // it runs again from the start
+    }
     if (changed) saveSession(s);
   }
+
+  // ---------------- heartbeat and gaps
+  const place = () => ({ timeZone: ctx.settings.get('timeZone') || undefined, locale: ctx.settings.get('locale') || undefined });
+  const lastBeat = () => ctx.db.get('SELECT at FROM m_bench_heartbeats ORDER BY id DESC LIMIT 1');
+  function runningWord() {
+    const s = current(); const r = s && live.get(s.id);
+    if (r) return r.activity === 'find' ? "Today's find" : activityDef(r.activity)?.title || 'Bench work';
+    return s ? 'A session is open; nothing is running' : 'Nothing is running';
+  }
+  /** One heartbeat row while Bench is on: the time, what is running, the spend so far. Rows older than 24 hours go. */
+  function beat() {
+    if (!cfg().enabled) { if (kv.get('beatOff', false) !== true) kv.set('beatOff', true); return false; }
+    if (kv.get('beatOff', false) !== false) kv.set('beatOff', false);
+    const t = nowMs(); const s = current();
+    ctx.db.run('INSERT INTO m_bench_heartbeats (at, running, session_id, spend_minor, currency) VALUES (?, ?, ?, ?, ?)', iso(t), runningWord(), s?.id || null, sessionSpend(s), ctx.settings.get('currency') || '');
+    ctx.db.run('DELETE FROM m_bench_heartbeats WHERE at < ?', iso(t - BEAT_KEEP_MS));
+    syncAwake();
+    return true;
+  }
+  const heartbeats = () => ctx.db.all('SELECT * FROM m_bench_heartbeats ORDER BY id').map((r) => ({ at: r.at, running: r.running, sessionId: r.session_id, spendMinor: r.spend_minor || 0, currency: r.currency || '' }));
+  const gaps = () => ctx.db.all('SELECT * FROM m_bench_gaps ORDER BY from_at').map((r) => ({ from: r.from_at, to: r.to_at }));
+  // on start: silence since the last heartbeat (Bench was on and not switched off since) is a time the desk was not running
+  { const lb = lastBeat(); const g = cfg().enabled && kv.get('beatOff', false) !== true && lb ? gapBetween(Date.parse(lb.at), nowMs()) : null;
+    if (g) { ctx.db.run('INSERT INTO m_bench_gaps (id, from_at, to_at, noted) VALUES (?, ?, ?, ?)', rid('gp_'), iso(g.from), iso(g.to), iso(nowMs())); ctx.activity('Bench: the desk was not running for a while', gapText(g, place())); } }
+
+  // ---------------- the to-do list and keep awake
+  /** Measured durations of earlier activities (this session and the last few), by activity. */
+  function measured() {
+    const out = {};
+    for (const r of ctx.db.all('SELECT plan FROM m_bench_sessions ORDER BY started DESC LIMIT 20')) for (const [k, p] of Object.entries(J(r.plan, {}))) if (Number.isFinite(p?.ms) && p.status !== 'pending' && p.status !== 'running') (out[k] ||= []).push(p.ms);
+    return out;
+  }
+  const todoFor = (s) => s ? todoList(s.plan, s.tier, { now: Date.now(), measured: measured() }) : null;
+  let off = false;
+  function syncAwake() {
+    if (off) { awake.release(); return; }
+    const s = current();
+    const want = kv.get('keepAwake', false) === true && cfg().enabled && !ctx.panic.halted && !!s && s.why !== 'battery' && (live.has(s.id) || hasWork(todoFor(s), { online: online() }));
+    if (want) awake.hold(); else awake.release();
+  }
+  const awakeView = () => ({ on: kv.get('keepAwake', false) === true, ...awake.state(), platform: testHooks.platform || process.platform,
+    note: 'Keeps this PC from sleeping only while Bench has work queued or running; the screen may still turn off. It uses the system\'s own tool and nothing else: no clicks or keys are made. It was tested with a stand-in only and has not been run for real on Windows or macOS.' });
+
+  // ---------------- today's find: once a day, one question from the owner's own history in the desk
+  const findCfg = () => ({ off: kv.get('findOff', false) === true, avoid: (kv.get('findAvoid', []) || []).filter((x) => typeof x === 'string'), pin: String(kv.get('findPin', '') || '') });
+  const today = () => zoneDay(nowMs(), ctx.settings.get('timeZone'));
+  const findOut = (r) => !r ? null : ({ day: r.day, topic: r.topic, question: r.question, why: r.why, answer: r.answer || '', sources: J(r.sources, []), status: r.status, created: r.created });
+  const finds = () => ctx.db.all('SELECT * FROM m_bench_finds ORDER BY created, rowid').map(findOut);
+  const titleOf = (r) => r.targetType === 'bench_item' ? getItem(r.targetId)?.title || '' : r.targetType === 'job' ? ctx.jobs.get(r.targetId)?.title || '' : '';
+  function findCandidates() {
+    const out = [];
+    for (const j of ctx.jobs.list({ status: 'done', limit: 200 })) if (!j.quiet && !String(j.kind).startsWith('bench.') && j.title) out.push({ topic: j.title, why: `It comes from a task you ran: "${String(j.title).slice(0, 120)}".`, at: j.finished || j.created });
+    for (const r of ctx.db.all("SELECT title, decided FROM m_bench_items WHERE state = 'kept' AND kind NOT IN ('draft', 'needs') ORDER BY decided DESC LIMIT 50")) out.push({ topic: String(r.title).replace(/: (new|already a customer|already in your pipeline)$/, ''), why: 'You kept this Bench finding.', at: r.decided });
+    for (const r of ctx.db.all("SELECT * FROM m_bench_ratings WHERE thumb = 'up' OR research = 'good' ORDER BY rated_at DESC LIMIT 50")) { const t = titleOf(ratingOut(r)); if (t) out.push({ topic: t, why: 'You rated this good.', at: r.rated_at }); }
+    return out;
+  }
+  /** Today's question when one is due, else null (a day with nothing to pick is marked done). */
+  function findDue() {
+    const f = findCfg(); const day = today();
+    if (f.off || kv.get('findDay', '') === day || !gateReady(gate())) return null;
+    const recent = ctx.db.all('SELECT topic FROM m_bench_finds ORDER BY created DESC LIMIT 14').map((r) => r.topic);
+    const q = pickFind(findCandidates(), { avoid: f.avoid, pin: f.pin, recent });
+    if (!q) { kv.set('findDay', day); return null; }
+    return { ...q, day };
+  }
+  async function startFind(s, q) {
+    kv.set('findDay', q.day);
+    let resolveDone; const done = new Promise((r) => { resolveDone = r; });
+    const rec = { jobId: null, activity: 'find', done }; live.set(s.id, rec);
+    const store = (r) => ctx.db.run('INSERT OR REPLACE INTO m_bench_finds (day, session_id, topic, question, why, answer, sources, status, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', q.day, s.id, q.topic, q.question, q.why, r.answer || '', JSON.stringify(r.sources || []), r.status, iso(nowMs()));
+    try {
+      const job = await ctx.jobs.start({ kind: 'bench.find', title: "Bench: today's find", quiet: true, input: { sessionId: s.id }, async run(j) {
+        const b = helper(s.id, { id: 'find', tier: s.tier, title: "Today's find" }, j);
+        try { const r = await answerFind(b, q); if (j.signal.aborted) throw fail('aborted', 'Stopped'); store(r); emit({ change: 'find', day: q.day }); return { summary: r.status }; }
+        catch (e) {
+          if (e.code === 'aborted' || j.signal.aborted) { kv.set('findDay', ''); return { summary: 'stopped' }; }   // not done today: it may run in the next session
+          store({ status: `Not answered: ${String(e.message || e).slice(0, 160)}.` }); return { summary: e.message };
+        } finally { b.finish(); }
+      } });
+      rec.jobId = job.id;
+      ctx.jobs.wait(job.id, 24 * 3600000).finally(() => { if (live.get(s.id) === rec) live.delete(s.id); resolveDone(); syncAwake(); });
+    } catch { live.delete(s.id); resolveDone(); kv.set('findDay', ''); }
+  }
+
+  // ---------------- the rulebook: rules proposed from the owner's own files, read through the Files module (read-only)
+  const ruleOut = (r) => ({ id: r.id, kind: r.kind, kindWord: RULE_WORDS[r.kind] || r.kind, text: r.text, original: r.original, file: r.file, line: r.line, state: r.state, created: r.created, decided: r.decided });
+  const rulesView = () => { const all = ctx.db.all('SELECT * FROM m_bench_rules ORDER BY file, line, rowid').map(ruleOut);
+    return { proposed: all.filter((r) => r.state === 'proposed'), confirmed: all.filter((r) => r.state === 'confirmed'), rejected: all.filter((r) => r.state === 'rejected').length,
+      later: 'Checking results against these rules comes later. For now they are only listed.' }; };
+  const DESK_FOLDERS = new Set(['reports', 'tables', 'drafts']);   // what the desk itself writes is not the owner's rules
+  async function scanRules() {
+    const files = ctx.modules.api('files'); if (!files?.list || !files?.read) throw fail('off', 'Files is off, so the desk cannot read your workspace files.');
+    const found = []; let read = 0;
+    const walk = async (dir, depth) => {
+      let r; try { r = await files.list(dir); } catch { return; }
+      for (const e of r.items || []) {
+        const p = dir ? `${dir}/${e.name}` : e.name;
+        if (e.kind === 'folder') { if (depth < 3 && !(depth === 0 && DESK_FOLDERS.has(e.name))) await walk(p, depth + 1); continue; }
+        if (!/\.(md|txt)$/i.test(e.name) || read >= 200) continue;
+        read++; try { const f = await files.read(p); found.push(...rulesIn(f.text, p)); } catch {}
+      }
+    };
+    await walk('', 0);
+    for (const r of found.slice(0, 200)) {
+      if (ctx.db.get('SELECT id FROM m_bench_rules WHERE file = ? AND original = ?', r.file, r.text)) continue;
+      ctx.db.run('INSERT INTO m_bench_rules (id, kind, text, original, file, line, state, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', rid('ru_'), r.kind, r.text, r.text, r.file, r.line, 'proposed', iso(nowMs()));
+    }
+    emit({ change: 'rules' });
+    return { ...rulesView(), filesRead: read };
+  }
+
+  // ---------------- the weekly note "What I learned": suggestions from the last 7 days of ratings; nothing changes by itself
+  const weekly = () => weeklyNote(ctx.db.all('SELECT * FROM m_bench_ratings').map(ratingOut), { now: nowMs(), titleOf: (r) => titleOf(r) || (r.targetType === 'answer' ? 'An answer in chat' : '') });
 
   // ---------------- the note
   const lastEnded = () => sessionOut(ctx.db.get("SELECT * FROM m_bench_sessions WHERE state != 'running' ORDER BY ended DESC LIMIT 1"));
@@ -340,8 +551,8 @@ export async function activate(ctx) {
     const c = cfg(); const s = current(); const last = lastEnded(); const gv = gateView();
     const r = s ? live.get(s.id) : null;
     const gateWait = !gv.ready ? 'Waiting for your spend choice' : gv.invalid ? `Spend choice needs you: ${gv.why}` : gv.limitStatus.winding ? `Winding down: ${gv.limitStatus.which} near its limit` : '';
-    return { settings: { ...c, models: gv.chosen ? gv.option : null }, gate: gv, online: online(), halted: ctx.panic.halted, lastSeen: iso(kv.get('lastSeen', nowMs())), tiers: TIERS, activities: ACTIVITIES,
-      running: s ? { ...s, now: r ? activityDef(r.activity)?.title : null, waiting: s.why === 'battery' ? 'Paused: the PC is on battery' : gateWait || (s.waitUntil > Date.now() ? 'Waiting for the free models' : '') } : null,
+    return { settings: { ...c, models: gv.chosen ? gv.option : null, find: findCfg() }, gate: gv, keepAwake: awakeView(), online: online(), halted: ctx.panic.halted, lastSeen: iso(kv.get('lastSeen', nowMs())), tiers: TIERS, activities: ACTIVITIES,
+      running: s ? { ...s, todo: todoFor(s), now: r ? (r.activity === 'find' ? "Today's find" : activityDef(r.activity)?.title) : null, waiting: s.why === 'battery' ? 'Paused: the PC is on battery' : gateWait || (s.waitUntil > Date.now() ? 'Waiting for the free models' : '') } : null,
       note: last && !last.seen && items(last.id, { state: 'new' }).length ? noteFor(last) : null,
       paidAllowed: Object.entries(providerTiers()).some(([p, tier]) => tier === 'paid' && paidAllowed(p)) || paidAllowed('openrouter') };
   }
@@ -364,7 +575,10 @@ export async function activate(ctx) {
     const itemCard = (i) => ({ kind: 'bench', id: i.id, jobId: i.data?._jobId || null, title: i.title, summary: twoLines(i.body), sources: (i.evidence || []).map((e) => ({ title: e.title || e.url || 'Your desk', url: e.url || null })), itemKind: i.kind, complete: i.complete, steps: i.data?._jobId ? stepCount(i.data._jobId) : 0, rating: getRating('bench_item', i.id) });
     const note = s ? buildNote(s, items(s.id), { now: nowMs() }) : null;
     const workedMs = (s?.used?.ms || 0) + doneJobs.reduce((a, j) => a + (j.finished && j.created ? Math.max(0, Date.parse(j.finished) - Date.parse(j.created)) : 0), 0);
+    const recentGaps = gaps().filter((g) => Date.parse(g.to) >= nowMs() - 48 * 3600000).slice(-5).map((g) => ({ ...g, text: gapText({ from: Date.parse(g.from), to: Date.parse(g.to) }, place()) }));
+    const find = findOut(ctx.db.get('SELECT * FROM m_bench_finds ORDER BY created DESC, rowid DESC LIMIT 1'));
     return {
+      gaps: recentGaps, find, weekly: weekly(),
       headline: { finished: doneJobs.length + resultItems.length, needsYou: waitingJobs.length + needItems.length + drafts.length, workedMs, spendTodayMinor: daySpend(), currency: ctx.settings.get('currency') || '', since: s ? s.started : null },
       results: [...resultItems.map(itemCard), ...doneJobs.map(jobCard)],
       needs: [
@@ -414,7 +628,7 @@ export async function activate(ctx) {
   ctx.route('GET', '/state', (req, res) => ctx.json(res, view()));
   ctx.route('GET', '/sessions', (req, res) => ctx.json(res, { sessions: ctx.db.all('SELECT * FROM m_bench_sessions ORDER BY started DESC LIMIT 50').map(sessionOut).map((s) => ({ ...s, counts: Object.fromEntries(KINDS.map((k) => [k, items(s.id, { kind: k }).length]).filter(([, n]) => n)) })) }));
   const withRating = (i) => ({ ...i, rating: getRating('bench_item', i.id) });
-  ctx.route('GET', '/sessions/:id', (req, res, { params, query }) => { const s = getSession(params.id); if (!s) return ctx.json(res, { error: 'No such session.' }, 404); const n = noteFor(s); ctx.json(res, { ...n, items: items(s.id, { kind: query.kind || undefined, state: query.state || undefined }).map(withRating) }); });
+  ctx.route('GET', '/sessions/:id', (req, res, { params, query }) => { const s = getSession(params.id); if (!s) return ctx.json(res, { error: 'No such session.' }, 404); const n = noteFor(s); ctx.json(res, { ...n, todo: todoFor(s), items: items(s.id, { kind: query.kind || undefined, state: query.state || undefined }).map(withRating) }); });
   ctx.route('POST', '/sessions/:id/seen', (req, res, { params, owner }) => { if (ownerOnly(res, owner)) return; const s = getSession(params.id); if (!s) return ctx.json(res, { error: 'No such session.' }, 404); s.seen = iso(nowMs()); saveSession(s); emit({ change: 'seen', id: s.id }); ctx.json(res, { ok: true }); });
   ctx.route('POST', '/settings', (req, res, { body, owner }) => {
     if (ownerOnly(res, owner)) return;
@@ -423,6 +637,12 @@ export async function activate(ctx) {
     if (OPTIONS.includes(body?.models)) { kv.set('models', body.models); setGate({ option: body.models }); }   // the money choice is the model mode
     if (body?.battery != null && Number.isFinite(Number(body.battery))) kv.set('battery', Math.max(0, Math.min(100, Math.round(Number(body.battery)))));
     if (typeof body?.site === 'string') kv.set('site', body.site.trim().slice(0, 200));
+    if (typeof body?.keepAwake === 'boolean') kv.set('keepAwake', body.keepAwake);
+    if (typeof body?.findOff === 'boolean') kv.set('findOff', body.findOff);
+    if (body?.findAvoid != null) kv.set('findAvoid', (Array.isArray(body.findAvoid) ? body.findAvoid : String(body.findAvoid).split(',')).map((x) => String(x).trim().slice(0, 80)).filter(Boolean).slice(0, 20));
+    if (typeof body?.findPin === 'string') kv.set('findPin', body.findPin.trim().slice(0, 140));
+    if (typeof body?.enabled === 'boolean') beat();   // on: the first heartbeat now; off: marked, so the silence is no gap
+    syncAwake();
     ctx.json(res, view());
   });
   ctx.route('POST', '/start', async (req, res, { owner }) => {
@@ -435,9 +655,13 @@ export async function activate(ctx) {
     tick().catch((e) => ctx.log('tick', e.message));
     ctx.json(res, { ok: true, id: n.id, text: 'Bench started. It stops when you next use the desk, after one minute.' });
   });
-  ctx.route('POST', '/items/:id/:act', async (req, res, { params, owner }) => {
+  ctx.route('POST', '/items/:id/:act', async (req, res, { params, owner, body }) => {
     if (ownerOnly(res, owner)) return;
     const it = getItem(params.id); if (!it) return ctx.json(res, { error: 'No such finding.' }, 404);
+    if (['draft', 'redo', 'edit', 'handover'].includes(params.act)) {
+      try { return ctx.json(res, { ok: true, item: withRating(await draftAct(params.act, it, body)) }); }
+      catch (e) { return ctx.json(res, { error: e.message }, e.code === 'bad' ? 400 : 409); }
+    }
     if (it.state !== 'new') return ctx.json(res, { error: 'This one was already decided.' }, 409);
     let result = '';
     try {
@@ -486,7 +710,31 @@ export async function activate(ctx) {
     res.end(usageCsv());
   });
 
+  // Today's find, the rulebook and the weekly note.
+  ctx.route('GET', '/finds', (req, res, { owner }) => { if (ownerOnly(res, owner)) return; ctx.json(res, { finds: finds().slice(-30).reverse() }); });
+  ctx.route('GET', '/rules', (req, res, { owner }) => { if (ownerOnly(res, owner)) return; ctx.json(res, rulesView()); });
+  ctx.route('POST', '/rules/scan', async (req, res, { owner }) => { if (ownerOnly(res, owner)) return; try { ctx.json(res, await scanRules()); } catch (e) { ctx.json(res, { error: e.message }, 409); } });
+  ctx.route('POST', '/rules/:id/:act', (req, res, { params, body, owner }) => {
+    if (ownerOnly(res, owner)) return;
+    const r = ctx.db.get('SELECT * FROM m_bench_rules WHERE id = ?', params.id); if (!r) return ctx.json(res, { error: 'No such rule.' }, 404);
+    let text = r.text; let state;
+    if (params.act === 'confirm') state = 'confirmed';
+    else if (params.act === 'reject') state = 'rejected';
+    else if (params.act === 'edit') { text = String(body?.text || '').replace(/\s+/g, ' ').trim().slice(0, 300); if (!text) return ctx.json(res, { error: 'A rule needs some words.' }, 400); state = 'confirmed'; }
+    else return ctx.json(res, { error: 'Confirm, edit or reject.' }, 400);
+    ctx.db.run('UPDATE m_bench_rules SET text = ?, state = ?, decided = ? WHERE id = ?', text, state, iso(nowMs()), r.id);
+    emit({ change: 'rules' });
+    ctx.json(res, { ok: true, rule: ruleOut(ctx.db.get('SELECT * FROM m_bench_rules WHERE id = ?', r.id)) });
+  });
+  ctx.route('GET', '/weekly', (req, res, { owner }) => { if (ownerOnly(res, owner)) return; ctx.json(res, weekly()); });
+
+  beat();
+  const beatTimer = setInterval(() => { try { beat(); } catch (e) { ctx.log('heartbeat', e.message); } }, BEAT_MS); beatTimer.unref?.();
   const timer = setInterval(() => { tick().catch((e) => ctx.log('tick', e.message)); }, 60000); timer.unref?.();
-  ctx.expose({ tick, ownerSeen, current, session: getSession, items, note: (id) => { const s = id ? getSession(id) : lastEnded(); return s ? noteFor(s) : null; }, view, gate, setGate, rating: getRating, setRating, steps: stepsFor, returnPanel, usage: usagePanel, idle: async () => { for (const r of [...live.values()]) await r.done; if (ticking) await ticking; } });
-  return { async deactivate() { clearInterval(timer); offPanic?.(); offEvents?.(); const s = current(); if (s) stopLive(s.id, 'Bench was switched off'); } };
+  ctx.expose({ tick, ownerSeen, current, session: getSession, items, note: (id) => { const s = id ? getSession(id) : lastEnded(); return s ? noteFor(s) : null; }, view, gate, setGate, rating: getRating, setRating, steps: stepsFor, returnPanel, usage: usagePanel, beat, heartbeats, gaps, todo: (id) => todoFor(id ? getSession(id) : current()), finds, rules: rulesView, scanRules, weekly, awake: awakeView, idle: async () => { for (const r of [...live.values()]) await r.done; if (ticking) await ticking; } });
+  return { async deactivate() {
+    off = true; clearInterval(timer); clearInterval(beatTimer); awake.release(); offPanic?.(); offEvents?.();
+    if (!shuttingDown) kv.set('beatOff', true);   // switched off, not a desk that stopped: the silence that follows is no gap
+    const s = current(); if (s) stopLive(s.id, 'Bench was switched off');
+  } };
 }

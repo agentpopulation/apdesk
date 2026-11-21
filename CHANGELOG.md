@@ -149,6 +149,11 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Tables, a new module (off until you switch it on): give a public page address, pick the list on it and say what each column is. The desk keeps that one list, and its companies and contacts in the CRM, up to date with the page address and the date read on every row.
 - A refresh reads only the saved address and says plainly when the table changed, moved or is gone, keeping the last good copy. Lists split over pages are followed on the same site up to a page limit you can see.
 - Every page read honours robots.txt and your website rules, on redirects too; no sign-in, no form, no bot check is attempted; nothing is ever sent. "Remove everything from this source" takes back its rows and what it filled in. Checked on stand-in pages only, not yet on a real event site.
+- Bench keeps a heartbeat every 30 seconds and shows on the return page when the desk was not running, in your time zone. After any restart a session picks up at the activity that was cut off.
+- Keep awake (a Bench setting, off by default) holds the PC awake with the system's own tool only while Bench has work that can run now, and lets go on Panic and on exit. It was tested with a stand-in only; it has not been run for real on Windows, macOS or Linux.
+- Each Bench session shows its to-do list with an estimate of the time left, and results can come with a Draft (a one-pager or a list of next actions) that you can edit, make again, accept, discard or hand to Mail drafts yourself.
+- Today's find (one question a day picked from your own history in the desk), a Rulebook proposed from your workspace files with file and line, and a weekly "What I learned" note from your ratings. All are suggestions; nothing changes by itself.
+- Bench marks leads that are already in your Sales customers list as "already a customer", matched by name or site.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

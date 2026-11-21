@@ -5,7 +5,8 @@ import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'
 import { benchDesk, H, ABOUT, script, stubWeb } from './fixtures.js';
 import { testHooks } from './server.js';
 import { tierFor, nextActivity, freshPlan, modelOrder, buildNote, noteText, ACTIVITIES } from './engine.js';
-import { turnSignals, askGroups } from './activities.js';
+import { turnSignals, askGroups, RUN } from './activities.js';
+import { zoneTime } from './extras.js';
 import { createDesk } from '../../app/server.js';
 import { startFakeLlm } from '../../test/helpers/fake-llm.js';
 
@@ -221,14 +222,67 @@ test('a restart resumes the session from its stored state', async () => {
     let bench = desk.core.modules.api('bench');
     await bench.tick(); await bench.idle();
     const id = bench.current().id; assert.equal(bench.current().plan.unfinished.status, 'done');
+    // the desk is cut off while "lessons" runs, after it had already left one finding
+    const st0 = bench.current(); st0.plan.lessons = { ...st0.plan.lessons, status: 'running', tries: 1 };
+    desk.core.storage.run('UPDATE m_bench_sessions SET plan = ? WHERE id = ?', JSON.stringify(st0.plan), id);
+    desk.core.storage.run("INSERT INTO m_bench_items (id, session_id, kind, tier, activity, title, body, evidence, complete, state, data, created) VALUES ('bi_half', ?, 'lesson', 1, 'lessons', 'Half made', '', '[]', 1, 'new', '{}', ?)", id, new Date().toISOString());
+    const doneItems = bench.items(id).filter((i) => i.activity === 'unfinished').length;
+    desk.core.settings.set('timeZone', 'Asia/Kolkata');
+    const lastBeat = bench.heartbeats().at(-1).at;
     await desk.stop();
+    clock.t += 10 * 60000;   // the desk was not running for 10 minutes
     desk = await open(); stubWeb({ core: desk.core }); bench = desk.core.modules.api('bench');
     assert.equal(bench.current()?.id, id, 'the same session after the restart');
+    assert.equal(bench.current().plan.lessons.status, 'pending'); assert.equal(bench.current().plan.lessons.why, 'the desk restarted');
+    assert.ok(!bench.items(id).some((i) => i.id === 'bi_half'), 'the half-made finding of the activity in progress is lost');
+    const gap = bench.gaps().at(-1);
+    assert.equal(gap.from, lastBeat); assert.equal(Date.parse(gap.to), clock.t);
+    const ret = await (await fetch(desk.url() + '/api/m/bench/return', { headers: { 'x-apd-session': desk.session } })).json();
+    const place = { timeZone: 'Asia/Kolkata', locale: desk.core.settings.get('locale') };
+    assert.equal(ret.gaps.at(-1).text, `The desk was not running from ${zoneTime(Date.parse(gap.from), place)} to ${zoneTime(clock.t, place)}.`);
     for (let i = 0; i < 10; i++) { if (!await bench.tick()) break; await bench.idle(); }
     const st = statuses(bench.current());
     assert.equal(st.unfinished, 'done'); assert.equal(st.lessons, 'done', 'it went on from where it was');
+    assert.equal(bench.items(id).filter((i) => i.activity === 'unfinished').length, doneItems, 'a finished activity is not run again');
+    await desk.stop();
+    clock.t += 60000;
+    desk = await open(); bench = desk.core.modules.api('bench');
+    assert.equal(bench.gaps().length, 1, 'a restart within 2 minutes is no gap');
     await desk.stop();
   } finally { await fake.close(); fs.rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test('a clean stop mid-activity: the session resumes at that activity and its half-made findings are not kept twice', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'apd-bench-'));
+  const fake = await startFakeLlm(script());
+  const clock = { t: Date.now() }; testHooks.clock = () => clock.t; testHooks.paceMs = 0; testHooks.battery = async () => ({ hasBattery: false });
+  const open = async () => { const desk = await createDesk({ dataDir, port: 0, quiet: true, env: {}, modules: ['bench', 'chat', 'search', 'memory'] }); desk.core.settings.set('router.baseUrl', fake.baseUrl); desk.core.settings.set('router.builtin', false); desk.core.settings.set('ollama.baseUrl', 'http://127.0.0.1:1'); await desk.start(); return desk; };
+  const orig = RUN.unfinished; let hang = true; let started; const running = new Promise((r) => { started = r; });
+  RUN.unfinished = async (b) => {
+    b.item({ kind: 'lesson', title: 'Half made', complete: true });
+    if (hang) { started(); await new Promise((_, rej) => b.signal.addEventListener('abort', () => rej(Object.assign(new Error('Stopped'), { code: 'aborted' })), { once: true })); }
+    return { summary: 'ok' };
+  };
+  try {
+    let desk = await open();
+    await desk.core.modules.set('bench', true); stubWeb({ core: desk.core });
+    desk.core.settings.set('business.about', ABOUT);
+    await fetch(desk.url() + '/api/m/bench/settings', { method: 'POST', headers: { 'content-type': 'application/json', 'x-apd-session': desk.session }, body: JSON.stringify({ enabled: true, models: 'free' }) });
+    clock.t += 1.2 * H;
+    let bench = desk.core.modules.api('bench');
+    await bench.tick(); await running;
+    const id = bench.current().id; assert.equal(bench.current().plan.unfinished.status, 'running');
+    await desk.stop();   // a normal stop (or an update restart) while "unfinished" runs
+    hang = false;
+    desk = await open(); stubWeb({ core: desk.core }); bench = desk.core.modules.api('bench');
+    assert.equal(bench.current()?.id, id, 'the same session after the restart');
+    assert.equal(bench.current().plan.unfinished.status, 'pending'); assert.equal(bench.current().plan.unfinished.why, 'the desk restarted');
+    assert.equal(bench.items(id).filter((i) => i.title === 'Half made').length, 0, 'the half-made finding is lost with the activity in progress');
+    for (let i = 0; i < 10; i++) { if (!await bench.tick()) break; await bench.idle(); }
+    assert.equal(bench.current().plan.unfinished.status, 'done');
+    assert.equal(bench.items(id).filter((i) => i.title === 'Half made').length, 1, 'made once, not twice');
+    await desk.stop();
+  } finally { RUN.unfinished = orig; await fake.close(); fs.rmSync(dataDir, { recursive: true, force: true }); }
 });
 
 test('note text: only what the items hold, best by the stated rule, what could not be done in plain words', () => {
