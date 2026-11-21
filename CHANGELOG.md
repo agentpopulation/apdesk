@@ -89,6 +89,7 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - A failed Test says why, local models get a fair first-call wait, and the Default model box lists every model: OpenRouter's whole list even before a key, each marked Free or Paid.
 - Paid OpenRouter models are switched beside the keys or in Payments, by the owner only, from the desk's own window. A new safety probe checks that nothing else can switch them on.
 - Free hosts that say no are skipped for a while instead of being retried, and when all of them are busy the desk says so at once with when to try again.
+- The routing model is named "APDesk Edge 63M" in the README.
 - A free host that has not started answering within 25 seconds is skipped (it was 60), so more of them get a try inside one chat turn.
 - A new desk opens the chat with two buttons, "Say hello" and a highlighted "Select model / Add API"; the role's suggestions appear once the first reply has finished, and a small "Select model / Add API" link stays beside the model name.
 - The side panel never sends an empty request: "Turn into a task" offers to run the chat's last ask again in the background, and a message that is only a prefix is refused.

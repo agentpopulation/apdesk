@@ -273,7 +273,7 @@ The agents' browser uses the Edge or Chrome already installed on your computer.
 |---|---|
 | 🌍 [agentpopulation.com](https://agentpopulation.com) | The home of everything we build for AI agents. |
 | 📦 [2 Million API Endpoint Pack](https://github.com/agentpopulation/2-million-api-endpoint-pack) | Lists of API endpoints that needed no key when tested, in five packs: weather, transit, water, finance and economy, and India. The name is a target, not a count. |
-| 🧭 [APDesk 63M](https://huggingface.co/agentpopulation/APDesk_63M) | A small model that routes each message, under Apache 2.0. Its weights are not published yet, and this release of AP Desk does not include it or need it. |
+| 🧭 [APDesk Edge 63M](https://huggingface.co/agentpopulation/APDesk_63M) | A small model that routes each message, under Apache 2.0. Its weights are not published yet, and this release of AP Desk does not include it or need it. |
 
 ## 📜 Licence and credit
 
