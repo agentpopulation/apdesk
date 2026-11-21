@@ -79,13 +79,18 @@ export async function activate(ctx) {
     const { [a.id]: _, ...rest } = retired(); ctx.kv.set('retired', rest);
     ctx.json(res, a);
   });
-  ctx.route('POST', '/skills', (req, res, { body, owner }) => {
-    if (!owner) return ownerOnly(res);
+  /** One of the owner's own skills (text). It is on for no agent until he ticks it on an agent's page. */
+  function addSkill(body) {
     const title = String(body?.title || '').trim().slice(0, 80); const text = String(body?.body || '').trim().slice(0, 4000);
-    if (!title || !text) return ctx.json(res, { error: 'A skill needs a name and its steps.' }, 400);
+    if (!title || !text) throw Object.assign(new Error('A skill needs a name and its steps.'), { status: 400 });
     const id = 'own-' + title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) + '-' + Date.now().toString(36).slice(-4);
     const s = { id, title, category: 'Yours', description: String(body?.description || text.split('\n')[0]).slice(0, 160), body: text, custom: true };
-    ctx.kv.set('customSkills', [...custom(), s]); ctx.json(res, s);
+    ctx.kv.set('customSkills', [...custom(), s]); return s;
+  }
+  api.addSkill = addSkill;
+  ctx.route('POST', '/skills', (req, res, { body, owner }) => {
+    if (!owner) return ownerOnly(res);
+    try { ctx.json(res, addSkill(body)); } catch (e) { ctx.json(res, { error: e.message }, e.status || 400); }
   });
   ctx.route('DELETE', '/skills/:id', (req, res, { params, owner }) => {
     if (!owner) return ownerOnly(res);

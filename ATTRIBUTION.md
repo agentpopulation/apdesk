@@ -58,3 +58,6 @@ project.
 - Serper, Brave Search, Tavily, Exa and Jina (hosted services, only with the owner's own key): keyed search providers (`modules/search/providers.js`).
 - Cloudflare DNS over HTTPS, rdap.org and the IANA RDAP bootstrap: domain lookups in Network (`modules/network/lookup.js`); speed.cloudflare.com: the speed test (`modules/network/speed.js`).
 - Model providers (hosted services, the owner's own keys) and the no-sign-in upstreams of the built-in Free API by Agent Population Desk (OVH AI Endpoints, Pollinations): called over their public APIs; the list is in `app/core/providers.json`, terms and limits in `modules/models/catalog.js`.
+- llama.cpp (MIT) https://github.com/ggml-org/llama.cpp: the optional local model engine. Its `llama-server` program is downloaded by the owner's choice and run as a separate program on this PC (`modules/models/local-engine.js`); no llama.cpp code is copied.
+- IBM Granite models in GGUF form (Apache-2.0) https://huggingface.co/ibm-granite: the local models the desk offers to download; fetched from Hugging Face by the owner's choice, not shipped.
+- Node.js (MIT, with bundled third-party licences) https://nodejs.org: on Windows the installer keeps its own copy of the official build in the AP Desk folder; not shipped in the zip.

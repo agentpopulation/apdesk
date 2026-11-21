@@ -1,12 +1,13 @@
 // Makes dist/agent-population-desk.zip for Windows: unzipped (for example into C:\) it gives an apdesk\ folder.
-// Three files and seven folders: start.bat, stop.bat, README.md; app, modules, vendor, node_modules, setup, data, backups.
+// Five files and seven folders: install.bat, start.bat, stop.bat, uninstall.bat, README.md; app, modules, vendor,
+// node_modules, setup, data, backups. Node.js is not inside: install.bat and start.bat fetch the pinned copy into runtime\.
 // No data, no secrets, no tests. Fails if anything that looks like a key or a database is about to be packed.
 import fs from 'node:fs'; import path from 'node:path'; import { fileURLToPath } from 'node:url'; import { execFileSync } from 'node:child_process';
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const DIST = path.join(ROOT, 'dist'); const STAGE = path.join(DIST, 'stage'); const OUT = path.join(STAGE, 'apdesk'); const ZIP = path.join(DIST, 'agent-population-desk.zip');
 // only this script's own output is cleared: other files kept in dist (a repository bundle) stay
 fs.rmSync(STAGE, { recursive: true, force: true }); fs.rmSync(ZIP, { force: true }); fs.mkdirSync(OUT, { recursive: true });
-const skip = (rel) => /(^|\/)(node_modules|\.git|dist|data|backups|__pycache__|\.venv|venv)(\/|$)/.test(rel) || /\.test\.(js|mjs)$/.test(rel) || /(^|\/)(real-check|ui-check|check-)[\w.-]*\.mjs$/.test(rel) || /\.(log|sqlite|sqlite-wal|sqlite-shm|pid|pyc)$/.test(rel) || /(^|\/)\.env(\.|$)/.test(rel) || /(^|\/)(test|tests|fixtures)\//.test(rel + '/') || /(^|\/)docs\/design(\/|$)/.test(rel);
+const skip = (rel) => /(^|\/)(node_modules|\.git|dist|data|backups|runtime|__pycache__|\.venv|venv)(\/|$)/.test(rel) || rel === 'setup/assets/make-icon.mjs' || rel === 'setup/installed.txt' || /\.test\.(js|mjs)$/.test(rel) || /(^|\/)(real-check|ui-check|check-)[\w.-]*\.mjs$/.test(rel) || /\.(log|sqlite|sqlite-wal|sqlite-shm|pid|pyc)$/.test(rel) || /(^|\/)\.env(\.|$)/.test(rel) || /(^|\/)(test|tests|fixtures)\//.test(rel + '/') || /(^|\/)docs\/design(\/|$)/.test(rel);
 const crlf = (rel) => /\.(bat|cmd)$/i.test(rel);
 function copyDir(from, to, base = '') {
   for (const e of fs.readdirSync(from, { withFileTypes: true })) {
@@ -64,7 +65,7 @@ function pruneNodeModules(nm) {
 
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 for (const d of ['app', 'modules', 'vendor', 'setup']) { fs.mkdirSync(path.join(OUT, d), { recursive: true }); if (fs.existsSync(path.join(ROOT, d))) copyDir(path.join(ROOT, d), path.join(OUT, d)); }
-for (const f of ['start.bat', 'stop.bat']) fs.writeFileSync(path.join(OUT, f), fs.readFileSync(path.join(ROOT, f), 'utf8').replace(/\r?\n/g, '\r\n'));
+for (const f of ['install.bat', 'start.bat', 'stop.bat', 'uninstall.bat']) fs.writeFileSync(path.join(OUT, f), fs.readFileSync(path.join(ROOT, f), 'utf8').replace(/\r?\n/g, '\r\n'));
 // the zip gets its own plain README; the repository README has pictures that are not in the zip
 fs.copyFileSync(path.join(ROOT, 'tools', 'zip-readme.md'), path.join(OUT, 'README.md'));
 for (const f of ['ATTRIBUTION.md', 'LICENSE', 'NOTICE']) if (fs.existsSync(path.join(ROOT, f))) fs.copyFileSync(path.join(ROOT, f), path.join(OUT, 'app', 'docs', f));
@@ -91,7 +92,7 @@ if (hits.length) { console.error('REFUSING TO ZIP: these look like secrets or da
 const top = fs.readdirSync(OUT, { withFileTypes: true });
 const dirs = top.filter(e => e.isDirectory()).map(e => e.name).sort(); const fl = top.filter(e => e.isFile()).map(e => e.name).sort();
 console.log(`top level: ${fl.length} files (${fl.join(', ')}), ${dirs.length} folders (${dirs.join(', ')})`);
-if (fl.length !== 3 || dirs.length !== 7) { console.error('The layout must be exactly three files and seven folders.'); process.exit(1); }
+if (fl.length !== 5 || dirs.length !== 7) { console.error('The layout must be exactly five files and seven folders.'); process.exit(1); }
 execFileSync('zip', ['-r', '-q', '-X', ZIP, 'apdesk'], { cwd: STAGE });
 console.log(`zip: ${ZIP}  ${(fs.statSync(ZIP).size / 1e6).toFixed(1)} MB, ${files} files, modules: ${fs.readdirSync(path.join(OUT, 'modules')).filter(n => fs.existsSync(path.join(OUT, 'modules', n, 'module.json'))).length}`);
 if (native.length) console.log('WARNING: native binaries built on this computer are in the zip and will not load on Windows:\n  ' + native.join('\n  '));

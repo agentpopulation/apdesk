@@ -33,9 +33,20 @@ const LOOP = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 export const hostKey = (u) => { try { const x = new URL(String(u)); const h = LOOP.has(x.hostname) ? 'loopback' : x.hostname.toLowerCase(); return `${x.protocol}//${h}:${x.port || (x.protocol === 'https:' ? 443 : 80)}`; } catch { return null; } };
 const origin = hostKey;
 
-/** The addresses a desk may still call while Offline: itself, Ollama, and the owner's LAN model nodes. */
+// The desk's own local engine (llama-server, started by the desk on a loopback port it picked). Only loopback http
+// addresses are accepted here: the engine never forwards anything online.
+const localEngines = new Set();
+/** Register the local engine's address while it runs. Returns a function that removes it. */
+export function allowLocalEngine(url) {
+  let u; try { u = new URL(String(url)); } catch { throw new Error('Not an address'); }
+  if (u.protocol !== 'http:' || !LOOP.has(u.hostname) || !u.port) throw new Error('Only a loopback address can be a local engine.');
+  const k = hostKey(u.href); localEngines.add(k);
+  return () => localEngines.delete(k);
+}
+
+/** The addresses a desk may still call while Offline: itself, Ollama, the desk's local engine, and the owner's LAN model nodes. */
 export function offlineAllowList({ settings, port }) {
-  const list = new Set();
+  const list = new Set(localEngines);
   if (port()) list.add(hostKey(`http://127.0.0.1:${port()}`));
   const o = origin(settings.get('ollama.baseUrl')); if (o) list.add(o);
   for (const n of settings.get('network.lanNodes') || []) { const x = origin(n && n.baseUrl); if (x) list.add(x); }

@@ -230,12 +230,12 @@ export function makeCoordinator(ctx, store, bus) {
     let jsonPath = !!tools.length && jsonProviders.includes(res.chain[0]?.provider);
     const expected = res.chain[0] ? ctx.model.label(res.chain[0].provider, res.chain[0].model) : null;
     // "Try again": prefer a keyed model (they call tools reliably) for this turn; fall back to the agent's own chain if it cannot answer.
-    let prefer = preferTools && tools.length ? (res.chain.find(c => !['router', 'ollama'].includes(c.provider) && !String(c.provider).startsWith('lan:')) || null) : null;
+    let prefer = preferTools && tools.length ? (res.chain.find(c => !['router', 'ollama', 'llama'].includes(c.provider) && !String(c.provider).startsWith('lan:')) || null) : null;
     // Every model call in a turn has a wait limit: no reply and no new text for this long ends the turn with a plain message.
     // The door's own time-out covers only the wait for a provider's first byte, so a stream that stalls after it would wait
     // for ever. While a call waits, the reply carries what the desk is waiting for (meta.wait), and the chat shows it.
     // only the free router answers (no key, no local model chosen, no LAN model): the waiting line may point at Models
-    const freeOnly = !res.chain.some(c => !['router', 'ollama'].includes(c.provider)) && !ctx.settings.get('ollama.model');
+    const freeOnly = !res.chain.some(c => !['router', 'ollama', 'llama'].includes(c.provider)) && !ctx.settings.get('ollama.model');
     const notOnTeam = new Set();   // agents the work would go to that are not on the roster (retired): the Coordinator did it
     const waitMs = Math.max(200, Number(ctx.kv.get('modelWaitMs', MODEL_WAIT_MS)) || MODEL_WAIT_MS);
     const callModel = async (o) => {

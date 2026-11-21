@@ -23,7 +23,7 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 
 function readVersion() { for (const f of [path.join(APP, 'version.json'), path.join(ROOT, 'package.json')]) { try { const v = JSON.parse(fs.readFileSync(f, 'utf8')).version; if (v) return v; } catch {} } return '0.0.0'; }
 
-export async function createDesk({ dataDir = process.env.APD_DATA || path.join(ROOT, 'data'), backupsDir = process.env.APD_BACKUPS || null, port = Number(process.env.APD_PORT) || 3960, host = '127.0.0.1', quiet = false, env = process.env, modulesDir = null, modules: onlyModules = null, pairing = false } = {}) {
+export async function createDesk({ dataDir = process.env.APD_DATA || path.join(ROOT, 'data'), backupsDir = process.env.APD_BACKUPS || null, port = Number(process.env.APD_PORT) || 3445, host = '127.0.0.1', quiet = false, env = process.env, modulesDir = null, modules: onlyModules = null, pairing = false } = {}) {
   // log times in the owner's zone, with the zone named (the settings are not open yet on the first lines: the PC's zone then)
   let logZone = null;
   const stamp = () => { try { return new Date().toLocaleTimeString('en-GB', { hour12: false, timeZone: logZone || undefined, timeZoneName: 'short' }); } catch { return new Date().toLocaleTimeString('en-GB', { hour12: false, timeZoneName: 'short' }); } };
@@ -127,6 +127,7 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
     'DELETE /api/keys/services/:id': (req, res, { params }) => { if (!sessionOk(req)) return sendJson(res, { error: 'Keys are removed at this desk.' }, 403); services.remove(params.id); sendJson(res, { services: services.list() }); },
     'GET /api/home': (req, res) => sendJson(res, { jobs: { running: jobs.list({ status: 'running', limit: 10 }), waiting: jobs.list({ status: 'waiting', limit: 10 }), done: jobs.list({ status: 'done', limit: 8 }), summary: jobs.summary() }, approvals: approval.listPending(), agents: agents.list().length, recent: modules.api('chat')?.recent?.(6) || [] }),
     ...settingsRoutes(core, sessionOk),
+    ...(await import('./core/downloads-routes.js')).downloadRoutes(core, sessionOk),
   };
   const compiled = Object.entries(routes).map(([k, handler]) => { const [method, p] = k.split(' '); return { method, parts: p.split('/'), handler }; });
   const matchCore = (method, pathname) => {
@@ -261,7 +262,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   process.on('uncaughtException', (e) => console.error('uncaught', e?.stack || e));
   const desk = await createDesk({ pairing: process.env.APD_PAIRING !== 'off' });
   try { await desk.start(); }
-  catch (e) { if (e.code === 'EADDRINUSE') { console.error(`Port ${process.env.APD_PORT || 3960} is in use. AP Desk may already be running: open http://127.0.0.1:${process.env.APD_PORT || 3960}`); process.exit(2); } throw e; }
+  catch (e) { if (e.code === 'EADDRINUSE') { console.error(`Port ${process.env.APD_PORT || 3445} is in use. AP Desk may already be running: open http://127.0.0.1:${process.env.APD_PORT || 3445}`); process.exit(2); } throw e; }
   const bye = async () => { try { await desk.stop(); } finally { process.exit(0); } };
   desk.onRestart = async () => { try { await desk.stop(); } finally { process.exit(75); } };   // start.bat starts the desk again on 75
   process.on('SIGINT', bye); process.on('SIGTERM', bye);

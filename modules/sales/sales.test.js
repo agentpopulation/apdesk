@@ -721,7 +721,7 @@ test('country in the reply: "2 of 4 are placed in India", the two not placed are
     const s = await t.core.modules.runTool('leads_find', { query: 'Indian companies that sell HR or payroll software to small businesses', count: 4 }, { chatId: 'c1' });
     const out = (await t.core.jobs.wait(s.jobId, 60000)).output;
     assert.equal(out.found, 4, out.text);
-    assert.match(out.text, /^Found 4 leads, each with a page that names it\. 2 of 4 are placed in India and sell what you asked for; 2 more are listed as not checked\./, out.text);
+    assert.match(out.text, /\n\nFound 4 leads, each with a page that names it\. 2 of 4 are placed in India and sell what you asked for; 2 more are listed as not checked\./, out.text);
     assert.deepEqual(out.card.rows.map(r => r[0]).sort(), ['Quillpay', 'Tarang HR']);
     assert.deepEqual(out.tables[1].rows.map(r => r[0]).sort(), ['Lumen Payroll', 'Northwind People']);
   } finally { await t.close(); }
@@ -917,5 +917,33 @@ test('a draft with no offer text uses the owner\'s "What you do" words as his of
     // an offer typed on the Sales page still wins over the Settings text
     await t.call('/api/m/sales/offer', { body: { offer: 'Payroll audits.' } });
     assert.equal(t.core.modules.api('sales').offer(), 'Payroll audits.');
+  } finally { await t.close(); }
+});
+
+// ---- the search says plainly what it was for and what it looked for, from the job's own data, written by code
+test('purpose line: "Leads for" names the owner\'s saved text or quotes his words; "I looked for" and the searches; nothing invented', async () => {
+  const { purposeLine, ABOUT_QUERY } = await import('./find.js');
+  const about = 'Payroll software for small firms in India; HR heads and founders buy it; Pune and Mumbai';
+  const IN = { label: 'India' };
+  assert.equal(purposeLine({ query: ABOUT_QUERY(about), about, country: IN, queries: ['payroll software buyers Pune', 'small firms Mumbai HR', 'founders payroll India', 'x'] }),
+    `Leads for: ${about} (from what you told me you sell). I looked for: companies in India. Searches I ran: "payroll software buyers Pune", "small firms Mumbai HR", "founders payroll India" and 1 more.`);
+  assert.equal(purposeLine({ query: 'Hospitals in Pune that buy oxygen concentrators', about, buyerProduct: 'oxygen concentrators' }),
+    'Leads for: "Hospitals in Pune that buy oxygen concentrators" (what you asked). I looked for: companies that buy oxygen concentrators.');
+  assert.equal(purposeLine({ query: 'Dental clinics', about: '' }), 'Leads for: "Dental clinics" (what you asked).', 'no place, no product, no searches: those parts are left out');
+  assert.equal(purposeLine({}), '');
+  // in the job: the reply, the card title and the job's summary carry it
+  const t = await testDesk({ modules: ['sales'], script: findScript(['Quillpay']) });
+  try {
+    t.core.settings.set('business.about', about);
+    stubSearch(t, { 'https://list.example/a': 'Quillpay is a Pune-based payroll software company.' + pad5 }, (q) => /official website/.test(q) ? [] : [{ url: 'https://list.example/a' }]);
+    const s = await t.core.modules.runTool('leads_find', { query: ABOUT_QUERY(about), count: 1 }, { chatId: 'c1' });
+    assert.match(s.text, /^Leads for: Payroll software for small firms .* \(from what you told me you sell\)\. I looked for: companies in India\. Looking for 1 leads now/, s.text);
+    const out = (await t.core.jobs.wait(s.jobId, 60000)).output;
+    assert.match(out.text, /^Leads for: Payroll software .*\(from what you told me you sell\)\. I looked for: companies in India\. Searches I ran: "/, out.text);
+    assert.match(out.card.title, /for Payroll software for small firms .*\(from what you told me you sell\)/, out.card.title);
+    assert.match(out.card.note, /^I looked for: companies in India\./, out.card.note);
+    const typed = await t.core.modules.runTool('leads_find', { query: 'Dental clinics in Pune', count: 1 }, { chatId: 'c2' });
+    assert.match(typed.text, /^Leads for: "Dental clinics in Pune" \(what you asked\)\./, typed.text);
+    await t.core.jobs.wait(typed.jobId, 60000);
   } finally { await t.close(); }
 });

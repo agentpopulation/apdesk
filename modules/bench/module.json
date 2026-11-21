@@ -1,0 +1,17 @@
+{
+  "id": "bench",
+  "number": 31,
+  "name": "Bench mode",
+  "description": "While you are away, the desk looks back at its own work and looks up your market, then leaves you a note. It proposes; nothing is sent, saved or changed until you press Keep.",
+  "kind": "switch-on",
+  "defaultOn": false,
+  "menu": [{ "id": "bench", "label": "Bench", "order": 114 }],
+  "pages": ["bench"],
+  "settings": [{ "id": "bench", "label": "Bench mode" }],
+  "agentTabs": [],
+  "tools": [],
+  "requires": [],
+  "npm": { "systeminformation": "^5.33.21" },
+  "attribution": [],
+  "status": "partial"
+}

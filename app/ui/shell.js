@@ -315,9 +315,21 @@ globalOn('job', jobFinished);
 async function bootModules() {
   for (const m of state.modules) if (m.on && m.hasUi && m.boot) { try { const mod = await moduleUi(m.id); if (typeof mod.boot === 'function' && !mod.__booted) { await mod.boot(ui); } } catch (e) { console.error('boot failed', m.id, e); } }
 }
+// ---------- Bench mode: tell the desk the owner is here (a click, a key, the page opened or shown), at most once a minute.
+// The desk sees only its own window; it never looks at the rest of the PC.
+let hereAt = 0;
+function ownerHere() {
+  if (document.hidden || !ui.moduleOn('bench')) return;
+  const t = Date.now(); if (t - hereAt < 60000) return; hereAt = t;
+  api('m/bench/seen', { method: 'POST' }).catch(() => {});
+}
+for (const type of ['pointerdown', 'keydown']) document.addEventListener(type, ownerHere, { capture: true, passive: true });
+document.addEventListener('visibilitychange', ownerHere);
+globalOn('modules', () => { hereAt = 0; ownerHere(); });
 ui.coreSettingsSections = coreSettingsSections;
 await refresh();
 paintOnboarding();
 connect();
 bootModules();
+ownerHere();
 if (!location.hash) location.hash = '#/chat'; else render();

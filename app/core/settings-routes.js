@@ -2,8 +2,9 @@
 // These routes need the session token that the shell page carries; agents and modules never see it.
 import { SETTINGS_TOKEN } from './approval-door.js';
 import { sendJson } from './modules.js';
+import { Updater } from './update.js';
 
-const OWNER_ONLY_PREFIX = ['security.', 'spend.', 'openrouter.'];
+const OWNER_ONLY_PREFIX = ['security.', 'spend.', 'openrouter.', 'update.'];
 const PLAIN_KEYS = new Set(['theme', 'role', 'onboarded', 'online', 'ownerName', 'appName', 'companyName', 'business.about', 'notifications', 'country', 'currency', 'timeZone', 'locale', 'router.enabled', 'router.baseUrl', 'router.freeOnly', 'router.builtin', 'router.model', 'router.apiKey', 'router.upstreams', 'ollama.baseUrl', 'ollama.model', 'model.defaultChain', 'network.lanNodes', 'menuPosition', 'textSize', 'motion', 'countries', 'city', 'startWithWindows', 'notifications']);
 
 export function settingsRoutes(core, sessionOk) {
@@ -14,7 +15,27 @@ export function settingsRoutes(core, sessionOk) {
     if (was !== r.on) { approval.activity({ action: 'models.paid', title: r.on ? 'Paid OpenRouter models switched on' : 'Paid OpenRouter models switched off', how: 'owner' }); core.events.emit('settings', { 'openrouter.allowPaid': r.on }); }
     return r;
   };
+  // Signed updates (contracts/UPDATES.md): checked and installed only from the owner's window, like the security level.
+  core.updater = new Updater(core).startDaily();
+  const updater = () => core.updater;
   return {
+    'GET /api/update': (req, res) => { const st = updater().state(); updater().shown(); sendJson(res, st); },
+    'POST /api/update/check': async (req, res) => {
+      if (!sessionOk(req)) return sendJson(res, { error: 'Updates are checked only from Settings on this desk.' }, 403);
+      sendJson(res, await updater().check());
+    },
+    'POST /api/update/install': (req, res) => {
+      if (!sessionOk(req)) return sendJson(res, { error: 'Updates are installed only from Settings on this desk.' }, 403);
+      updater().install(SETTINGS_TOKEN).catch((e) => core.log('update', e.message));   // the owner approves the card; the card follows the 'update' events
+      sendJson(res, updater().state());
+    },
+    'POST /api/update/daily': (req, res, { body }) => {
+      if (!sessionOk(req)) return sendJson(res, { error: 'This changes only in Settings on this desk.' }, 403);
+      if (typeof body?.on !== 'boolean') return sendJson(res, { error: '{ on: true | false }' }, 400);
+      settings.set('update.daily', body.on);
+      approval.activity({ action: 'update.daily', title: body.on ? 'Check for updates once a day: on' : 'Check for updates once a day: off', how: 'owner' });
+      sendJson(res, updater().state());
+    },
     'GET /api/settings': (req, res) => sendJson(res, publicSettings(settings)),
     'POST /api/settings': (req, res, { body }) => {
       const changed = {};

@@ -44,6 +44,7 @@ export class ModelDoor {
     this.backoff = { ...BACKOFF };
     this.cache = new Map();       // probe results
     this.last = new Map();        // provider -> the last real call's result, shown in Active now
+    this.localEngine = null;      // the desk's own llama-server (core/downloads-routes.js sets it): provider 'llama'
     this.loadEnvKeys();
   }
   loadEnvKeys(env = process.env) {
@@ -118,6 +119,7 @@ export class ModelDoor {
       if (!keys.length) continue;
       out.push({ provider: pid, kind: 'keyed', label: p.name, ok: online, keys: keys.length, models: [this.keyedDefault(pid)], model: this.keyedDefault(pid), error: online ? null : 'offline', last: this.last.get(pid) || null });
     }
+    const le = this.localEngine?.brief?.(); if (le) out.push(le);
     for (const n of await this.lanNodes()) out.push({ provider: 'lan:' + n.id, kind: 'lan', label: n.name || n.baseUrl, ok: true, models: n.models || [], model: n.model || (n.models || [])[0] });
     return out;
   }
@@ -131,9 +133,13 @@ export class ModelDoor {
     const chain = [];
     if (a?.model?.main?.provider) chain.push({ ...a.model.main, why: 'agent main' });
     if (a?.model?.fallback?.provider) chain.push({ ...a.model.fallback, why: 'agent fallback' });
-    for (const step of this.settings.get('model.defaultChain') || ['router', 'ollama', 'keyed']) {
+    const steps = this.settings.get('model.defaultChain') || ['router', 'ollama', 'keyed'];
+    // the desk's own local model stands where Ollama stands in the chain, right after it, unless the chain names it
+    const llama = this.localEngine?.usable?.() ? { provider: 'llama', model: null, why: 'default' } : null;
+    for (const step of steps) {
       if (step === 'router') { if (this.settings.get('router.enabled')) chain.push({ provider: 'router', model: null, why: 'default' }); }
-      else if (step === 'ollama') chain.push({ provider: 'ollama', model: null, why: 'default' });
+      else if (step === 'ollama') { chain.push({ provider: 'ollama', model: null, why: 'default' }); if (llama && !steps.includes('llama')) chain.push(llama); }
+      else if (step === 'llama') { if (llama) chain.push(llama); }
       else if (PROVIDERS[step]) { if (this.keysFor(step).some(k => k.enabled)) chain.push({ provider: step, model: null, why: 'default key' }); }
       else if (step === 'keyed') { for (const pid of Object.keys(PROVIDERS)) if (this.keysFor(pid).some(k => k.enabled)) chain.push({ provider: pid, model: null, why: 'default key' }); for (const n of this.settings.get('network.lanNodes') || []) if (n?.enabled !== false && n?.baseUrl) chain.push({ provider: 'lan:' + n.id, model: n.model || null, why: 'lan' }); }
     }
@@ -142,7 +148,7 @@ export class ModelDoor {
     const online = this.online;
     return { main: a?.model?.main || null, fallback: a?.model?.fallback || null, online, chain: online ? uniq : uniq.filter(c => this.isLocal(c.provider)), whenOnline: uniq };
   }
-  isLocal(provider) { return provider === 'ollama' || String(provider).startsWith('lan:'); }
+  isLocal(provider) { return provider === 'ollama' || provider === 'llama' || String(provider).startsWith('lan:'); }
 
   // ---------- the call
   async chat(opts) {
@@ -163,11 +169,12 @@ export class ModelDoor {
       if (attempts.length >= MAX_ATTEMPTS) break;
       if (signal.aborted) throw new ModelError('aborted', 'Stopped.', { attempts });
       if (Date.now() >= deadline) { late = true; break; }
-      const targets = await this.targets(step, opts);
+      const targets = await this.targets(step, opts, { signal, leftMs: deadline - Date.now() });
+      if (signal.aborted) throw new ModelError('aborted', 'Stopped.', { attempts });
       if (!targets.length) {
         const until = step.provider === 'router' ? this.routerBusyUntil(!!opts.tools?.length) : 0;
         if (until) busyUntil = busyUntil ? Math.min(busyUntil, until) : until;   // skipped, not tried: no attempt, no waiting
-        else attempts.push({ provider: step.provider, model: step.model, ok: false, error: 'not available' });
+        else attempts.push({ provider: step.provider, model: step.model, ok: false, error: step.provider === 'llama' && this.llamaWhy ? this.llamaWhy : 'not available' });
         continue;
       }
       for (const t of targets) {
@@ -183,6 +190,7 @@ export class ModelDoor {
           const ms = Date.now() - t0;
           attempts.push({ provider: t.provider, model: t.model, ok: true, ms });
           this.last.set(t.provider, { ok: true, at: now(), model: t.model, ms });
+          if (t.provider === 'llama') this.localEngine?.touch?.();
           this.record({ ...opts, provider: t.provider, model: t.model, ok: true, ms, usage: r.usage });
           return { ...r, provider: t.provider, model: t.model, via: t.via || null, label: this.label(t.provider, t.model, t.viaName), ms, attempts, fallbackUsed: attempts.length > 1 };
         } catch (e) {
@@ -248,8 +256,21 @@ export class ModelDoor {
     return out;
   }
   /** Concrete (provider, model, baseUrl, key) targets for one chain step. */
-  async targets(step, opts = {}) {
+  async targets(step, opts = {}, call = {}) {
     const p = step.provider;
+    if (p === 'llama') {
+      // the desk's own llama-server: started on first need, on loopback, with a fresh key per start
+      this.llamaWhy = null;
+      const e = this.localEngine; if (!e || !e.usable()) return [];
+      // a model whose template cannot call tools is skipped for a turn with tools; the message says so, which is what
+      // sends the Coordinator to its JSON decisions (same as a free host's noTools)
+      if (opts.tools?.length && !e.toolsOk()) { this.llamaWhy = 'this local model cannot use tools'; return []; }
+      try {
+        const t = await e.target({ signal: call.signal, waitMs: Math.max(1000, Math.min(LOCAL_FIRST_MS, call.leftMs ?? LOCAL_FIRST_MS)) });
+        if (!t) return [];
+        return [{ provider: 'llama', api: 'openai', baseUrl: t.baseUrl, model: t.model, headers: { authorization: 'Bearer ' + t.key }, local: true }];
+      } catch (err) { if (call.signal?.aborted) return []; this.llamaWhy = String(err?.message || err).slice(0, 200); return []; }
+    }
     if (p === 'router') {
       if (!this.settings.get('router.enabled') || !this.online) return [];
       const r = await this.routerModels();
@@ -302,6 +323,7 @@ export class ModelDoor {
     return out.slice(0, 4);
   }
   label(provider, model, via) {
+    if (provider === 'llama') { const n = 'Local model on this PC'; return model ? `${n} · ${this.localEngine?.nameOf?.(model) || model}` : n; }
     const name = provider === 'router' ? ROUTER_NAME.short : provider === 'ollama' ? 'Ollama' : String(provider).startsWith('lan:') ? 'LAN node' : (PROVIDERS[provider]?.name || provider);
     return model ? `${name} · ${model}${via ? ' (' + via + ')' : ''}` : name;
   }
@@ -423,6 +445,7 @@ export class ModelDoor {
   async listModels(provider) {
     if (provider === 'router') return (await this.active()).find(a => a.provider === 'router')?.models || [];
     if (provider === 'ollama') return ((await this.ollamaModels()).models || []).map(m => m.name);
+    if (provider === 'llama') { const id = this.localEngine?.usable?.() ? this.localEngine.modelId() : null; return id ? [id] : []; }
     const def = PROVIDERS[provider]; const k = this.liveKeys(provider)[0];
     if (!def || !k || !this.online) return [];
     const r = await this.probe('models:' + provider, async () => {
@@ -476,7 +499,7 @@ export class ModelDoor {
   /** True when this model costs money by our price list (free ids and unknown models count as free). */
   priceOf(model) { const p = CATALOG.prices.find(x => String(model || '').toLowerCase().includes(x.match)); return p && (p.in > 0 || p.out > 0) ? p : null; }
   estimate(provider, model, usage) {
-    if (!usage || provider === 'router' || provider === 'ollama' || String(provider).startsWith('lan:')) return 0;
+    if (!usage || provider === 'router' || provider === 'ollama' || provider === 'llama' || String(provider).startsWith('lan:')) return 0;
     const p = CATALOG.prices.find(x => String(model || '').toLowerCase().includes(x.match)); if (!p) return 0;
     const usd = (usage.input || 0) / 1e6 * p.in + (usage.output || 0) / 1e6 * p.out;
     const rate = CATALOG.usdRates[this.settings.get('currency')] || 1;

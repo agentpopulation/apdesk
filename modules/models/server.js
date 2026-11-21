@@ -85,7 +85,7 @@ export async function activate(ctx) {
 
   // ---------- one real test call through the door
   const limits = () => ({ ...TEST_LIMITS, ...(ctx.kv.get('testLimits', {}) || {}) });
-  const isLocal = (p) => p === 'ollama';
+  const isLocal = (p) => p === 'ollama' || p === 'llama';   // a model on this PC: the longer first wait and one more try
   /** One call with its own wait. A wait that runs out is told apart from a provider error. */
   async function oneTry(pick, ms) {
     const timer = AbortSignal.timeout(ms + 2000);   // the door's own wait (timeoutMs) normally ends it first
@@ -179,6 +179,8 @@ export async function activate(ctx) {
     if (S('online') !== false && (rs.mode === 'owner' || rs.mode === 'builtin')) groups.push({ provider: 'router', label: ROUTER_NAME.full, models: ['auto', ...rs.models] });
     const o = await ctx.model.ollamaModels();
     if (o.ok) groups.push({ provider: 'ollama', label: 'Ollama on this PC', models: safeFirst((o.models || []).map(m => m.name).filter(n => !/embed|bge|minilm/i.test(n))) });
+    const le = (await ctx.model.active()).find(a => a.provider === 'llama' && a.ok);   // the desk's own llama-server, once installed and on
+    if (le) groups.push({ provider: 'llama', label: `Local model on this PC (${le.name})`, models: le.models });
     if (S('online') !== false) for (const p of providers()) if (p.keys.some(k => k.enabled)) {
       // Drop a keyed provider only when every enabled key was refused outright (a bad key). Over quota or not answering: keep it, marked.
       const refused = p.keys.filter(k => k.enabled).every(k => k.test && !k.test.ok && /refused/i.test(k.test.error || ''));

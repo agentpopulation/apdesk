@@ -28,15 +28,17 @@ export async function homePage(el, ui) {
   const role = ROLES[ui.state.settings.role];
   const hour = Number(new Date().toLocaleString('en-GB', { hour: 'numeric', hour12: false, timeZone: ui.state.settings.timeZone || undefined }));
   const hello = hour < 4 ? 'Hello' : hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-  const tiles = h('div', { class: 'tiles' }), running = h('div'), waiting = h('div'), recent = h('div'), extra = h('div', { class: 'tiles' });
+  const bench = h('div'), tiles = h('div', { class: 'tiles' }), running = h('div'), waiting = h('div'), recent = h('div'), extra = h('div', { class: 'tiles' });
   el.append(
     h('div', null, h('h2', null, hello + (ui.state.settings.ownerName ? ', ' + ui.state.settings.ownerName : '')), h('p', { class: 'sub' }, role ? `Set up for: ${role.name}. ${role.desc}.` : 'Everything is switched on.')),
-    tiles,
+    bench, tiles,
     h('div', { class: 'two' }, card(h('h3', null, 'What is running'), running), card(h('h3', null, 'Waiting for you'), waiting)),
     card(h('h3', null, 'Pick up where you left off'), recent), extra);
   const paint = async () => {
     let d; try { d = await api('home'); } catch (e) { running.replaceChildren(empty(e.message)); return; }
     await ui.refreshStopped?.();
+    // the note Bench mode left while the owner was away, at the top (the module's own card)
+    if (ui.moduleOn('bench')) { try { await (await ui.moduleUi('bench')).homeCard?.(bench, ui); } catch { bench.replaceChildren(); } } else bench.replaceChildren();
     const owners = (list) => list.filter(j => !j.quiet);   // the desk's own upkeep stays in Tasks › Housekeeping
     const tile = (n, label, page) => h('button', { class: 'card hov stat', onclick: () => ui.go(page) }, h('b', null, String(n)), h('span', null, label));
     tiles.replaceChildren(tile(d.jobs.summary.running, 'Tasks running', 'tasks'), tile(d.approvals.length + d.jobs.summary.waiting, 'Waiting for you', 'tasks'), tile(d.jobs.summary.done, 'Finished', 'tasks'), tile(d.agents, 'Agents', 'agents'));
@@ -53,5 +55,5 @@ export async function homePage(el, ui) {
     extra.replaceChildren(...mods.map(m => h('button', { class: 'card hov', onclick: () => ui.go(m.menu[0].id) }, h('b', null, m.name), h('div', { class: 'sub' }, 'Module is on. Open it.'))));
   };
   await paint();
-  ui.on('job', paint); ui.on('approval', paint); ui.on('modules', paint); ui.on('panic', paint);
+  ui.on('job', paint); ui.on('approval', paint); ui.on('modules', paint); ui.on('panic', paint); ui.on('bench', paint);
 }

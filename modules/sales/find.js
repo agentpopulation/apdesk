@@ -399,6 +399,18 @@ export function closingLine(leads = []) {
   const parts = [countClause(c.own, total, 'have their own site as the main source'), countClause(c.emails, total, 'carry a mail address'), countClause(c.contacts, total, 'name a contact person')].filter(Boolean);
   return `${parts.length ? parts.join('; ') + '. ' : ''}Contacts a page did not give are marked not checked.`;
 }
+/** What a lead search was for and what it looked for, built by code from the job's own data (no model call). A topic taken
+ *  from the owner's saved "What you do" text says so; one he typed is quoted. A part that is not known is left out. */
+export const ABOUT_QUERY = (about) => `Companies that would buy this: ${about}`.slice(0, 300);   // how the Chat module turns "my product" into a topic
+export function purposeLine({ query = '', about = '', country = null, buyerProduct = null, queries = [] } = {}) {
+  const q = clip(query, 300); const a = clip(about, 600);
+  const fromAbout = !!a && q === clip(ABOUT_QUERY(a), 300);
+  const forPart = fromAbout ? `Leads for: ${cutWords(a, 200).replace(/[.!\s]+$/, '')} (from what you told me you sell).` : q ? `Leads for: "${cutWords(q, 200)}" (what you asked).` : '';
+  const looked = [buyerProduct && `companies that buy ${cutWords(buyerProduct, 80)}`, country?.label && `${buyerProduct ? '' : 'companies '}in ${country.label}`].filter(Boolean).join(' ');
+  const qs = (Array.isArray(queries) ? queries : []).filter(Boolean);
+  const searchPart = qs.length ? `Searches I ran: ${qs.slice(0, 3).map(x => `"${cutWords(x, 60)}"`).join(', ')}${qs.length > 3 ? ` and ${qs.length - 3} more` : ''}.` : '';
+  return [forPart, looked && `I looked for: ${looked}.`, searchPart].filter(Boolean).join(' ');
+}
 /** Both groups in one line, counted over the leads shown: "8 of 20 are placed in India and sell what you asked for; 9 more
  *  are listed as not checked." '' when the ask names neither a country nor a kind of product (then there is one group). */
 export function groupLine(leads = [], { country = null, kindAsk = false, asked = 0 } = {}) {

@@ -38,3 +38,11 @@
 .line>.mdl-test,.k>.mdl-test{flex:0 1 220px}
 .mdl-test .mdl-reason{max-width:260px}
 @media (max-width:600px){.mdl-scroll .line{flex-wrap:wrap}.mdl-scroll .line>div:first-child{flex:1 1 100%}.line>.mdl-test,.k>.mdl-test{flex:1 1 160px}}
+.mdl-eng{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+.mdl-eng .row{flex-wrap:wrap;gap:8px}
+.mdl-eng .sub{overflow-wrap:anywhere}
+.mdl-eng select{max-width:100%;min-width:0;flex:1 1 220px}
+.mdl-dl{display:flex;flex-direction:column;gap:4px;padding:6px 0;border-top:1px solid var(--line)}
+.mdl-ell{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.mdl-dl .meter{flex:none;width:100%}
+.mdl-dl-title{overflow-wrap:anywhere}

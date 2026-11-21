@@ -91,6 +91,17 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Free hosts that say no are skipped for a while instead of being retried, and when all of them are busy the desk says so at once with when to try again.
 - The routing model is named "APDesk Edge 63M" in the README.
 - After a few chats, the desk asks once whether you want short or detailed answers, with a sample of each; your agents then answer that way, and you can change it in Settings › General.
+- Updates: the desk can check GitHub for a new version and install it on your click, only if the release is signed with the project's key. Until a key is added to the build it says "Updates are not set up in this build."
+- A backup of your data is made before every update; your data, backups and keys are never changed, and a failed update puts the old version back. A desk update always asks you, even inside an auto-approve window.
+- New tools for the maintainer: make a signing key and sign a release (`tools/make-update-keys.mjs`, `tools/sign-release.mjs`).
+- Windows: new `install.bat` installs AP Desk for your user only, with a folder of your choice, Start menu, Desktop and Settings › Apps entries, and an optional start when you sign in. It needs no administrator rights; `uninstall.bat` asks before deleting your data.
+- Windows: AP Desk keeps its own checked copy of Node.js 22.23.5 (x64 or ARM64) in its folder instead of installing Node.js for the whole PC, and runs in the background with a log under `data\desk.log`.
+- The default address is now `http://127.0.0.1:3445`. When another program holds that port, the desk takes the next free port up to 3465 and remembers it. A start page shows while the desk loads.
+- Bench mode (off by default): while you are away from the desk's window, it looks back at its own work and looks up your market in stages (1, 12, 36, 108 hours), then leaves a note.
+- Everything Bench finds is a proposal with its source pages; nothing is sent, saved or changed until you press Keep, Dismiss or Turn into a task. It stops the moment you use the desk, stops on Panic, waits on battery and offline, and uses local then free models within fixed budgets.
+- A lead search now says plainly what it searched for and for whom.
+- Models: "Get a local model" fetches llama.cpp and a model that fits this PC in the background, checks both, and runs them on this PC only. It works Offline, and Remove frees the space.
+- A downloads service with pause, resume and cancel. Every download asks first, Panic pauses it, and it goes on after a restart.
 - A free host that has not started answering within 25 seconds is skipped (it was 60), so more of them get a try inside one chat turn.
 - A new desk opens the chat with two buttons, "Say hello" and a highlighted "Select model / Add API"; the role's suggestions appear once the first reply has finished, and a small "Select model / Add API" link stays beside the model name.
 - The side panel never sends an empty request: "Turn into a task" offers to run the chat's last ask again in the background, and a message that is only a prefix is refused.
@@ -99,6 +110,10 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Briefs, schedules, calendar dates, lead values and spend amounts follow your own zone, locale and currency; nothing falls back to India any more.
 
 ### Known weak points
+- The local model engine was run for real on Linux only (a 1 GB model answered through the desk on 21 Nov 2026). Windows and macOS builds are chosen by rule and have not been run.
+- The Windows installer, the background mode, the start page and the update step have been tested on Linux and by static checks only; none has run on Windows yet.
+- Bench mode's later stages (customers, funding, market report) have not been run with a real model, and its early findings are of mixed quality.
+- When the desk runs hidden on Windows, the six-digit code for pairing another browser is written to `data\desk.log`.
 - With no key and no local model, the free hosts are often busy: on 20 Nov 2026 a first "Hello" got no answer within 150 seconds in one test run. A free key or a local model in Models avoids this.
 - A real local Ollama model has still not been run through the full set of checks.
 - No run of the 17 acceptance asks has passed every ask. Results vary with the free model that answers.

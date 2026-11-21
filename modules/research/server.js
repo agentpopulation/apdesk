@@ -2,7 +2,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { runDeep } from './deep.js';
-import { runSwarm } from './swarm.js';
+import { runSwarm, distinctiveWords, mentionsTopic } from './swarm.js';
+import { verifyQuote } from './util.js';
 import { stopped, shortTitle } from './util.js';
 
 const now = () => new Date().toISOString();
@@ -33,14 +34,14 @@ export async function activate(ctx) {
 
   const OFFLINE_LINE = 'The desk is offline. Research needs the internet.';
   const refuseOffline = () => { if (ctx.settings.get('online') === false) throw Object.assign(new Error(OFFLINE_LINE), { code: 'offline' }); };
-  async function deep({ question, chatId = null, agentId = 'scout' } = {}) {
+  async function deep({ question, chatId = null, agentId = 'scout', quiet = false } = {}) {
     refuseOffline();                                         // no job and no fetch while Offline
     question = String(question || '').trim();
     if (!question) throw new Error('Say what to research.');
     if (!ctx.agents.get(agentId)) agentId = 'scout';
     const id = rid('rep_');
     ctx.db.run('INSERT INTO m_research_reports (id, question, title, status, step, progress, chat_id, agent_id, created, updated) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)', id, question, shortTitle(question, 120), 'running', 'Starting', chatId, agentId, now(), now());
-    const job = await ctx.jobs.start({ kind: 'research.deep', title: 'Research: ' + shortTitle(question, 80), agentId, chatId, input: { question, reportId: id },
+    const job = await ctx.jobs.start({ kind: 'research.deep', title: 'Research: ' + shortTitle(question, 80), agentId, chatId, quiet, input: { question, reportId: id },
       async run(j) {
         try { return await runDeep(ctx, j, { rid: id, question, agentId, chatId, store: reports }); }
         catch (e) {
@@ -116,6 +117,8 @@ export async function activate(ctx) {
     parameters: { type: 'object', properties: { task: { type: 'string' }, agents: { type: 'integer', minimum: 1, maximum: 50 } }, required: ['task'] },
     async run(args, call) { if (ctx.settings.get('online') === false) return { started: false, error: OFFLINE_LINE }; const j = await swarm({ task: args.task, agents: args.agents || 5, chatId: call.chatId, agentId: call.agentId === 'coordinator' ? 'scout' : call.agentId || 'scout' }); return { started: true, jobId: j.id, swarmId: j.swarmId, note: 'The swarm has started. Each agent shows as a tile on the Research page, Swarm tab.', go: '#/research/swarm/' + j.swarmId }; },
   });
-  ctx.expose({ deep, swarm, report: (id) => reports.get(id), swarmState: (id) => swarms.get(id) });
+  ctx.expose({ deep, swarm, report: (id) => reports.get(id), swarmState: (id) => swarms.get(id),
+    // the report's own checks, for a later look: the quote is on its page word for word and carries the claim; the passage names the topic
+    checkQuote: (quote, pageText, claim) => verifyQuote(quote, pageText, claim), aboutTopic: (text, question) => mentionsTopic(text, distinctiveWords(question)) });
   return { async deactivate() {} };
 }

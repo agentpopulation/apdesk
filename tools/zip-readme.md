@@ -2,27 +2,34 @@
 
 AP Desk is short for Agent Population Desk. Website: https://agentpopulation.com. On X: @agentpopulation. Source code: https://github.com/agentpopulation/apdesk
 
-A local desk of agents for one owner. It runs on your own PC, answers only on `http://127.0.0.1:3960`, and keeps everything you own in one `data` folder.
+A local desk of agents for one owner. It runs on your own PC, answers only on `http://127.0.0.1:3445` (or the next free port up to 3465 when another program holds 3445), and keeps everything you own in one `data` folder.
 
-## Start
-1. Unzip `agent-population-desk.zip` into a folder of your choice, for example `C:\Apps`. You get an `apdesk` folder inside it.
-2. Double-click `start.bat`. The desk opens in its own full window.
-3. To stop it, double-click `stop.bat`.
+## Install
+1. Unzip `agent-population-desk.zip` anywhere. You get an `apdesk` folder.
+2. Double-click `install.bat` in it. It asks where to put AP Desk (press Enter for `%LOCALAPPDATA%\Programs\AP Desk`), copies it there, and adds **AP Desk** to your Start menu and, if you like, your Desktop and Settings › Apps.
+3. Start it from the Start menu: **AP Desk**. It runs in the background; closing a window does not stop it. **Stop AP Desk** stops it, **AP Desk log** shows what it is doing.
 
-The first start needs Node.js 22.13 or newer. If it is missing, `start.bat` runs `setup\setup.bat`, which installs it with winget. The packages the desk needs are already inside the zip, so no download is needed after that.
+It is an install for you only: no administrator rights are needed and nothing is changed for other users. Windows may show its usual notice for a downloaded file; you decide whether to continue.
+
+Node.js is not in the zip. The first run downloads the official Node.js 22 zip for your PC (x64 or ARM64, about 30 MB) from nodejs.org into the `runtime` folder, checks it against its published checksum, and uses it only for AP Desk. The packages the desk needs are already inside the zip.
+
+Without installing: double-click `start.bat` in the unzipped folder. The desk runs in that window until you close it.
 
 ## What is in the folder
 
 | | |
 |---|---|
+| `install.bat` | Installs AP Desk for you: folder, Start menu, Desktop, Settings › Apps. |
 | `start.bat` | Starts the desk and opens it. |
 | `stop.bat` | Stops it cleanly. |
+| `uninstall.bat` | Removes AP Desk. Asks before deleting your data. |
 | `README.md` | This page. |
 | `app` | The shell and the four doors: models, approvals, storage, modules. |
 | `modules` | The 30 modules, one folder each. 16 are on from the first run. |
 | `vendor` | Open-source code copied in, with its licences. |
 | `node_modules` | Installed packages. |
-| `setup` | `setup.bat` (first install), `reinstall.bat` (repair), the package list. |
+| `setup` | The installer, `setup.bat` (first run), `reinstall.bat` (repair), `autostart.bat on` or `off` (start when you sign in), the icon and the start page. |
+| `runtime` | Made on first run: AP Desk's own copy of Node.js. |
 | `data` | Your database, your workspace files, the agents' browser profiles. |
 | `backups` | Backup zips. They sit outside `data` so you can delete `data` and restore. |
 
@@ -39,7 +46,7 @@ Keys found in the environment when the desk starts are used for that run and are
 |---|---|
 | Linux x64, Node 22 and 24 | Developed and tested here |
 | Windows 11 x64 | The main target. An earlier build of 0.1.0 was run and tested on Windows 11 on 14 Nov 2026. This exact build has not been re-run there yet |
-| Windows on ARM64 (Snapdragon X) | Should work, **untested**. The desk is plain JavaScript on Node 22.13 or newer with `node:sqlite`; the zip holds no native add-ons. The agent's browser uses the Edge already installed on the PC |
+| Windows on ARM64 (Snapdragon X) | Should work, **untested**. The installer fetches the ARM64 build of Node.js. The desk is plain JavaScript with `node:sqlite`; the zip holds no native add-ons. The agent's browser uses the Edge already installed on the PC |
 | macOS | Untested. There is no start script for it; `node app/server.js` is the way in |
 
 ## Small local models (4B and 8B through Ollama)
@@ -57,13 +64,13 @@ Switch Online off under the message box or in Settings. While Offline the desk p
 - Security levels Open, Careful and Strict. Open on the first run. Changed only in Settings, Security.
 - Auto-approve for 15 minutes, 1 hour or today sits beside the level. It never covers sending to a person or spending over your limit.
 - Nothing is sent to a person without your click on that item.
-- **Your browser only.** The first browser that opens a fresh desk is remembered. Any other browser must type the six-digit code shown in the desk's own window (the one `start.bat` opened). Other programs on this PC, and code an agent runs, get no page and no data.
+- **Your browser only.** The first browser that opens a fresh desk is remembered. Any other browser must type the six-digit code shown in the desk's own window when started with `start.bat`, or in **AP Desk log** when it runs in the background. Other programs on this PC, and code an agent runs, get no page and no data.
 - **Panic** is at the top right of every screen. It stops every agent, job and browser at once. Nothing runs until you press Resume.
 
 ## Repair, move, remove
 - **Repair:** `setup\reinstall.bat` installs the packages again. Your data is not touched.
-- **Move:** stop the desk and move the whole `apdesk` folder.
+- **Move:** stop the desk, move the whole AP Desk folder, then run `install.bat` in its new place and choose that same folder: it only remakes the shortcuts.
 - **Back up:** Settings, Backup. The zip lands in `backups`.
-- **Remove:** stop the desk and delete the folder. Nothing is installed anywhere else, apart from Node.js.
+- **Remove:** Settings › Apps › AP Desk, or **Uninstall AP Desk** in the Start menu. It removes the shortcuts and the program, and asks before deleting your data. Nothing is installed anywhere else.
 
 AP Desk is open source under the Apache License 2.0. Copyright 2026 AgentPopulation. Licences and credits of the open-source parts: `app\docs\ATTRIBUTION.md`.

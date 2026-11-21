@@ -132,7 +132,7 @@ export async function activate(ctx) {
       version: version(), node: process.version, platform: process.platform,
       folders: { install: ctx.root, data: ctx.dataDir, workspace: ctx.workspace, backups: ctx.backupsDir },
       layout: LAYOUT, attribution: read('ATTRIBUTION.md'),
-      updates: 'Updates are installed by unzipping a new version over this folder; your data folder is kept.',
+      updates: 'Signed updates from GitHub: see the Updates card. Your data folder is never changed by an update.',
     });
   });
 

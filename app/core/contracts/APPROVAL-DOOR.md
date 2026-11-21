@@ -41,7 +41,7 @@ The level is **Open on first run**. It changes only in Settings › Security thr
 
 ## Auto-approve window
 
-A control beside the level: **15 minutes**, **1 hour**, **today**, or off. While the window is open, actions that Careful or Strict would ask for are allowed with `how: 'auto'`, and a line is written to the activity log. The window never covers `send.person` or `spend` over the limit. It is set only from the Settings route and the chip under the message box, both served by the shell with the session token.
+A control beside the level: **15 minutes**, **1 hour**, **today**, or off. While the window is open, actions that Careful or Strict would ask for are allowed with `how: 'auto'`, and a line is written to the activity log. The window never covers `send.person` or `spend` over the limit. Nor does it cover an `install` whose payload is `kind: 'desk-update'` (a desk update, UPDATES.md): that asks at every level and inside the window. It is set only from the Settings route and the chip under the message box, both served by the shell with the session token.
 
 ## Spend limits
 

@@ -1,0 +1,4 @@
+{
+ "about": "Public keys this desk trusts for signed updates (contracts/UPDATES.md). Paste the entry tools/make-update-keys.mjs prints. Empty: updates are not set up in this build.",
+ "keys": []
+}

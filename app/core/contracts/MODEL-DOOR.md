@@ -41,7 +41,8 @@ Errors: the door throws `ModelError` with `code` in `offline`, `halted` (Panic),
 | id | kind | how | default |
 |---|---|---|---|
 | `router` | router | The built-in free models, shown as **Free API by Agent Population Desk** on the Models page and **Free API** wherever space is tight (reply labels, the line under the message box, pills, notices). Both forms live in one place: `freeRouter.name` and `freeRouter.shortName` in `providers.json`, exported as `ROUTER_NAME`. Internal ids stay `router` (`router.*` settings, `/router/v1`). The owner may also run his own OpenAI-compatible router ("Your own router"); base URL setting `router.baseUrl`, default `http://127.0.0.1:8787/v1`. Free no-sign-in models **on by default**; switch `router.enabled`. Optional key. | on |
-| `ollama` | local | `http://127.0.0.1:11434` (`ollama.baseUrl`). Lists installed models. The only provider used when Offline. | on |
+| `ollama` | local | `http://127.0.0.1:11434` (`ollama.baseUrl`). Lists installed models. Used when Offline. | on |
+| `llama` | local | "Local model on this PC": llama.cpp's own server, fetched and run by the desk on loopback, files under `<data>/llama`. After `ollama` in the chain once installed. Used when Offline. Gets `LOCAL_FIRST_MS` for its first call. | on once the owner gets a local model |
 | `openai`, `anthropic`, `openrouter`, `groq`, `gemini`, `mistral`, `deepseek`, `together`, `fireworks`, `cerebras`, `xai`, `custom` | keyed | Several keys per provider, each with its own switch and label. OpenAI-compatible chat for all but `anthropic` (native Messages API) and `gemini` (OpenAI-compatible endpoint). `custom` is any OpenAI-compatible base URL. | off until a key is added |
 | `lan:<node>` | lan | Another PC on the LAN running Ollama or the router (Models › Nodes) | off |
 
@@ -77,7 +78,7 @@ Each built-in free host-and-model that fails is skipped for a while (`BACKOFF`, 
 
 The built-in hosts come from `providers.json`; the owner's Router tab choice (`router.upstreams`) only lays its on/off over them, so a saved copy never keeps stale model names or switches on a host that is off by default. A host marked `liveModels` (LLM7) is called only with the model names it lists itself without a key, read through the door and cached. A host's notice is cut at its first sentence and links are taken out before it reaches a log or the screen.
 
-Offline: the chain is reduced to `ollama` and `lan` entries. Online/Offline is a setting (`online`), changed from the chip under the message box or Settings › Network. It is not a per-call flag.
+Offline: the chain is reduced to `ollama`, `llama` and `lan` entries. Online/Offline is a setting (`online`), changed from the chip under the message box or Settings › Network. It is not a per-call flag.
 
 ## OpenRouter: free models only
 

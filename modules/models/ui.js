@@ -127,13 +127,14 @@ export const pages = {
         } });
         head.replaceChildren(ui.h('h2', null, 'Models'), ui.pill(`${live} active`, live ? 'ok' : 'wait'),
           ui.pill(d.online ? 'Online' : 'Offline', d.online ? '' : 'wait'),
-          ui.h('span', { class: 'sub mdl-why' }, d.online ? 'Online: the Free API, keyed providers, Ollama and LAN nodes can answer. Offline: only Ollama on this PC and LAN nodes; nothing leaves your network.' : 'Offline: only Ollama on this PC and LAN nodes answer. Nothing leaves your network.'),
+          ui.h('span', { class: 'sub mdl-why' }, d.online ? 'Online: the Free API, keyed providers, models on this PC and LAN nodes can answer. Offline: only models on this PC and LAN nodes; nothing leaves your network.' : 'Offline: only models on this PC and LAN nodes answer. Nothing leaves your network.'),
           ui.h('span', { class: 'grow' }), testAll);
       }
       function testBtn(args, after) {
         const b = ui.btn('Test', { kind: 'ghost sm', onClick: async () => {
           b.disabled = true; b.textContent = 'Testing…';
           // a local model that is not in memory yet is loaded by its first call, which can take a minute or two
+          if (args.provider === 'llama') ui.api('local-engine').then(r => { if (r.phase !== 'running' && b.disabled) { b.textContent = 'Starting the local model…'; b.title = 'Its first call loads it into memory. This can take a minute or two on a laptop.'; } }).catch(() => {});
           if (args.provider === 'ollama') ui.api(API + 'ollama/loaded' + (args.model ? '?model=' + encodeURIComponent(args.model) : '')).then(r => { if (!r.loaded && b.disabled) { b.textContent = 'Loading the model…'; b.title = 'A local model\'s first call loads it into memory. This can take a minute or two on a laptop.'; } }).catch(() => {});
           try { const r = await ui.api(API + 'test', { body: args }); ui.toast(r.ok ? `${r.label} answered in ${secs(r.ms)}` : `${r.label}: ${r.error}`, r.ok ? 'ok' : 'err'); await (after || load)(); }
           catch (e) { ui.toast(e.message, 'err'); } finally { b.disabled = false; b.textContent = 'Test'; b.title = ''; }
@@ -145,6 +146,7 @@ export const pages = {
         act.replaceChildren(...d.active.map(a => {
           let sub;
           if (a.provider === 'router') sub = rs.mode === 'owner' ? `Your own router · ${rs.models.length} model${rs.models.length === 1 ? '' : 's'}` : rs.mode === 'builtin' ? `Built-in, no sign-in · ${rs.upstreams.filter(u => u.enabled).length} free hosts` : rs.line;
+          else if (a.provider === 'llama') sub = a.ok ? `${a.name} · ${a.running ? 'running now' : 'starts when needed'}` : 'Switched off on the Local models tab.';
           else if (a.kind === 'local') sub = a.ok ? `${a.models.length} installed${a.model ? ' · ' + a.model : ''}` : 'Not running. Start Ollama on this PC.';
           else if (a.kind === 'lan') sub = `LAN node · ${a.model || 'auto'}`;
           else sub = `${a.keys} key${a.keys === 1 ? '' : 's'} on · ${a.model}`;
@@ -290,11 +292,14 @@ export const pages = {
       async function tabLocal() {
         const [o, hw] = await Promise.all([ui.api(API + 'ollama'), st.hw ? st.hw : ui.api(API + 'hardware')]);
         st.hw = hw;
+        st.engineEl = ui.h('div', { class: 'mdl-eng-wrap' }); await drawEngine();
         const installed = new Set(o.models.map(m => m.name));
         const prog = (tag) => { const j = Object.values(st.jobs).find(x => x.input?.model === tag && ['running', 'waiting'].includes(x.status)); return j ? ui.h('span', { class: 'row', style: { minWidth: '160px' } }, ui.meter(j.progress || 0, { live: true }), ui.h('span', { class: 'sub' }, j.status === 'waiting' ? 'Waiting for you' : ui.fmt.pct(j.progress))) : null; };
         const pull = async (tag) => { try { const j = await ui.api(API + 'ollama/pull', { body: { model: tag } }); st.jobs[j.id] = j; ui.toast(`Download of ${tag} is waiting for your approval.`); drawTab(); } catch (e) { ui.toast(e.message, 'err'); } };
         const other = ui.h('input', { type: 'text', placeholder: 'Any Ollama model, for example qwen3:14b', style: { flex: 1 } });
         return [
+          st.engineEl,
+          ui.h('h6', { style: { marginLeft: 0 } }, 'Ollama'),
           ui.h('p', { class: o.ok ? 'sub' : 'mdl-warn' }, o.line),
           ...o.models.map(m => ui.line(m.name, [ui.fmt.bytes(m.size), m.parameters, m.quant, UNSAFE.test(m.name) ? 'never picked by default' : null].filter(Boolean).join(' · '), ui.pill('Installed', 'ok'),
             ui.btn('Remove', { kind: 'ghost sm', onClick: async () => { await ui.api(API + 'ollama/delete', { body: { model: m.name } }); ui.toast('Removal is waiting for your approval.'); } }))),
@@ -305,6 +310,50 @@ export const pages = {
           ui.h('div', { class: 'row', style: { marginTop: '8px' } }, other, ui.btn('Download', { kind: 'ghost sm', disabled: !o.ok, onClick: () => other.value.trim() && pull(other.value.trim()) })),
           ui.h('p', { class: 'sub', style: { marginTop: '6px' } }, 'Every download asks you first and can be stopped with Panic. Sizes are about, from the Ollama library.'),
         ];
+      }
+      // ----- the desk's own local model (llama.cpp's llama-server and one model, fetched in the background)
+      async function drawEngine() {
+        if (!st.engineEl) return;
+        let e, plan;
+        try { [e, plan] = await Promise.all([ui.api('local-engine'), st.plan && Date.now() - st.planAt < 60000 ? st.plan : ui.api('local-engine/plan')]); }
+        catch (err) { st.engineEl.replaceChildren(ui.card({ class: 'mdl-eng' }, ui.h('b', null, 'Local model on this PC'), ui.h('p', { class: 'mdl-warn' }, err.message))); return; }
+        st.plan = plan; st.planAt = Date.now();
+        st.engineEl.replaceChildren(engineCard(e, plan));
+      }
+      const PHASE = { none: ['Not downloaded', ''], downloading: ['Downloading', 'wait'], ready: ['Ready', 'ok'], starting: ['Starting', 'wait'], running: ['Running', 'ok'], stopped: ['Stopped', ''], off: ['Switched off', ''], failed: ['Did not work', 'stop'] };
+      const left = (s) => s == null ? '' : s < 90 ? `about ${Math.max(5, Math.round(s / 5) * 5)} s left` : s < 5400 ? `about ${Math.round(s / 60)} min left` : `about ${Math.round(s / 3600)} h left`;
+      function engineCard(e, plan) {
+        const act = (path, body, msg) => async () => { try { const r = await ui.api('local-engine/' + path, { body: body || {} }); if (msg) ui.toast(typeof msg === 'function' ? msg(r) : msg, 'ok'); st.plan = null; await drawEngine(); await load(); } catch (err) { ui.toast(err.message, 'err'); } };
+        const [word, kind] = PHASE[e.phase] || [e.phase, ''];
+        const m = e.model || plan.model; const here = e.phase === 'ready' || e.phase === 'running' || e.phase === 'stopped' || e.phase === 'starting';
+        const pick = ui.h('select', { 'aria-label': 'Model for this PC', 'data-apd': 'engine-model' }, ...(plan.choices || []).map(c => ui.h('option', { value: c.id, disabled: !c.fits, selected: c.id === (plan.model?.id) }, `${c.name} · ${c.sizeText}${c.fits ? (c.id === plan.recommended ? ' · best fit' : '') : ' · too large for this PC'}`)));
+        pick.onchange = async () => { try { await ui.api('local-engine/choose', { body: { model: pick.value } }); st.plan = null; await drawEngine(); } catch (err) { ui.toast(err.message, 'err'); } };
+        const get = ui.btn(here && e.model && plan.model && e.model.id !== plan.model.id ? `Get ${plan.model.name} (${plan.totalText})` : e.phase === 'failed' ? `Try again (${plan.totalText})` : `Get a local model (${plan.totalText})`, { kind: 'sm', 'data-apd': 'engine-get', disabled: !plan.ok || !e.on, title: plan.ok ? null : plan.reason, onClick: act('get', { model: pick.value }, 'Each download asks you first. You can keep working meanwhile.') });
+        const dls = (e.downloads || []).map(d => ui.h('div', { class: 'mdl-dl', 'data-apd': 'engine-download' },
+          ui.h('b', { class: 'mdl-dl-title', title: d.title }, d.title), ui.h('span', { class: 'sub', 'data-apd': 'engine-progress' }, d.state === 'waiting' ? 'Waiting for your approval' : d.state === 'paused' ? 'Paused' : d.state === 'queued' ? 'Next in line' : `${d.doneText} of ${d.totalText}${d.speedText ? ' · ' + d.speedText : ''}${d.secondsLeft != null ? ' · ' + left(d.secondsLeft) : ''}`),
+          ui.meter(d.total ? d.done / d.total : 0, { live: d.state === 'running' }),
+          d.reason && d.state !== 'waiting' ? ui.h('span', { class: 'sub mdl-reason' }, d.reason) : null,
+          ui.h('div', { class: 'row' }, d.state === 'paused' ? ui.btn('Resume', { kind: 'ghost sm', onClick: () => ui.api(`downloads/${d.id}/resume`, { body: {} }).then(drawEngine).catch(err => ui.toast(err.message, 'err')) }) : d.state === 'running' || d.state === 'queued' ? ui.btn('Pause', { kind: 'ghost sm', onClick: () => ui.api(`downloads/${d.id}/pause`, { body: {} }).then(drawEngine).catch(err => ui.toast(err.message, 'err')) }) : null,
+            ui.btn('Cancel', { kind: 'ghost sm', onClick: () => ui.api(`downloads/${d.id}/cancel`, { body: {} }).then(drawEngine).catch(err => ui.toast(err.message, 'err')) }))));
+        const hwLine = plan.hardware?.line ? `${plan.hardware.line}${plan.hardware.budgetGb != null ? ` About ${plan.hardware.budgetGb} GB is free for a model now.` : ''}` : null;
+        const facts = m ? `${m.name} · ${m.sizeText} · ${m.licence}${m.publisher ? ' · by ' + m.publisher : ''} · ${m.tools ? 'can use tools' : 'chat only, no tools'}` : 'No model fits this PC.';
+        const eng = e.engine ? `llama.cpp ${e.engine.release} (${e.engine.licence}) · ${e.engine.label}` : plan.engine ? `llama.cpp ${plan.engine.name.replace('llama.cpp ', '')} (${plan.engine.licence}) · ${plan.engine.label} · ${plan.engine.sizeText}` : null;
+        return ui.card({ class: 'mdl-eng', 'data-apd': 'engine-card', 'data-phase': e.phase },
+          ui.h('div', { class: 'row' }, ui.h('b', null, 'Local model on this PC'), ui.pill(word, kind), ui.h('span', { class: 'grow' }),
+            ui.sw(e.on, 'Local engine', async (on) => { await act('switch', { on }, on ? 'Local engine on.' : 'Local engine off: it is stopped and nothing is downloaded.')(); })),
+          ui.h('div', { class: 'sub' }, facts),
+          eng ? ui.h('div', { class: 'sub' }, eng) : null,
+          hwLine ? ui.h('div', { class: 'sub' }, hwLine) : null,
+          e.reason ? ui.h('p', { class: e.phase === 'failed' || e.phase === 'off' ? 'mdl-warn' : 'sub', 'data-apd': 'engine-reason' }, e.reason) : null,
+          !plan.ok && plan.reason && !here ? ui.h('p', { class: 'mdl-warn' }, plan.reason) : null,
+          ...dls,
+          ui.h('div', { class: 'row mdl-eng-acts' },
+            e.phase === 'downloading' ? null : [pick, (!here || (e.model && plan.model && e.model.id !== plan.model.id)) ? get : null],
+            here && e.on ? testBtn({ provider: 'llama' }, async () => { await drawEngine(); await load(); }) : null,
+            e.phase === 'running' ? ui.btn('Stop', { kind: 'ghost sm', onClick: act('stop', null, 'Stopped. It starts again when a local model is needed.') }) : null,
+            here || e.downloads?.length || e.used ? ui.btn('Remove', { kind: 'ghost sm', 'data-apd': 'engine-remove', onClick: async () => { if (!await ui.confirm(`Remove the local model and its program from this PC? This frees ${ui.fmt.bytes(e.used || 0)}. It can be downloaded again.`, { title: 'Remove the local model?', ok: 'Remove' })) return; await act('remove', null, (r) => `Removed. ${r.freedText} freed.`)(); } }) : null),
+          here ? ui.line('Keep the local model loaded', `Start it when the desk starts and keep it in memory. Off: it starts when needed and stops after ${e.idleMinutes} minutes without use.`, ui.sw(e.keepLoaded, 'Keep the local model loaded', (on) => act('keep-loaded', { on })())) : null,
+          ui.h('p', { class: 'sub' }, 'Runs only on this PC, on its own address 127.0.0.1, and works while the desk is offline. Each download asks you first, is checked against its SHA-256 before use, and stops with Panic.'));
       }
       async function tabLoras() {
         const l = await ui.api(API + 'loras');
@@ -362,7 +411,9 @@ export const pages = {
           ui.table([{ label: 'Model', render: r => r.label }, { label: 'Calls', render: r => String(r.calls) }, { label: 'Failed', render: r => String(r.failed) }, { label: 'Cost (about)', render: r => ui.fmt.money(r.cost, u.currency) }], u.today, { empty: 'No model calls yet today.' })];
       }
 
-      ui.on('models', () => { load().catch(() => {}); });
+      ui.on('models', (c) => { load().catch(() => {}); if (c?.change === 'local-engine' && st.tab === 2) drawEngine().catch(() => {}); });
+      let dlTimer = null;
+      ui.on('downloads', () => { if (st.tab !== 2 || dlTimer) return; dlTimer = setTimeout(() => { dlTimer = null; drawEngine().catch(() => {}); }, 400); });
       ui.on('settings', (c) => { if (c && ('online' in c || 'openrouter.allowPaid' in c)) load().catch(() => {}); });
       ui.on('job', (j) => {
         if (!j || !String(j.kind || '').startsWith('models.')) return;

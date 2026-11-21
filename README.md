@@ -28,7 +28,7 @@
 
 Most AI tools are a chat box on someone else's server. AP Desk is a small office on your PC.
 
-- **It runs at home.** One folder, one database file, one address that only your own computer can open: `http://127.0.0.1:3960`.
+- **It runs at home.** One folder, one database file, one address that only your own computer can open: `http://127.0.0.1:3445`.
 - **It is a team, not one bot.** A Coordinator takes your message and hands the work to the agent that owns it: Scout for research, Closer for sales, Operator for the browser and long jobs, Coder for files and tables. You can hire more.
 - **It starts free.** It uses free models first and never spends money unless you switch that on.
 - **You are the boss.** Nothing is sent to a person without your click, and a red **Panic** button on every screen stops everything at once.
@@ -80,34 +80,44 @@ Draft an email to the first lead. I will approve it before it goes.
 
 ## 🚀 Quick start
 
-**One line, copy and paste.** Press the copy button on the line for your computer, paste it into a terminal, and press Enter. It downloads AP Desk into a new `apdesk-main` folder and starts it.
+🪟 **Windows** (x64 and ARM64)
 
-🪟 **Windows.** Open **Command Prompt** (press the Windows key, type `cmd`, press Enter) and paste:
+1. Download AP Desk: press the green **Code** button on this page and choose **Download ZIP**. Unpack it anywhere.
+2. Double-click **`install.bat`** in the unpacked folder.
 
-```bat
-curl -L -o apdesk.zip https://github.com/agentpopulation/apdesk/archive/refs/heads/main.zip && tar -xf apdesk.zip && cd apdesk-main && start.bat
-```
+What the installer does:
 
-🍎 **Mac** and 🐧 **Linux.** Open **Terminal** and paste:
+- asks where to put AP Desk (press Enter for `%LOCALAPPDATA%\Programs\AP Desk`, or type or browse to another folder);
+- gets its own copy of Node.js 22 from nodejs.org, checks it against its published checksum, and keeps it inside the AP Desk folder;
+- copies AP Desk there; your `data` and `backups` are never touched when you run it again;
+- adds **AP Desk** to your Start menu and, if you like, to your Desktop, to Settings › Apps, and to the programs that start when you sign in;
+- starts the desk and opens it in its own window.
+
+It is an install for you only. It writes only to the folder you choose and to your own Start menu, Desktop and list of apps, and changes nothing system-wide, which is why no administrator prompt is expected. Windows may show its usual notice for a downloaded file that is not signed; you decide whether to continue.
+
+Afterwards, start it with **AP Desk** in the Start menu. It runs in the background, so closing its window does not stop it. **Stop AP Desk** stops it, and **AP Desk log** shows what it is doing. Remove it from Settings › Apps or with **Uninstall AP Desk**; it asks before deleting your data.
+
+🍎 **Mac** and 🐧 **Linux.** Open **Terminal**, paste this line and press Enter. It downloads AP Desk into a new `apdesk-main` folder and starts it:
 
 ```bash
 curl -L https://github.com/agentpopulation/apdesk/archive/refs/heads/main.tar.gz | tar -xz && cd apdesk-main && ./start.sh
 ```
 
-The first start installs the packages the desk needs, then opens it in your browser at `http://127.0.0.1:3960`. There is no build step.
-
-**Next time**, start it with one file from that folder:
+The first start installs the packages the desk needs, then opens it in your browser at `http://127.0.0.1:3445`. There is no build step. If another program already uses that port, the desk takes the next free one and tells you.
 
 | Your computer | Start | Stop |
 |---|---|---|
-| 🪟 **Windows** | Double-click `start.bat` | Double-click `stop.bat` |
+| 🪟 **Windows** | **AP Desk** in the Start menu | **Stop AP Desk** in the Start menu |
 | 🍎 **Mac** | Double-click `start.command` | Press Ctrl+C in its window |
 | 🐧 **Linux** | Run `./start.sh` | Press Ctrl+C in its window |
 
-- **Node.js 22.13 or newer** is the one thing the desk needs. On Windows, `start.bat` installs it for you with winget. On Mac and Linux, get it from [nodejs.org](https://nodejs.org) first; the start file tells you if it is missing.
-- **Prefer to click?** Press the green **Code** button on this page, choose **Download ZIP**, unzip it, and use the start file from the table.
-- **On a Mac**, the first double-click may be stopped by macOS because the file came from the internet. Right-click `start.command`, choose **Open**, and confirm once.
-- **If the window closes at once on Windows**, open Command Prompt in the folder, run `start.bat` there, and read the lines it prints.
+- **Node.js 22.13 or newer** is the one thing the desk needs. On Windows the installer fetches its own copy. On Mac and Linux, get it from [nodejs.org](https://nodejs.org) first; the start file tells you if it is missing.
+- **On a Mac**, macOS may ask you to confirm the first time, because the file came from the internet. You decide whether to continue.
+- **Windows without the installer:** open Command Prompt and paste the line below. The desk then runs in that window until you close it.
+
+```bat
+curl -L -o apdesk.zip https://github.com/agentpopulation/apdesk/archive/refs/heads/main.zip && tar -xf apdesk.zip && cd apdesk-main && start.bat
+```
 
 <details>
 <summary>For developers</summary>
@@ -124,7 +134,7 @@ npm install
 npm start
 ```
 
-Then open `http://127.0.0.1:3960`. Run the tests with `npm test`.
+Then open `http://127.0.0.1:3445`. Run the tests with `npm test`.
 
 </details>
 
@@ -246,8 +256,8 @@ The full list is in [`CHANGELOG.md`](CHANGELOG.md) under "Known weak points". Fo
 | Platform | State |
 |---|---|
 | Linux x64, Node 22 and 24 | Developed and tested here, including `start.sh`. |
-| Windows 11 x64 | The main target. The one-line install was run on a Windows 11 PC on 20 Nov 2026: it downloaded, installed the packages, started all 16 default modules and opened the desk. The full set of acceptance asks has not been run on Windows. |
-| Windows on ARM64 | Not tested. The desk is plain JavaScript with no native add-ons, so it should work. |
+| Windows 11 x64 | The main target. An earlier build was started from a GitHub download on a Windows 11 PC on 20 Nov 2026 and opened the desk with all 16 default modules. The new installer (`install.bat`), the background mode and the start page have not been run on Windows yet. |
+| Windows on ARM64 | Not tested. The installer picks the ARM64 build of Node.js for these PCs; the desk itself is plain JavaScript with no native add-ons. |
 | macOS | Not tested yet. `start.command` uses the same script as Linux. |
 
 The agents' browser uses the Edge or Chrome already installed on your computer.
@@ -260,6 +270,7 @@ The agents' browser uses the Edge or Chrome already installed on your computer.
 | `app/core/contracts/` | The four contracts every module follows. Start here if you want to build a module. |
 | `modules/` | The 30 modules, one folder each, with a `module.json`. |
 | `vendor/` | Browser builds of open-source code, with their licences. |
+| `install.bat`, `uninstall.bat` | The Windows installer for your user only, and its uninstaller. |
 | `start.bat`, `start.command`, `start.sh` | One-file starters for Windows, Mac and Linux. |
 | `setup/` | Windows first install and repair scripts, and the small checks the starters use. |
 | `test/` | Automated tests for the core: the model door, the approval door, storage, modules and Panic. Each module keeps its own tests in its folder. Not needed to run the desk. |

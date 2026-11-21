@@ -143,15 +143,45 @@ function activitySection(el, ui) {
   load(); ui.on('approval', load); ui.on('security', load); ui.on('panic', load); ui.on('backup', load);
 }
 
+// The Updates card: signed releases from GitHub (contracts/UPDATES.md). The desk does every check; this only shows it.
+async function updatesSection(el, ui) {
+  const { h, api, card, line, btn, toast, fmt, empty, sw } = ui;
+  const box = card({ 'data-updates': '' }, h('h3', null, 'Updates'), empty('Loading…'));
+  el.append(box);
+  const say = (text, kind) => h('div', { class: 'card', 'data-kind': kind, style: { borderColor: kind === 'warn' ? 'var(--warn)' : kind === 'ok' ? 'var(--ok)' : 'var(--line)', margin: '8px 0' } }, text);
+  const notes = (list) => list?.length ? h('ul', { style: { margin: '6px 0 0', paddingLeft: '20px' } }, ...list.map(n => h('li', null, n))) : null;
+  let waiting = false;
+  const paint = (st) => {
+    const built = st.installed.built ? `Built ${fmt.date(st.installed.built)}` : st.layout === 'git' ? 'A Git checkout' : 'A source copy';
+    const busy = !!st.busy;
+    const check = st.canCheck || busy ? btn(st.busy === 'checking' ? 'Checking…' : 'Check for updates', { kind: 'ghost', id: 'upd-check', disabled: busy, onClick: async (e) => { e.currentTarget.disabled = true; try { paint(await api('update/check', { body: {} })); } catch (er) { toast(er.message, 'err'); e.currentTarget.disabled = false; } } }) : null;
+    const install = st.canInstall ? btn('Update now', { id: 'upd-install', onClick: async (e) => { e.currentTarget.disabled = true; try { paint(await api('update/install', { body: {} })); toast('Approve the update in the card at the top to go on.', 'ok'); } catch (er) { toast(er.message, 'err'); e.currentTarget.disabled = false; } } }) : null;
+    box.replaceChildren(...[h('h3', null, 'Updates'),
+      line('Installed version', built, h('span', { class: 'val' }, st.installed.version)),
+      st.justUpdated ? say(h('div', null, h('b', null, st.justUpdated.line), notes(st.justUpdated.notes)), 'ok') : null,
+      st.failed ? say(st.failed, 'warn') : null,
+      h('div', { class: 'line', 'data-update-line': st.release && st.canInstall ? 'ready' : st.layout === 'git' ? 'git' : !st.setUp ? 'not-set-up' : '' },
+        h('div', null, h('b', null, st.line), st.checkedAt && !busy && st.canCheck ? h('span', { class: 'd' }, `Checked ${fmt.when(st.checkedAt)}`) : null)),
+      check || install ? h('div', { class: 'row', style: { gap: '8px', flexWrap: 'wrap', margin: '2px 0 10px' } }, ...[check, install].filter(Boolean)) : null,
+      st.note ? say(`Not installed: ${st.note}`, 'warn') : null,
+      st.release && st.canInstall ? h('div', { 'data-update-notes': '' }, h('b', null, `What is new in ${st.release.version}`), notes(st.release.notes),
+        h('p', { class: 'sub', style: { marginTop: '6px' } }, 'Update now makes a backup of your data first, then puts the new version in place and restarts the desk. Your data, backups and keys stay as they are.')) : null,
+      st.backup ? h('p', { class: 'sub' }, `Backup made first: ${st.backup}`) : null,
+      st.setUp && st.layout !== 'git' ? line('Check once a day', 'One quiet check a day while the desk is on and Online. Nothing about you is sent.', sw(st.daily, 'Check once a day', async (on) => { paint(await api('update/daily', { body: { on } })); })) : null].filter(Boolean));
+    if (st.busy === 'restarting' && !waiting) { waiting = true; const n = h('p', { class: 'sub' }, 'The desk is restarting; this page reloads by itself.'); box.append(n); waitForRestart(ui, n); }
+  };
+  try { paint(await api('update')); } catch (e) { box.replaceChildren(h('h3', null, 'Updates'), empty(e.message)); return; }
+  ui.on('update', (st) => { if (st?.installed) paint(st); });
+}
+
 async function aboutSection(el, ui) {
   const { h, api, card, line, empty } = ui;
-  const box = card(h('h3', null, 'Updates and about'), empty('Loading…'));
+  const box = card(h('h3', null, 'About'), empty('Loading…'));
   el.append(box);
-  let a; try { a = await api('m/backup/about'); } catch (e) { box.replaceChildren(h('h3', null, 'Updates and about'), empty(e.message)); return; }
+  let a; try { a = await api('m/backup/about'); } catch (e) { box.replaceChildren(h('h3', null, 'About'), empty(e.message)); return; }
   const mono = (t) => h('span', { class: 'val', style: { fontFamily: 'var(--mono)', fontSize: '12px', wordBreak: 'break-all', textAlign: 'right' } }, t);
-  box.replaceChildren(h('h3', null, 'Updates and about'),
+  box.replaceChildren(h('h3', null, 'About'),
     line('Version', 'AP Desk (Agent Population Desk)', h('span', { class: 'val' }, a.version)),
-    line('Updates', a.updates),
     line('Your data', 'The database and the workspace, in the data folder of the desk. Backups are kept beside it, outside the data folder.'),
     h('details', { 'data-details': 'folders' }, h('summary', null, 'Details'),
       line('Your data', 'The database and the workspace', mono(a.folders.data)),
@@ -162,5 +192,5 @@ async function aboutSection(el, ui) {
 }
 
 export const settings = {
-  backup: { title: 'Backup', async render(el, ui) { backupSection(el, ui); activitySection(el, ui); await aboutSection(el, ui); } },
+  backup: { title: 'Backup', async render(el, ui) { backupSection(el, ui); activitySection(el, ui); await updatesSection(el, ui); await aboutSection(el, ui); } },
 };
