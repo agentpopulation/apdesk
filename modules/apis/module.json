@@ -1,0 +1,17 @@
+{
+  "id": "apis",
+  "number": 34,
+  "name": "APIs",
+  "description": "Find public data addresses for what you need, from the public AgentPopulation packs. Get a pack only when you choose, search it on this PC, try one address, and tick the ones your agents may read.",
+  "kind": "switch-on",
+  "defaultOn": false,
+  "menu": [{ "id": "apis", "label": "APIs", "order": 117 }],
+  "pages": ["apis"],
+  "settings": [],
+  "agentTabs": [],
+  "tools": [],
+  "requires": [],
+  "npm": {},
+  "attribution": ["AgentPopulation API endpoint packs (CC BY 4.0) https://github.com/agentpopulation/10m-open-apis-for-ai-agents: the pack index in catalog.json; the packs themselves are fetched only when the owner presses Get"],
+  "status": "partial"
+}

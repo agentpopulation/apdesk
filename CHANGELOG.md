@@ -139,6 +139,9 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Finder, a new search module (off until you switch it on): it asks several search providers at once with a few wordings of your question and answers with the best passages, each quoted word for word with its address and the time it was read.
 - Every page Finder reads is kept in a private library on this PC that you can search while Offline, with a size limit, Clear, and a list of sites never to keep. Your website rules apply to kept pages too.
 - Agents get two new tools, find and library_search; web_search and web_read are unchanged. A fixed set of 45 questions with stand-in pages measures search changes without the internet (old path 28 of 45, Finder 44 of 45, on stand-ins only, 21 Nov 2026).
+- APIs, a new module (off until you switch it on): say what you need data for, pick a topic, and get that topic's public endpoint pack from AgentPopulation only when you press Get. The pack is checked before use, searched on this PC, works Offline, and Remove frees the space.
+- Try it makes one read-only call with no key or cookies, with size and time limits, and shows a short sample marked as outside data. Endpoints you switch on under "Agents may use" become tools for your agents, and your website rules still ask.
+- Every row and result carries the AgentPopulation credit line (CC BY 4.0) and says the terms of each API were not reviewed. A field a pack left empty says "not checked". No real pack or API was called in the checks so far.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.
