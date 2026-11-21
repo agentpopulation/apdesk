@@ -42,18 +42,33 @@ function cellValue(el) {
   return clip(v);
 }
 
+// Page furniture: edit links, menus, footers, contents boxes, paging, share bars. Known class names first, then shape:
+// a list where no column holds anything but link text, or where every row says the same short thing, is not data.
+const FURNITURE = /(^|[-_])(editsection|navbox|navbar|catlinks|breadcrumbs?|toc|sidebar|menu|footer|pagination|pager|cookie|share|social|skip-?links?|printfooter|portlet|references|reflist|cite-backlink)([-_]|$)/i;
+const isFurniture = (el) => { for (let e = el; e && e.classList && !/^(BODY|HTML)$/.test(e.tagName); e = e.parentElement) if ([...e.classList].some(c => FURNITURE.test(c))) return true; return false; };
+const linkOnly = (el) => { const t = text(el); if (!t) return false; if (el.closest?.('a[href]')) return true; return [...(el.querySelectorAll?.('a[href]') || [])].map(text).join(' ').replace(/\s+/g, '') === t.replace(/\s+/g, ''); };
+/** links[r][i]: whether that cell is only link text. True when the rows are page furniture, not a list. */
+function furnitureShape(rows, links) {
+  const width = Math.max(0, ...rows.map(r => r.length));
+  const data = Array.from({ length: width }, (_, i) => rows.filter((r, n) => r[i] && !links[n]?.[i]).length >= rows.length * 0.5);
+  if (!data.some(Boolean)) return true;                                        // only links: a menu or a link list
+  return Array.from({ length: width }, (_, i) => new Set(rows.map(r => r[i] || ''))).every(v => v.size < 2);   // nothing varies
+}
+
 function tableCandidates(document) {
   const out = [];
   [...document.querySelectorAll('table')].forEach((tb, position) => {
-    if (tb.querySelector('table')) return;                                  // a table holding tables is page layout
+    if (tb.querySelector('table') || isFurniture(tb)) return;                 // a table holding tables is page layout
     const trs = [...tb.querySelectorAll('tr')];
     let headings = null; let body = trs;
     const thead = tb.querySelector('thead tr');
     if (thead) { headings = [...thead.children].map(text); body = trs.filter(r => r !== thead && !r.closest('thead')); }
     else if (trs[0] && [...trs[0].children].length && [...trs[0].children].every(c => c.tagName === 'TH')) { headings = [...trs[0].children].map(text); body = trs.slice(1); }
-    const rows = body.map(r => [...r.children].filter(c => c.tagName === 'TD' || c.tagName === 'TH').map(cellValue)).filter(r => r.some(Boolean));
+    const cells = body.map(r => [...r.children].filter(c => c.tagName === 'TD' || c.tagName === 'TH')).filter(r => r.map(cellValue).some(Boolean));
+    const rows = cells.map(r => r.map(cellValue));
     const width = Math.max(headings?.length || 0, ...rows.map(r => r.length), 0);
     if (width < 2 || rows.length < (headings ? 1 : 2)) return;                 // with a header row one row is a list
+    if (rows.length > 1 && furnitureShape(rows, cells.map(r => r.map(linkOnly)))) return;
     headings = Array.from({ length: width }, (_, i) => clip(headings?.[i] || '', 120) || `Column ${i + 1}`);
     out.push({ kind: 'table', position, headings, rows: rows.map(r => Array.from({ length: width }, (_, i) => r[i] || '')) });
   });
@@ -68,13 +83,14 @@ const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'NAV', 'HEADER'
 
 /** The fields of one block: each leaf with text, keyed by its tag and class path inside the block. */
 function blockFields(member) {
-  const f = new Map();
+  const f = new Map(); f.links = new Set();
   for (const el of member.querySelectorAll('*')) {
     if ([...el.children].some(c => text(c))) continue;                       // not a leaf: its children carry the text
     const v = cellValue(el); if (!v) continue;
-    const k = keyOf(el, member); if (!f.has(k)) f.set(k, v);
+    const k = keyOf(el, member); if (f.has(k)) continue;
+    f.set(k, v); if (linkOnly(el)) f.links.add(k);
   }
-  if (!f.size && text(member)) f.set('', cellValue(member));
+  if (!f.size && text(member)) { f.set('', cellValue(member)); if (linkOnly(member)) f.links.add(''); }
   return f;
 }
 function headingFor(key, values) {
@@ -93,16 +109,16 @@ function blockCandidates(document) {
     const kids = [...parent.children]; if (kids.length < 3) continue;
     const groups = new Map(); for (const k of kids) { const s = shape(k); groups.set(s, [...(groups.get(s) || []), k]); }
     const members = [...groups.values()].sort((a, b) => b.length - a.length)[0];
-    if (members.length < 3 || members.length < kids.length * 0.6) continue;
+    if (members.length < 3 || members.length < kids.length * 0.6 || isFurniture(members[0])) continue;
     const fields = members.map(blockFields);
     const counts = new Map(); const order = [];
     for (const f of fields) for (const k of f.keys()) { if (!counts.has(k)) order.push(k); counts.set(k, (counts.get(k) || 0) + 1); }
-    const cols = order.filter(k => counts.get(k) >= members.length * 0.5);
+    const cols = order.filter(k => counts.get(k) >= members.length * 0.5 && !k.split('>').some(part => part.replace(/:\d+$/, '').split('.').slice(1).some(c => FURNITURE.test(c))));
     if (cols.length < 2) continue;
     const heads = cols.map(k => headingFor(k, fields.map(f => f.get(k)).filter(Boolean)));
     const headings = heads.map((h, i) => clip(h.heading, 120) || `Column ${i + 1}`);
     const rows = fields.map(f => cols.map((k, i) => { const v = f.get(k) || ''; return heads[i].strip ? (LABEL.exec(v)?.[2] || v) : v; })).filter(r => r.some(Boolean));
-    if (rows.length < 3) continue;
+    if (rows.length < 3 || furnitureShape(rows, fields.map(f => cols.map(k => f.links.has(k))))) continue;
     out.push({ kind: 'blocks', position: position++, headings, rows, path: keyOf(parent, root) });
   }
   // a block list nested inside another found list is the same list seen twice: keep the outer one

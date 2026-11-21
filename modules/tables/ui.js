@@ -84,7 +84,10 @@ export const pages = {
         const daily = sw(s.schedule, 'Refresh once a day', async (v) => { await api(`/api/m/tables/sources/${s.id}/settings`, { body: { schedule: v } }); toast(v ? 'This list is read once a day.' : 'This list is read only when you press Refresh.', 'ok'); load(); });
         const showRows = btn('Show rows', { kind: 'ghost sm', onClick: async () => {
           if (rowsBox.firstChild) { rowsBox.replaceChildren(); return; }
-          try { const r = await api(`/api/m/tables/sources/${s.id}/rows`); rowsBox.replaceChildren(r.rows.length ? grid(r.columns.map((c) => c.heading), r.rows) : empty('No rows kept yet.')); } catch (e) { toast(e.message, 'err'); }
+          try {
+            const r = await api(`/api/m/tables/sources/${s.id}/rows`); const heads = r.columns.map((c) => c.heading);
+            rowsBox.replaceChildren(r.rows.length ? grid([...heads, 'Read on'], r.rows.map((row, n) => [...heads.map((_, i) => row[i] || ''), fmt.date(r.read?.[n])])) : empty('No rows kept yet.'));
+          } catch (e) { toast(e.message, 'err'); }
         } });
         const gone = s.goneRows > 0 ? s.goneRows : 0;
         const stored = `${one(s.rows + gone, 'stored row')}${gone ? `: ${s.rows} on the list and ${gone} no longer on it` : ''}`;
@@ -107,7 +110,7 @@ export const pages = {
         }
         const run = s.lastRun && s.lastRun.state === 'ok' ? [lines('New on the list', s.lastRun.added), lines('Changed', s.lastRun.changed), lines('No longer on the list', s.lastRun.gone)] : [];
         return card(h('h3', null, s.title),
-          h('div', { class: 'tbl-src' }, pill(label, kind), link(s.url)),
+          h('div', { class: 'tbl-src' }, pill(label, kind), link(s.url), h('span', null, s.lastOk ? 'read on ' + fmt.date(s.lastOk) : 'not read yet')),
           h('div', { class: 'tbl-src' }, h('span', null, `${one(s.rows, 'row')} on the list`), gone ? h('span', null, `${gone} no longer on it, still stored`) : null, h('span', null, 'Last read ' + (s.lastRead ? fmt.when(s.lastRead) : 'not yet')), s.schedule && s.nextAt ? h('span', null, 'Next read ' + fmt.when(s.nextAt)) : null),
           s.note ? h('p', { class: 'tbl-note' }, s.note) : null, fix, ...run,
           h('div', { class: 'tbl-ctl' }, refresh, showRows, h('span', { class: 'row' }, daily, h('span', { class: 'sub' }, 'Refresh once a day')), h('span', { class: 'row' }, h('span', { class: 'sub' }, 'Pages at most'), pagesIn, setPages), remove),

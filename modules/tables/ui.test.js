@@ -26,7 +26,7 @@ async function page(sources = [], extra = {}) {
   const h = (tag, attrs, ...kids) => { if (attrs instanceof El || typeof attrs === 'string' || Array.isArray(attrs)) { kids.unshift(attrs); attrs = {}; } return new El(tag, attrs, kids); };
   const ui = { h, api, sw: (on, label) => new El('button', { class: 'sw', 'aria-label': label }), card: (...k) => new El('div', { class: 'card' }, k),
     btn: (t, { onClick, ...rest } = {}) => Object.assign(new El('button', rest, [t]), { onClick }), pill: (t) => new El('span', { class: 'pill' }, [t]), empty: (t) => new El('div', { class: 'empty' }, [t]),
-    toast: (t) => toasts.push(t), confirm: async (t) => { confirms.push(t); return true; }, fmt: { when: () => '1 Mar 2026, 3:30 pm' } };
+    toast: (t) => toasts.push(t), confirm: async (t) => { confirms.push(t); return true; }, fmt: { when: () => '1 Mar 2026, 3:30 pm', date: (iso) => (iso ? `date of ${iso}` : '') } };
   globalThis.document = { getElementById: () => true, head: { append() {} } };
   const { pages } = await import('./ui.js');
   const el = new El('div'); await pages.tables.render(el, ui); await tick();
@@ -88,7 +88,19 @@ test('ui: found lists replace the "No lists yet" line; empty cells read "not che
   assert.deepEqual(cells, ['Li W', 'not checked']);
   const p2 = await page([base], { '/api/m/tables/sources/tb_a1/rows': () => ({ columns: base.columns, rows: [['Ravi K', ''], ['Li W', 'li@kestrel.example']] }) });
   await all(p2.el, (n) => n.tag === 'button' && text(n) === 'Show rows')[0].onClick(); await tick();
-  assert.deepEqual(all(p2.el, (n) => n.tag === 'td').map(text), ['Ravi K', 'not checked', 'Li W', 'li@kestrel.example']);
+  assert.deepEqual(all(p2.el, (n) => n.tag === 'td').map(text), ['Ravi K', 'not checked', 'not checked', 'Li W', 'li@kestrel.example', 'not checked'], 'a row with no read date says so');
+});
+
+test('ui: the card and each kept row say the date the list was read, in the owner\'s zone', async () => {
+  const base = { id: 'tb_a1', url: 'https://ev.example/list', title: 'Who is coming', host: 'ev.example', columns: [{ heading: 'Name', meaning: 'name' }], pageLimit: 5, schedule: false, rows: 1, goneRows: 0, state: 'ok', lastRead: '2026-03-02T10:00:00Z', lastOk: '2026-03-01T10:00:00Z', lastRun: null };
+  const { el } = await page([base], { '/api/m/tables/sources/tb_a1/rows': () => ({ columns: base.columns, rows: [['Ravi K']], read: ['2026-03-01T10:00:00Z'] }) });
+  const src = all(el, (n) => n.attrs.class === 'tbl-src')[0];
+  assert.match(text(src), /https:\/\/ev\.example\/list\s+read on date of 2026-03-01T10:00:00Z/, 'the date of the last good copy beside the address');
+  await all(el, (n) => n.tag === 'button' && text(n) === 'Show rows')[0].onClick(); await tick();
+  assert.deepEqual(all(el, (n) => n.tag === 'th').map(text), ['Name', 'Read on']);
+  assert.deepEqual(all(el, (n) => n.tag === 'td').map(text), ['Ravi K', 'date of 2026-03-01T10:00:00Z']);
+  const fresh = await page([{ ...base, lastOk: null, state: 'new' }]);
+  assert.match(text(all(fresh.el, (n) => n.attrs.class === 'tbl-src')[0]), /not read yet/);
 });
 
 test('ui: the card counts the rows no longer on the list, and removal says the same numbers', async () => {

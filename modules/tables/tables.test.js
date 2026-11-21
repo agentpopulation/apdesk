@@ -62,6 +62,8 @@ test('tables: off by default; on, a plain table is found, the columns are guesse
     const li = crm.contacts.find(x => x.name === 'Li W');
     assert.ok(li.notChecked.includes('Mail address')); assert.equal(li.role, 'Founder');
     assert.equal(crm.contacts.find(x => x.email === 'ravi@marlow.example').companyId, crm.companies.find(x => x.name === 'Marlow Automation').id);
+    const kept = (await t.call(`/api/m/tables/sources/${source.id}/rows`)).json;
+    assert.equal(kept.read.length, kept.rows.length); assert.ok(kept.read.every(x => x === source.lastOk), 'each row says when it was read');
     const list = (await t.call('/api/m/tables/sources')).json;
     assert.match(list.lawful, /published by its site/); assert.match(list.lawful, /lawfully is your responsibility/);
     assert.match(list.phoneApps, /Import customers from a file/);

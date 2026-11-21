@@ -55,3 +55,17 @@ test('store: row keys and the owner\'s column choice', () => {
   assert.throws(() => checkColumns(['name'], 2), /each column/);
   assert.deepEqual(checkColumns(['name', 'name', 'company'], 3), ['name', 'name', 'company'], 'first and last name');
 });
+
+test('extract: page furniture is not offered as a list (edit links, footers, link-only menus, one repeated text)', () => {
+  const head = (t, n) => `<div class="mw-heading mw-heading2"><h2 id="h${n}">${t}</h2><span class="mw-editsection"><span class="mw-editsection-bracket">[</span><a href="/w/index.php?action=edit&section=${n}"><span>edit</span></a><span class="mw-editsection-bracket">]</span></span></div>`;
+  const row = (r, n, hq) => `<tr><td>${r}</td><td><a href="/wiki/${n}">${n}</a></td><td>${hq}</td></tr>`;
+  const html = `<html class="vector-toc-available"><body class="skin-vector mw-footer-sticky"><div class="mw-content-ltr"><div class="mw-parser-output">${head('2025 list', 1)}${head('2024 list', 2)}${head('2023 list', 3)}${head('See also', 4)}
+    <table class="wikitable"><tr><th>Rank</th><th>Name</th><th>Headquarters</th></tr>${row(1, 'Reliance', 'Mumbai')}${row(2, 'SBI', 'Mumbai')}${row(3, 'TCS', 'Mumbai')}</table></div></div>
+    <div class="links"><div class="item"><a href="/a">About</a><a href="/a/more">More</a></div><div class="item"><a href="/b">Jobs</a><a href="/b/more">More</a></div><div class="item"><a href="/c">Press</a><a href="/c/more">More</a></div></div>
+    <div class="site-footer-info"><div class="li"><span class="k">Terms</span><span class="v">x</span></div><div class="li"><span class="k">Privacy</span><span class="v">y</span></div><div class="li"><span class="k">Help</span><span class="v">z</span></div></div>
+    <div class="rows"><div class="r"><span class="a">More</span><span class="b">›</span></div><div class="r"><span class="a">More</span><span class="b">›</span></div><div class="r"><span class="a">More</span><span class="b">›</span></div></div>
+    <div class="people"><div class="p"><a class="n" href="/asha">Asha N</a><span class="co">Harlow</span></div><div class="p"><a class="n" href="/ravi">Ravi K</a><span class="co">Marlow</span></div><div class="p"><a class="n" href="/li">Li W</a><span class="co">Kestrel</span></div></div></body></html>`;
+  const c = candidates(html);
+  assert.deepEqual(c.map(x => [x.kind, x.headings[0]]), [['table', 'Rank'], ['blocks', 'n']], 'only the company table and the people cards');
+  assert.deepEqual(c[1].rows[0], ['Asha N', 'Harlow'], 'a list whose names are links is still a list');
+});

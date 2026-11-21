@@ -211,7 +211,8 @@ export async function activate(ctx) {
   });
   route('GET', '/sources/:id/rows', ({ params }) => {
     const s = one(params.id);
-    return { columns: s.columns, rows: store.rows(s.id).slice(0, 2000).map(r => r.cells), gone: store.rows(s.id, { all: true }).filter(r => r.gone).slice(0, 500).map(r => r.cells) };
+    const live = store.rows(s.id).slice(0, 2000);
+    return { columns: s.columns, rows: live.map(r => r.cells), read: live.map(r => r.lastSeen || null), gone: store.rows(s.id, { all: true }).filter(r => r.gone).slice(0, 500).map(r => r.cells) };
   });
   route('POST', '/sources/:id/refresh', async ({ params }) => { one(params.id); await refresh(params.id); return { source: store.get(params.id) }; });
   route('POST', '/sources/:id/columns', async ({ params, body }) => {
