@@ -9,10 +9,11 @@ const SECTIONS = [
   ['issues', 'Network issues'], ['speed', 'Speed and latency'], ['watch', 'Websites to watch'], ['visits', 'Where the agents went'],
   ['diagnose', 'Is it me or them?'], ['ai', 'AI provider speed'], ['devices', 'Devices'], ['domain', 'Your domain'],
   ['rules', 'Website rules'], ['ports', 'What listens here'], ['lookup', 'Look up a domain'], ['data', 'Desk data use'],
+  ['registrar', 'Registrar history'], ['route', 'Route to a site'], ['places', 'Where things are'],
 ];
 const VIEWS = [['desk', 'Desk'], ['link', 'Link'], ['split', 'Split']];
 const VIEW_KEY = 'apd-network-view';
-const NEEDS_NET = new Set(['speed', 'watch', 'diagnose', 'domain', 'lookup']);
+const NEEDS_NET = new Set(['speed', 'watch', 'diagnose', 'domain', 'lookup', 'registrar', 'route']);
 const CSS = `
 .view.netv{padding:0;gap:0;height:100%;min-height:0;display:flex;flex-direction:column}
 .netp-views{display:flex;gap:6px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--line);flex:0 0 auto}
@@ -535,6 +536,59 @@ const SECTION_RENDER = {
       card(h('h3', null, 'Per site (last 30 days)'), ui.table([{ label: 'Site', key: 'host' }, { label: 'Sent', render: x => MB(x.sent) }, { label: 'Received', render: x => MB(x.received) }], d.hosts, { empty: 'Nothing counted yet.' })));
   },
 };
+
+Object.assign(SECTION_RENDER, {
+  // ---------------- W registrar history
+  async registrar({ h, api, card, btn, box, put, busy, kv, select, ui, toast, offline, fmt }) {
+    const out = h('div', { class: 'stack' });
+    const paint = async () => {
+      const d = await api('m/network/registrar');
+      const every = select([['off', 'Off'], ['daily', 'Once a day']], d.every, async (v) => { await api('m/network/registrar/settings', { body: { every: v } }); toast('Saved', 'ok'); }, 'How often to read the registration');
+      put(out, card(h('div', { class: 'row' }, h('span', { class: 'sub grow' }, `Registrar, name servers, status and dates of your own domains, read from ${d.source}. Every reading is kept.`), every)),
+        ...(d.domains.length ? d.domains.map(dm => {
+          const r = dm.latest;
+          const check = btn('Check now', { kind: 'ghost sm', disabled: offline, onClick: () => busy(check, 'Reading…', async () => { const x = await api(`m/network/registrar/${encodeURIComponent(dm.domain)}/check`, { body: {} }); if (x.unavailable) toast(x.note, 'err'); await paint(); }) });
+          return card(h('div', { class: 'row' }, h('b', null, dm.domain), h('span', { class: 'sub' }, r ? 'read ' + fmt.when(r.at) : 'not read yet'), h('span', { class: 'grow' }), check),
+            dm.unavailableAt ? h('p', { class: 'sub' }, `Source unavailable at the last try (${fmt.when(dm.unavailableAt)}).`) : null,
+            r ? kv([['Registrar', r.registrar || 'Not public'], ['Name servers', r.nameservers.join(', ') || null], ['Status', r.status.join(', ') || null], ['Created', r.created ? fmt.date(r.created) : null], ['Expires', r.expires ? fmt.date(r.expires) : null], ['Readings kept', String(dm.readings)]]) : h('p', { class: 'sub' }, 'Press Check now.'),
+            dm.timeline.length ? h('div', { style: { marginTop: '8px' } }, h('h3', null, 'What changed'), ui.table([{ label: 'When', render: x => fmt.when(x.at) }, { label: 'Change', render: x => h('div', null, ...x.changes.map(c => { const v = (y) => (c.field === 'expires' && y ? fmt.date(y) : y) || 'none'; return h('div', null, `${c.label}: ${v(c.old)} → ${v(c.new)}`); })) }], dm.timeline, { empty: '' }))
+              : r ? h('p', { class: 'sub' }, 'No change seen yet.') : null);
+        }) : [h('p', { class: 'sub' }, 'Add a domain on the "Your domain" section first.')]));
+    };
+    put(box, out); await paint();
+  },
+
+  // ---------------- X route tracing
+  async route({ h, api, card, btn, box, put, busy, waitJob, select, ui, toast, offline, fmt, ms }) {
+    const out = h('div', { class: 'stack' });
+    let pick = null;
+    const paint = async () => {
+      const d = await api('m/network/route');
+      if (!d.targets.length) return put(out, card(h('p', { class: 'sub' }, 'Add one of your domains or a watched site first. Routes are traced only to those.')));
+      if (!pick || !d.targets.some(x => x.target === pick)) pick = d.targets[0].target;
+      const cur = d.targets.find(x => x.target === pick); const run = cur.runs[0];
+      const chooser = select(d.targets.map(x => [x.target, x.target]), pick, (v) => { pick = v; paint(); }, 'Where to trace the route to');
+      const go = btn('Trace the route', { disabled: offline, onClick: () => busy(go, 'Tracing…', async () => { const { jobId } = await api('m/network/route/trace', { body: { target: pick } }); const jx = await waitJob(jobId); if (jx.status !== 'done') toast(jx.error || jx.status, 'err'); else if (jx.output?.note) toast(jx.output.note, 'err'); await paint(); }) });
+      put(out, card(h('div', { class: 'row' }, chooser, go), h('p', { class: 'sub', style: { marginTop: '8px' } }, 'Uses this PC’s own tool (tracert, traceroute or tracepath), at most 20 hops and one minute. Only when you press the button; nothing is installed. The last 20 runs per place are kept.')),
+        run ? card(h('h3', null, `To ${run.target} (${run.address})`), h('p', { class: 'sub' }, `${fmt.when(run.at)} · ${run.tool}${run.timedOut ? ' · stopped at the time limit' : ''}`),
+          run.diff ? h('p', { class: 'sub' }, run.diff.changed ? `Changed since the run before: ${run.diff.lines.map(l => `hop ${l.hop} ${l.old || 'no answer'} → ${l.new || 'no answer'}`).join('; ')}.` : 'Same route as the run before.') : null,
+          ui.table([{ label: 'Hop', key: 'hop' }, { label: 'Address', render: x => x.ip || 'No answer' }, { label: 'Time', render: x => (x.ms == null ? '' : ms(x.ms)) },
+            { label: 'Network operator', render: x => (!x.ip ? '' : !x.public ? 'Your own network' : x.operator ? `${x.operator}${x.asn ? ' (AS' + x.asn + ')' : ''}` : x.operatorNote || 'Not looked up') }], run.hops, { empty: 'No hops were reported.' }),
+          cur.runs.length > 1 ? h('details', null, h('summary', null, `Earlier runs (${cur.runs.length - 1})`), ui.table([{ label: 'When', render: x => fmt.when(x.at) }, { label: 'Hops', render: x => String(x.hops.length) }, { label: 'Change', render: x => (!x.diff ? 'First run' : x.diff.changed ? `${x.diff.lines.length} hop${x.diff.lines.length === 1 ? '' : 's'} changed` : 'Same') }], cur.runs.slice(1), { empty: '' })) : null)
+          : card(h('p', { class: 'sub' }, 'Not traced yet.')));
+    };
+    put(box, out); await paint();
+  },
+
+  // ---------------- Y where things are
+  async places({ h, api, card, box, put, ui }) {
+    const d = await api('m/network/places');
+    put(box, card(h('p', { class: 'sub' }, d.note)),
+      card(ui.table([{ label: 'What', key: 'kind' }, { label: 'Place', render: x => h('div', null, h('div', null, x.name), x.address && x.address !== x.name ? h('div', { class: 'sub mono' }, x.address) : !x.address ? h('div', { class: 'sub' }, 'Address not looked up') : null) },
+        { label: 'Operator and country', render: x => h('div', null, h('div', null, x.operator ? `${x.operator}${x.asn ? ' (AS' + x.asn + ')' : ''}` : 'Operator not looked up'), h('div', { class: 'sub' }, x.country ? 'Country: ' + x.country : 'Country not known')) }], d.rows, { empty: 'Nothing yet. Look up your public address, add a domain or a site, or trace a route.' }),
+        h('p', { class: 'sub', style: { marginTop: '8px' } }, 'From what this page already stored. Nothing was sent anywhere to show it.')));
+  },
+});
 
 function signalWords(dBm) { if (dBm == null) return null; if (dBm >= -55) return 'strong'; if (dBm >= -67) return 'good'; if (dBm >= -75) return 'fair'; return 'weak'; }
 

@@ -19,7 +19,11 @@ import { listening } from './ports.js';
 import { mailHealth, daysUntil, expiryLine, remindersDue, validSelector } from './domain.js';
 import { certSubdomains, siteProfile, waybackClosest, waybackList, shodanDomain, SOURCES } from './osint.js';
 import { setRules, setAsker, clearRules, ruleDomain, covers, listRules } from './rules.js';
-import { checkUrlDeep } from '../search/guard.js';
+import { readingFrom, readingChanges, timeline, registrarIssues, changeText } from './registrar.js';
+import { trace as traceRoute, diffRoutes, KEEP_RUNS } from './route.js';
+import { checkUrlDeep, privateHost } from '../search/guard.js';
+import dnsMod from 'node:dns';
+import netMod from 'node:net';
 
 const OWNER = Object.freeze({ owner: true });     // the owner's own clicks and schedules: the agents' website rules do not apply
 const HOUR = 3600_000, DAY = 24 * HOUR;
@@ -59,10 +63,16 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
     CREATE INDEX IF NOT EXISTS m_network_dns_d ON m_network_dns (domain, id);
     CREATE TABLE IF NOT EXISTS m_network_asn (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, scope TEXT, asn INTEGER, operator TEXT, old_asn INTEGER, old_operator TEXT, trigger_ TEXT);
     CREATE TABLE IF NOT EXISTS m_network_issues (key TEXT PRIMARY KEY, kind TEXT, severity TEXT, title TEXT, detail TEXT, first_at TEXT, last_at TEXT, muted INTEGER DEFAULT 0, resolved INTEGER DEFAULT 0);`);
+  ctx.db.migrate(4, `
+    CREATE TABLE IF NOT EXISTS m_network_reg (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, domain TEXT, registrar TEXT, nameservers TEXT, status TEXT, created TEXT, expires TEXT, source TEXT);
+    CREATE INDEX IF NOT EXISTS m_network_reg_d ON m_network_reg (domain, id);
+    CREATE TABLE IF NOT EXISTS m_network_trace (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, target TEXT, address TEXT, tool TEXT, hops TEXT, timed_out INTEGER DEFAULT 0, diff TEXT);
+    CREATE INDEX IF NOT EXISTS m_network_trace_t ON m_network_trace (target, id);`);
   const jobIds = new Set();
   const kv = (k, d) => ctx.kv.get(k, d);
   const online = () => ctx.settings.get('online') !== false;
   const zone = () => ctx.settings.get('timeZone') || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const place = () => ({ timeZone: zone(), locale: ctx.settings.get('locale') || undefined });
   const dayKey = (t = clock()) => { try { return new Intl.DateTimeFormat('en-CA', { timeZone: zone(), year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(t)); } catch { return new Date(t).toISOString().slice(0, 10); } };
   const needNet = () => { if (!online()) throw bad('The desk is offline. This needs the internet.', 409, 'offline'); if (ctx.panic.halted) throw bad('Everything is stopped. Press Resume first.', 503, 'halted'); };
 
@@ -425,8 +435,10 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
     const failedAgentIds = ctx.db.all("SELECT DISTINCT agent_id FROM jobs WHERE status = 'failed' AND agent_id IS NOT NULL AND finished >= ?", new Date(clock() - DAY).toISOString()).map(r => r.agent_id);
     const issues = currentIssues();
     const newDevices = ctx.db.get('SELECT COUNT(*) AS n FROM m_network_devices WHERE known = 0')?.n || 0;
+    // Chat's own count through its exposed messagesSince (its tables belong to Chat); without it the strip shows a dash.
     let messagesPerMin = null;
-    // No count yet: Chat's tables belong to Chat (contracts/STORAGE.md). The strip shows a dash until the desk offers a counter.
+    const chat = ctx.modules.api('chat');
+    if (typeof chat?.messagesSince === 'function') { try { const list = chat.messagesSince(new Date(clock() - 60_000).toISOString(), 5000); messagesPerMin = Array.isArray(list) ? list.length : null; } catch { messagesPerMin = null; } }
     const last = kv('lastNet', null);
     const net = !online() ? { ok: false, at: last?.at || null } : last ? { ok: !!last.ok, at: last.at } : null;
     return { at: nowIso(), online: online(), ...statusStrip({ agents, runningJobs, jobSummary, failedAgentIds, issues, newDevices, messagesPerMin, net }) };
@@ -574,7 +586,7 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
     const baseline = hist.length ? median(hist.slice(0, 20).map(h => h.pingMs)) : null;
     const dnsFails = []; for (const d of ctx.db.all('SELECT domain FROM m_network_domains')) for (const f of kv('dns.fails:' + d.domain, [])) dnsFails.push(d.domain);
     const loss = kv('issues.loss', []);
-    const found = issuesFrom({ sites: siteCerts, domains: domainCerts, latency, baseline, dnsFails, loss, now: clock() });
+    const found = [...issuesFrom({ sites: siteCerts, domains: domainCerts, latency, baseline, dnsFails, loss, now: clock() }), ...registrarIssues(registrarState(), clock(), place())];
     const now = nowIso(); const keys = new Set();
     for (const i of found) { keys.add(i.key);
       ctx.db.run('INSERT INTO m_network_issues (key, kind, severity, title, detail, first_at, last_at, muted, resolved) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0) ON CONFLICT(key) DO UPDATE SET kind = excluded.kind, severity = excluded.severity, title = excluded.title, detail = excluded.detail, last_at = excluded.last_at, resolved = 0', i.key, i.kind, i.severity, i.title, i.detail, now, now); }
@@ -591,6 +603,96 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
     const c = await localConnection(siLib);
     return { at: nowIso(), ...c, signalWords: c.signal ? signalWords(c.signal.dBm) : null,
       leaseEnd: null, linkUpAt: null, note: 'The DHCP lease end and the link-up time are not reported by this PC.' };
+  }
+
+  // ================= W. registrar history: one RDAP reading per domain (keyless; IANA's list names the registry's own
+  // server, rdap.org when it has none), kept every time, on the owner's button or a daily schedule (off by default).
+  const regRow = (r) => ({ at: r.at, domain: r.domain, registrar: r.registrar, nameservers: j(r.nameservers, []), status: j(r.status, []), created: r.created, expires: r.expires, source: r.source });
+  const readings = (domain, limit = 400) => ctx.db.all('SELECT * FROM m_network_reg WHERE domain = ? ORDER BY id DESC LIMIT ?', domain, limit).reverse().map(regRow);
+  function registrarState() {
+    return ctx.db.all('SELECT domain, reg_to FROM m_network_domains').map(d => { const list = readings(d.domain, 60); const last = list[list.length - 1] || null; return { domain: d.domain, expires: last?.expires || d.reg_to || null, lastChange: timeline(list)[0] || null }; });
+  }
+  async function checkRegistrar(domain, { trigger = 'owner' } = {}) {
+    needNet();
+    if (!ctx.db.get('SELECT 1 AS x FROM m_network_domains WHERE domain = ?', domain)) throw bad('Add the domain first.', 404);
+    ctx.kv.set('reg.at:' + domain, clock());
+    let r;
+    try { r = await lookupRdap(fxFollow(15000), domain); }
+    catch (e) { if (e.code === 'offline' || e.code === 'halted' || ctx.panic.halted) throw e; ctx.kv.set('reg.err:' + domain, nowIso()); return { domain, unavailable: true, note: 'Source unavailable.' }; }
+    if (!r.found) { ctx.kv.set('reg.err:' + domain, nowIso()); return { domain, unavailable: true, note: r.note || 'Source unavailable.' }; }
+    ctx.kv.del('reg.err:' + domain);
+    const prev = readings(domain, 1)[0] || null;
+    const cur = readingFrom(r, nowIso());
+    ctx.db.run('INSERT INTO m_network_reg (at, domain, registrar, nameservers, status, created, expires, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', cur.at, domain, cur.registrar, JSON.stringify(cur.nameservers), JSON.stringify(cur.status), cur.created, cur.expires, cur.source);
+    ctx.db.run('DELETE FROM m_network_reg WHERE domain = ? AND id <= (SELECT MAX(id) - 1000 FROM m_network_reg WHERE domain = ?)', domain, domain);
+    const changes = readingChanges(prev, cur);
+    if (changes.length) notice('registrar.change', `The registration record of ${domain} changed.`, changeText(changes, place()), { phone: !!kv('alerts.phone', false) });
+    try { gatherIssues(); } catch {}
+    return { domain, reading: cur, changes, trigger };
+  }
+  function registrarView() {
+    return { at: nowIso(), every: kv('reg.every', 'off'), online: online(), source: 'RDAP: the registry’s own server from IANA’s list (data.iana.org), or rdap.org',
+      domains: ctx.db.all('SELECT domain FROM m_network_domains ORDER BY added').map(d => { const list = readings(d.domain); return { domain: d.domain, latest: list[list.length - 1] || null, readings: list.length, unavailableAt: kv('reg.err:' + d.domain, null), timeline: timeline(list) }; }) };
+  }
+
+  // ================= X. route tracing: the system's own tool, on the owner's button only, to his own domains and
+  // watched sites. The address guard decides: a name that points at this PC or the home network is refused.
+  // The operator of each public hop comes from the RIPEstat look-up section R already uses, cached a day.
+  const traceTargets = () => [...new Set([...ctx.db.all('SELECT domain FROM m_network_domains ORDER BY added').map(d => d.domain), ...ctx.db.all('SELECT host FROM m_network_sites ORDER BY id').map(s => s.host)].filter(Boolean))];
+  const NOT_HERE = 'That address is on this PC or your home network. Routes are traced to public places only.';
+  function traceTarget(input) {
+    const t = String(input || '').trim().toLowerCase().replace(/^\[|\]$/g, '');
+    if (!t || !traceTargets().includes(t)) throw bad('Pick one of your own domains or watched sites.', 400);
+    return t;
+  }
+  async function resolve4(host) {
+    if (netMod.isIP(host) === 4) return host;
+    if (netMod.isIP(host)) throw bad('Routes are traced to IPv4 addresses only in this version.', 400);
+    try { return (await dnsMod.promises.lookup(host, { family: 4 })).address; }
+    catch { const a = (await lookupDns(fx(10000), host, ['A'])).records.find(r => r.type === 'A' && netMod.isIP(r.data) === 4); if (!a) throw bad(`${host} has no IPv4 address.`, 400); return a.data; }
+  }
+  async function runTrace(target, { signal } = {}) {
+    needNet();
+    try { await checkUrlDeep(`https://${target}/`, { deskPort: ctx.port, who: OWNER }); } catch (e) { if (['private', 'desk'].includes(e.code)) throw bad(NOT_HERE, 400); throw e; }
+    const address = await resolve4(target);
+    if (privateHost(address)) throw bad(NOT_HERE, 400);
+    const r = await traceRoute(address, { signal: ctx.panic.child(signal) });
+    if (r.missing) return { target, missing: r.missing, note: `No route tool is installed on this PC (${r.missing}). Nothing was installed.` };
+    const hops = [];
+    for (const hp of r.hops) {
+      const pub = !!hp.ip && !privateHost(hp.ip);
+      let operator = null, asn = null, operatorNote = null;
+      if (pub && online() && !ctx.panic.halted) {
+        try { const c = await cached('asn|' + hp.ip, DAY, () => asnForIp(hp.ip)); asn = c?.asn ?? null; operator = c?.operator ?? null; }
+        catch (e) { if (e.code === 'offline' || e.code === 'halted' || ctx.panic.halted) throw e; operatorNote = 'Source unavailable'; }
+      }
+      hops.push({ ...hp, public: pub, asn, operator, operatorNote });
+    }
+    const prev = ctx.db.get('SELECT hops FROM m_network_trace WHERE target = ? ORDER BY id DESC LIMIT 1', target);
+    const diff = diffRoutes(prev ? { hops: j(prev.hops, []) } : null, { hops });
+    ctx.db.run('INSERT INTO m_network_trace (at, target, address, tool, hops, timed_out, diff) VALUES (?, ?, ?, ?, ?, ?, ?)', nowIso(), target, address, r.tool, JSON.stringify(hops), r.timedOut ? 1 : 0, diff ? JSON.stringify(diff) : null);
+    ctx.db.run(`DELETE FROM m_network_trace WHERE target = ? AND id NOT IN (SELECT id FROM m_network_trace WHERE target = ? ORDER BY id DESC LIMIT ${KEEP_RUNS})`, target, target);
+    return routeRuns(target)[0];
+  }
+  const traceRow = (r) => ({ at: r.at, target: r.target, address: r.address, tool: r.tool, hops: j(r.hops, []), timedOut: !!r.timed_out, diff: j(r.diff, null) });
+  const routeRuns = (target) => ctx.db.all('SELECT * FROM m_network_trace WHERE target = ? ORDER BY id DESC LIMIT ?', target, KEEP_RUNS).map(traceRow);
+  const routeView = () => ({ at: nowIso(), online: online(), targets: traceTargets().map(t => ({ target: t, runs: routeRuns(t) })) });
+
+  // ================= Y. where things are: the owner's public address, his domains, watched sites and the public hops
+  // of the last route, from what is stored (no outbound call). No location source here: the keyless ones checked
+  // do not allow this use in an app businesses run, so there are no map dots; the country is shown only where an
+  // existing look-up gave one (the public address, from Cloudflare's trace page).
+  function placesView() {
+    const op = (scope) => ctx.db.get('SELECT asn, operator FROM m_network_asn WHERE scope = ? ORDER BY id DESC LIMIT 1', scope) || null;
+    const cachedOp = (ip) => { const c = ctx.db.get('SELECT value FROM m_network_cache WHERE k = ?', 'asn|' + ip); const v = c ? j(c.value, null) : null; return v ? { asn: v.asn ?? null, operator: v.operator ?? null } : null; };
+    const rows = [];
+    const pub = kv('ip.public', null) || {}; const pubIp = pub.IPv4 || pub.IPv6 || null; const p = op('public');
+    if (pubIp) rows.push({ kind: 'Your public address', name: pubIp, address: pubIp, operator: p?.operator || null, asn: p?.asn ?? null, country: kv('publicIp', null)?.country || null });
+    for (const d of ctx.db.all('SELECT domain FROM m_network_domains ORDER BY added')) { const a = (kv('dns.snap:' + d.domain, null) || []).find(r => r.type === 'A'); const o = op(d.domain); rows.push({ kind: 'Your domain', name: d.domain, address: a?.data || null, operator: o?.operator || null, asn: o?.asn ?? null, country: null }); }
+    for (const s of ctx.db.all('SELECT host FROM m_network_sites ORDER BY id')) { const ip = netMod.isIP(s.host) ? s.host : null; const o = ip ? cachedOp(ip) : null; rows.push({ kind: 'Watched site', name: s.host, address: ip, operator: o?.operator || null, asn: o?.asn ?? null, country: null }); }
+    const last = ctx.db.get('SELECT * FROM m_network_trace ORDER BY id DESC LIMIT 1');
+    if (last) for (const hp of j(last.hops, []).filter(x => x.public)) rows.push({ kind: `Hop ${hp.hop} to ${last.target}`, name: hp.ip, address: hp.ip, operator: hp.operator || null, asn: hp.asn ?? null, country: null });
+    return { at: nowIso(), rows, dots: false, note: 'No map: the free location services checked do not allow use in an app that businesses run, so no place is put on a map. The country is shown where a look-up the desk already makes gave one.' };
   }
 
   // ================= schedules: one timer; nothing runs while Panic is on; outbound work waits while Offline
@@ -621,6 +723,7 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
       if (dnsEvery) for (const d of ctx.db.all('SELECT domain FROM m_network_domains')) { if (ctx.panic.halted || !online()) break; if (now - kv('dns.at:' + d.domain, 0) >= dnsEvery) { try { await dnsSnapshot(d.domain, { trigger: 'schedule' }); did.push('dns'); } catch {} } }
       const asnEvery = ASN_EVERY[kv('asn.every', 'off')] || 0;
       if (asnEvery && now - kv('asn.lastAt', 0) >= asnEvery) { try { await refreshAsn({ trigger: 'schedule' }); did.push('asn'); } catch {} }
+      if (kv('reg.every', 'off') === 'daily') for (const d of ctx.db.all('SELECT domain FROM m_network_domains')) { if (ctx.panic.halted || !online()) break; if (now - kv('reg.at:' + d.domain, 0) >= DAY) { try { await checkRegistrar(d.domain, { trigger: 'schedule' }); did.push('registrar'); } catch {} } }
       return { did };
     } finally { ticking = false; }
   }
@@ -718,6 +821,15 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
   R('POST', '/issues/:key/mute', ({ params, body }) => { const key = String(params.key); if (!ctx.db.get('SELECT 1 AS x FROM m_network_issues WHERE key = ?', key)) throw bad('No such issue.', 404); ctx.db.run('UPDATE m_network_issues SET muted = ? WHERE key = ?', body?.muted ? 1 : 0, key); return issuesView(); }, { owner: true });
   // T active connection detail
   R('GET', '/active', () => activeConnection());
+  // W registrar history
+  R('GET', '/registrar', () => registrarView());
+  R('POST', '/registrar/:domain/check', ({ params }) => checkRegistrar(normalizeDomain(params.domain), { trigger: 'owner' }), { owner: true });
+  R('POST', '/registrar/settings', ({ body }) => { const v = body?.every === 'daily' ? 'daily' : 'off'; ctx.kv.set('reg.every', v); return { every: v }; }, { owner: true });
+  // X route tracing (owner's button only; no schedule)
+  R('GET', '/route', () => routeView());
+  R('POST', '/route/trace', ({ body }) => { needNet(); const target = traceTarget(body?.target); return jobRoute('network.route', `Trace the route to ${target}`, (o) => runTrace(target, o))({ body: { target } }); }, { owner: true });
+  // Y where things are
+  R('GET', '/places', () => placesView());
   // A
   R('GET', '/connection', ({ query }) => connection({ check: query.check === '1' }));
   R('GET', '/interfaces', () => ({ interfaces: interfaces() }));

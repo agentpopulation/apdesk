@@ -171,6 +171,10 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Rating an answer under a chat reply now works whether Bench is on or off.
 - Install cards for container images, Ollama models and tool servers say where the install comes from and name the package, and Settings says plainly that installing always asks.
 - The release zip records which module folders it shipped, and the Models page and first start say why a PC with no graphics card is offered the small model.
+- Network: registrar history for your own domains (registrar, name servers, expiry) with a timeline of what changed, on "Check now" or a daily schedule that is off by default.
+- Network: route tracing to your own domains and watched sites on your button, using this PC's own tracert, traceroute or tracepath; it keeps the last 20 runs and shows what changed. Nothing is installed if no tool is found.
+- Network: a "Where things are" table. There is no map yet: no free location source was found whose terms allow this use.
+- The Network status strip shows messages a minute while Chat is on.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.
