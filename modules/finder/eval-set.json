@@ -1,0 +1,412 @@
+{
+ "note": "Questions with fixed answers and stand-in pages written for this measure. The pages are not copies of real sites; scores on them are measured on stand-ins only.",
+ "questions": [
+  {
+   "id": 1,
+   "q": "At what temperature does water boil at sea level in Celsius?",
+   "answers": [
+    "100 degrees"
+   ],
+   "title": "Boiling point of water",
+   "fact": "At sea level, pure water boils at 100 degrees Celsius."
+  },
+  {
+   "id": 2,
+   "q": "What is the chemical symbol for gold?",
+   "answers": [
+    "Au"
+   ],
+   "title": "Gold (element)",
+   "fact": "Gold is a chemical element with the symbol Au, from the Latin word aurum."
+  },
+  {
+   "id": 3,
+   "q": "How many planets are in the Solar System?",
+   "answers": [
+    "eight"
+   ],
+   "title": "Solar System planets",
+   "fact": "Since 2006 the Solar System has been counted as having eight planets."
+  },
+  {
+   "id": 4,
+   "q": "What is the speed of light in a vacuum?",
+   "answers": [
+    "299,792,458"
+   ],
+   "title": "Speed of light",
+   "fact": "Light in a vacuum travels at exactly 299,792,458 metres per second."
+  },
+  {
+   "id": 5,
+   "q": "Who wrote Pride and Prejudice?",
+   "answers": [
+    "Jane Austen"
+   ],
+   "title": "Pride and Prejudice",
+   "fact": "Pride and Prejudice is a novel by Jane Austen, first published in 1813."
+  },
+  {
+   "id": 6,
+   "q": "Which is the largest planet in the Solar System?",
+   "answers": [
+    "Jupiter"
+   ],
+   "title": "Largest planet",
+   "fact": "Jupiter is the largest planet orbiting the Sun, more massive than all the others combined."
+  },
+  {
+   "id": 7,
+   "q": "What is the capital city of Australia?",
+   "answers": [
+    "Canberra"
+   ],
+   "title": "Australia capital",
+   "fact": "The capital of Australia is Canberra, chosen as a compromise between Sydney and Melbourne."
+  },
+  {
+   "id": 8,
+   "q": "In what year did Apollo 11 land on the Moon?",
+   "answers": [
+    "1969"
+   ],
+   "title": "Apollo 11",
+   "fact": "Apollo 11 landed on the Moon on 20 July 1969."
+  },
+  {
+   "id": 9,
+   "q": "What is the atomic number of carbon?",
+   "answers": [
+    "6"
+   ],
+   "title": "Carbon",
+   "fact": "Carbon has the atomic number 6, so each atom holds six protons."
+  },
+  {
+   "id": 10,
+   "q": "Which is the longest river in Africa?",
+   "answers": [
+    "Nile"
+   ],
+   "title": "Rivers of Africa",
+   "fact": "The Nile is the longest river in Africa, flowing north into the Mediterranean Sea."
+  },
+  {
+   "id": 11,
+   "q": "Who painted the Mona Lisa?",
+   "answers": [
+    "Leonardo da Vinci"
+   ],
+   "title": "Mona Lisa",
+   "fact": "The Mona Lisa was painted by Leonardo da Vinci in the early sixteenth century."
+  },
+  {
+   "id": 12,
+   "q": "What is the freezing point of water in Fahrenheit?",
+   "answers": [
+    "32 degrees"
+   ],
+   "title": "Freezing point of water",
+   "fact": "Water freezes at 32 degrees Fahrenheit, which is zero on the Celsius scale."
+  },
+  {
+   "id": 13,
+   "q": "How many bones are in the adult human body?",
+   "answers": [
+    "206"
+   ],
+   "title": "Human skeleton",
+   "fact": "A typical adult human skeleton is made up of 206 bones."
+  },
+  {
+   "id": 14,
+   "q": "What is the chemical formula of table salt?",
+   "answers": [
+    "NaCl"
+   ],
+   "title": "Table salt",
+   "fact": "Table salt is sodium chloride, written with the formula NaCl."
+  },
+  {
+   "id": 15,
+   "q": "What is the smallest prime number?",
+   "answers": [
+    "2"
+   ],
+   "title": "Prime numbers",
+   "fact": "The smallest prime number is 2, and it is also the only even prime."
+  },
+  {
+   "id": 16,
+   "q": "Who developed the theory of general relativity?",
+   "answers": [
+    "Albert Einstein"
+   ],
+   "title": "General relativity",
+   "fact": "General relativity was published by Albert Einstein in 1915."
+  },
+  {
+   "id": 17,
+   "q": "What is the capital of Japan?",
+   "answers": [
+    "Tokyo"
+   ],
+   "title": "Japan capital",
+   "fact": "Tokyo is the capital of Japan and its largest city."
+  },
+  {
+   "id": 18,
+   "q": "What is the hardest natural mineral?",
+   "answers": [
+    "Diamond"
+   ],
+   "title": "Mineral hardness",
+   "fact": "Diamond is the hardest natural mineral, rated 10 on the Mohs scale."
+  },
+  {
+   "id": 19,
+   "q": "How many sides does a hexagon have?",
+   "answers": [
+    "six sides"
+   ],
+   "title": "Hexagon",
+   "fact": "A hexagon is a flat shape with six sides and six corners."
+  },
+  {
+   "id": 20,
+   "q": "Who wrote Romeo and Juliet?",
+   "answers": [
+    "William Shakespeare"
+   ],
+   "title": "Romeo and Juliet",
+   "fact": "Romeo and Juliet is a tragedy written by William Shakespeare."
+  },
+  {
+   "id": 21,
+   "q": "Which is the largest ocean on Earth?",
+   "answers": [
+    "Pacific"
+   ],
+   "title": "Oceans of the world",
+   "fact": "The Pacific is the largest and deepest of the world's oceans."
+  },
+  {
+   "id": 22,
+   "q": "What is the value of pi to two decimal places?",
+   "answers": [
+    "3.14"
+   ],
+   "title": "Pi",
+   "fact": "Rounded to two decimal places, pi is 3.14."
+  },
+  {
+   "id": 23,
+   "q": "Which gas do plants take in for photosynthesis?",
+   "answers": [
+    "carbon dioxide"
+   ],
+   "title": "Photosynthesis",
+   "fact": "In photosynthesis, plants take in carbon dioxide and water and release oxygen."
+  },
+  {
+   "id": 24,
+   "q": "In what year did the Berlin Wall fall?",
+   "answers": [
+    "1989"
+   ],
+   "title": "Berlin Wall",
+   "fact": "The Berlin Wall fell on 9 November 1989."
+  },
+  {
+   "id": 25,
+   "q": "What is the chemical symbol for iron?",
+   "answers": [
+    "Fe"
+   ],
+   "title": "Iron (element)",
+   "fact": "Iron has the chemical symbol Fe, from the Latin word ferrum."
+  },
+  {
+   "id": 26,
+   "q": "How many continents are there?",
+   "answers": [
+    "seven continents"
+   ],
+   "title": "Continents",
+   "fact": "By the most common count, there are seven continents."
+  },
+  {
+   "id": 27,
+   "q": "Who discovered penicillin?",
+   "answers": [
+    "Alexander Fleming"
+   ],
+   "title": "Penicillin",
+   "fact": "Penicillin was discovered by Alexander Fleming in 1928."
+  },
+  {
+   "id": 28,
+   "q": "What is the square root of 144?",
+   "answers": [
+    "12"
+   ],
+   "title": "Square roots",
+   "fact": "The square root of 144 is 12, because 12 times 12 is 144."
+  },
+  {
+   "id": 29,
+   "q": "Which planet is closest to the Sun?",
+   "answers": [
+    "Mercury"
+   ],
+   "title": "Mercury (planet)",
+   "fact": "Mercury is the planet closest to the Sun."
+  },
+  {
+   "id": 30,
+   "q": "What is the tallest mountain above sea level?",
+   "answers": [
+    "Mount Everest"
+   ],
+   "title": "Highest mountains",
+   "fact": "Mount Everest has the highest peak above sea level of any mountain on Earth."
+  },
+  {
+   "id": 31,
+   "q": "How many minutes are in one day?",
+   "answers": [
+    "1440",
+    "1,440"
+   ],
+   "title": "Units of time",
+   "fact": "One day has 24 hours, which is 1440 minutes."
+  },
+  {
+   "id": 32,
+   "q": "Who wrote On the Origin of Species?",
+   "answers": [
+    "Charles Darwin"
+   ],
+   "title": "On the Origin of Species",
+   "fact": "On the Origin of Species was written by Charles Darwin and published in 1859."
+  },
+  {
+   "id": 33,
+   "q": "What is the capital of Canada?",
+   "answers": [
+    "Ottawa"
+   ],
+   "title": "Canada capital",
+   "fact": "Ottawa, in the province of Ontario, is the capital of Canada."
+  },
+  {
+   "id": 34,
+   "q": "How many strings does a standard guitar have?",
+   "answers": [
+    "six strings"
+   ],
+   "title": "Guitar",
+   "fact": "A standard guitar has six strings."
+  },
+  {
+   "id": 35,
+   "q": "What substance has the formula H2O?",
+   "answers": [
+    "water"
+   ],
+   "title": "H2O",
+   "fact": "H2O is the chemical formula of water: two hydrogen atoms and one oxygen atom."
+  },
+  {
+   "id": 36,
+   "q": "In what year did the French Revolution begin?",
+   "answers": [
+    "1789"
+   ],
+   "title": "French Revolution",
+   "fact": "The French Revolution began in 1789 with the storming of the Bastille."
+  },
+  {
+   "id": 37,
+   "q": "How many hearts does an octopus have?",
+   "answers": [
+    "three hearts"
+   ],
+   "title": "Octopus",
+   "fact": "An octopus has three hearts: two pump blood to the gills and one to the body."
+  },
+  {
+   "id": 38,
+   "q": "Who created the first injected polio vaccine?",
+   "answers": [
+    "Jonas Salk"
+   ],
+   "title": "Polio vaccine",
+   "fact": "The first injected polio vaccine was developed by Jonas Salk and announced in 1955."
+  },
+  {
+   "id": 39,
+   "q": "What is the capital of Kenya?",
+   "answers": [
+    "Nairobi"
+   ],
+   "title": "Kenya capital",
+   "fact": "Nairobi is the capital and largest city of Kenya."
+  },
+  {
+   "id": 40,
+   "q": "Which planet is called the Red Planet?",
+   "answers": [
+    "Mars"
+   ],
+   "title": "Red Planet",
+   "fact": "Mars is called the Red Planet because iron oxide on its surface looks red."
+  },
+  {
+   "id": 41,
+   "q": "What is the largest hot desert in the world?",
+   "answers": [
+    "Sahara"
+   ],
+   "title": "Deserts",
+   "fact": "The Sahara in North Africa is the largest hot desert in the world."
+  },
+  {
+   "id": 42,
+   "q": "How many degrees are in a right angle?",
+   "answers": [
+    "90 degrees"
+   ],
+   "title": "Right angle",
+   "fact": "A right angle measures exactly 90 degrees."
+  },
+  {
+   "id": 43,
+   "q": "Which element has the symbol O?",
+   "answers": [
+    "oxygen"
+   ],
+   "title": "Element symbols",
+   "fact": "The symbol O stands for oxygen, element number 8."
+  },
+  {
+   "id": 44,
+   "q": "How many players does a football team have on the field?",
+   "answers": [
+    "eleven",
+    "11 players"
+   ],
+   "title": "Association football",
+   "fact": "In association football each team has eleven players on the field, one of them the goalkeeper."
+  },
+  {
+   "id": 45,
+   "q": "Who composed the Moonlight Sonata?",
+   "answers": [
+    "Ludwig van Beethoven"
+   ],
+   "title": "Moonlight Sonata",
+   "fact": "The Moonlight Sonata is a piano sonata by Ludwig van Beethoven, finished in 1801."
+  }
+ ]
+}

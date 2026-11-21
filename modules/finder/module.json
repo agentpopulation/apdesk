@@ -1,0 +1,17 @@
+{
+  "id": "finder",
+  "number": 32,
+  "name": "Finder",
+  "description": "A better search beside the usual one: several wordings to several search providers at once, the best passages from the pages read with their address and read time, and a private library of every page read that you can search while Offline.",
+  "kind": "switch-on",
+  "defaultOn": false,
+  "menu": [{ "id": "finder", "label": "Finder", "order": 116 }],
+  "pages": ["finder"],
+  "settings": [],
+  "agentTabs": [],
+  "tools": ["find", "library_search"],
+  "requires": ["search"],
+  "npm": {},
+  "attribution": [],
+  "status": "partial"
+}

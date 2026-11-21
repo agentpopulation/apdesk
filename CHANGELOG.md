@@ -136,6 +136,9 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - The Updates card shows what changed in a new version before you press Update now, as plain text.
 - A new switch, Download updates in the background (off by default): a new version is downloaded and checked ahead of time and shows in Downloads, where you can pause it; Panic pauses it. Installing still asks you every time.
 - Release signing takes the notes from a text file (--notes) and the channel (--channel stable or preview).
+- Finder, a new search module (off until you switch it on): it asks several search providers at once with a few wordings of your question and answers with the best passages, each quoted word for word with its address and the time it was read.
+- Every page Finder reads is kept in a private library on this PC that you can search while Offline, with a size limit, Clear, and a list of sites never to keep. Your website rules apply to kept pages too.
+- Agents get two new tools, find and library_search; web_search and web_read are unchanged. A fixed set of 45 questions with stand-in pages measures search changes without the internet (old path 28 of 45, Finder 44 of 45, on stand-ins only, 21 Nov 2026).
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.
