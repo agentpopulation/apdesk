@@ -117,10 +117,11 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Switching a module on or off in Settings keeps your place on the page instead of jumping to the top.
 - First start can download a local model in the background, only after you press Save and allow each download.
 - When the desk runs hidden, the six-digit code for pairing another browser is shown under "Show code" in Settings, Security, not written to the log; you can also install the desk as an app.
+- The agent's browser now checks every request at every hop (redirects, frames, images, scripts, fetch, WebSockets, WebRTC) through a small guard on this PC, which looks names up itself, so nothing a page does can reach this PC or your home network.
+- A redirect into an "ask first" site now waits for your yes just like a direct open, and "never" sites stay blocked on every hop.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.
-- In the agent's browser, a page that redirects to an address on this PC or the home network is not stopped by the address guard yet.
 - Phone notices for watched websites use ntfy only, not Telegram.
 - The local model engine was run for real on Linux only (a 1 GB model answered through the desk on 21 Nov 2026). Windows and macOS builds are chosen by rule and have not been run.
 - The Windows installer, the background mode, the start page and the update step have been tested on Linux and by static checks only; none has run on Windows yet.

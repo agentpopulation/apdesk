@@ -23,11 +23,13 @@ await new Promise(r => site.listen(0, '127.0.0.1', r));
 const port = site.address().port;
 try {
   await t.call('/api/modules/network/on', { method: 'POST' });
-  // control: before any rule, a redirect hop in the browser is fetched without passing the request guard
+  // control: before any rule, a redirect hop to a loopback name the owner did not allow must not be requested either
   let exe = null; for (const n of ['playwright', 'playwright-core']) { try { const x = createRequire(import.meta.url)(n).chromium.executablePath(); if (fs.existsSync(x)) { exe = x; break; } } catch {} }
   if (!process.env.APD_BROWSER_PATH && exe) process.env.APD_BROWSER_PATH = exe;
   const opts = () => ({ allowHosts: ['127.0.0.1', 'sub.blocked.localhost', 'blocked.localhost'], deskPort: t.desk.port });
-  { const c0 = new Computer({ agentId: 'control', dataDir: t.dataDir, guardOpts: opts }); try { await c0.start(); hits.length = 0; await c0.goto(`http://127.0.0.1:${port}/go`).catch(() => {}); console.log(`CONTROL: with no rule, the redirect hop reached ${hits.filter(h => h.startsWith('sub.')).join(', ') || 'nothing'}`); } catch (e) { console.log('CONTROL not run: ' + String(e.message).slice(0, 60)); } finally { await c0.close().catch(() => {}); } }
+  { const c0 = new Computer({ agentId: 'control', dataDir: t.dataDir, guardOpts: () => ({ allowHosts: ['127.0.0.1'], deskPort: t.desk.port }) });
+    try { await c0.start(); hits.length = 0; let err = null; await c0.goto(`http://127.0.0.1:${port}/go`).catch((e) => { err = e.message; }); const reached = hits.filter(h => h.startsWith('sub.')); say(!reached.length && hits.length === 1, 'CONTROL no-rule redirect hop', reached.length ? `the redirect hop reached ${reached.join(', ')}` : `the site saw only ${hits.join(', ')}; ${String(err || 'no error').slice(0, 90)}`); }
+    catch (e) { console.log('NOT RUN(CONTROL): ' + String(e.message).slice(0, 60)); } finally { await c0.close().catch(() => {}); } }
   await t.call('/api/m/network/rules', { body: { kind: 'never', entry: 'blocked.localhost' } });
   await t.call('/api/m/network/rules', { body: { kind: 'never', entry: 'blocked.example' } });
 

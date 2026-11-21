@@ -5,7 +5,7 @@ import dns from 'node:dns';
 import { siteRuleSync, siteRuleAsk } from '../network/rules.js';
 
 export function privateHost(host) {
-  host = String(host || '').toLowerCase().replace(/^\[|\]$/g, '');
+  host = String(host || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
   if (!host) return true;
   if (host === 'localhost' || host.endsWith('.localhost')) return true;
   if (host === 'host-gateway' || host.endsWith('.internal') || host.endsWith('.local') || host.endsWith('.lan') || host.endsWith('.home.arpa')) return true;

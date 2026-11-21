@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { launchChoice } from './launch.js';
 import { checkUrl, checkUrlDeep, leavesThisPc, OFFLINE_LINE } from './guard.js';
-import { resolverRules } from '../network/rules.js';
+import { startHopGuard, browserArgs } from './hop-guard.js';
 
 const require = createRequire(import.meta.url);
 function playwright() {
@@ -12,8 +12,10 @@ function playwright() {
 }
 
 export class Computer {
-  constructor({ agentId, dataDir, log = () => {}, emit = () => {}, guardOpts = () => ({}), platform = process.platform }) {
+  /** testNet: tests only, set in code (a stand-in DNS and a loopback site that plays a public one); see hop-guard.js. */
+  constructor({ agentId, dataDir, log = () => {}, emit = () => {}, guardOpts = () => ({}), platform = process.platform, testNet = null }) {
     this.agentId = agentId; this.dataDir = dataDir; this.log = log; this.emit = emit; this.guardOpts = guardOpts; this.platform = platform;
+    this.testNet = testNet; this.hops = null; this.hopRefused = new Map();
     this.context = null; this.page = null; this.cdp = null; this.headed = false;
     this.frame = null; this.frameNo = 0; this.frameAt = 0; this.lastShot = 0;
     this.mode = 'idle';            // idle | agent | owner | needs_owner
@@ -34,12 +36,16 @@ export class Computer {
     if (this._starting) return this._starting;
     if (this._closing) await this._closing;
     this._starting = (async () => {
-    const never = resolverRules();   // "never" sites do not resolve in this browser, so a redirect cannot reach them either
-    const ctx = await chromium.launchPersistentContext(choice.userDataDir, never ? { ...choice.options, args: [...(choice.options.args || []), never] } : choice.options);
+    // every request at every hop (redirects, frames, fetch, WebSockets) leaves only through the hop guard
+    const hops = await startHopGuard({ opts: () => this.guard(), onRefuse: (r) => this.onHopRefused(r), ...(this.testNet || {}) });
+    let ctx;
+    try { ctx = await chromium.launchPersistentContext(choice.userDataDir, { ...choice.options, args: [...(choice.options.args || []), ...browserArgs(hops.port)] }); }
+    catch (e) { await hops.close(); throw e; }
+    this.hops = hops;
     this.context = ctx;
     this.browserName = choice.browser;
     // only forget this context if it is still the current one (an old one closing must not orphan a new one)
-    ctx.on('close', () => { if (this.context === ctx) { this.context = null; this.page = null; this.cdp = null; } });
+    ctx.on('close', () => { hops.close(); if (this.context === ctx) { this.context = null; this.page = null; this.cdp = null; } });
     // every request: refuse local and private addresses; main-frame navigations by the agent also ask the door
     await ctx.route('**/*', (route) => this.onRoute(route).catch(() => route.abort('blockedbyclient').catch(() => {})));
     // WebSockets do not pass through route(): same rules for them
@@ -54,6 +60,7 @@ export class Computer {
     this.page = ctx.pages()[0] || await ctx.newPage();
     for (const extra of ctx.pages()) if (extra !== this.page) await extra.close().catch(() => {});
     this.page.on('dialog', (d) => d.dismiss().catch(() => {}));
+    this.page.on('requestfailed', (r) => this.onRequestFailed(r));
     await this.startStream();
     return this;
     })();
@@ -70,6 +77,17 @@ export class Computer {
     if (main && this.driving === 'agent' && this.approveNav) { const ok = await this.approveNav(url); if (!ok) { this.blocked.push({ url, why: 'You did not allow this site.' }); this.visit(opts, url, 'You did not allow this site.'); return route.abort('blockedbyclient'); } }
     if (main) this.visit(opts, url, null);
     return route.continue();
+  }
+  /** The hop guard stopped a request: remember why, so a page that fails because of it gets a plain reason. */
+  onHopRefused({ host, port, why }) {
+    this.hopRefused.set(host + ':' + port, { why, at: Date.now() });
+    if (this.hopRefused.size > 200) this.hopRefused.delete(this.hopRefused.keys().next().value);
+  }
+  onRequestFailed(req) {
+    if (!req.isNavigationRequest() || req.frame() !== this.page?.mainFrame()) return;
+    let key = ''; try { const u = new URL(req.url()); key = u.hostname.replace(/^\[|\]$/g, '').replace(/\.+$/, '') + ':' + (u.port || (u.protocol === 'https:' ? 443 : 80)); } catch { return; }
+    const r = this.hopRefused.get(key); if (!r || Date.now() - r.at > 30000) return;
+    const opts = this.guard(); this.blocked.push({ url: req.url(), why: r.why }); this.visit(opts, req.url(), r.why);
   }
   /** One line in the Network module's log of where the agents went (agent driving only). */
   visit(opts, url, why) { if (this.driving === 'agent') { try { opts.onVisit?.({ url, via: 'browser', who: opts.who, blocked: why }); } catch {} }
@@ -104,14 +122,20 @@ export class Computer {
     const why = await checkUrlDeep(url, this.guard()); if (why) throw Object.assign(new Error(why), { code: 'refused' });
     const before = this.blocked.length;
     try { await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 }); }
-    catch (e) { if (this.blocked.length > before) throw Object.assign(new Error(this.blocked.at(-1).why), { code: 'refused' }); throw e; }
+    catch (e) { if (this.blocked.length > before) { this._seenBlocked = this.blocked.length; await this.leave(); throw Object.assign(new Error(this.blocked.at(-1).why), { code: 'refused' }); } throw e; }
     await this.afterMove();
+  }
+  /** Leave a page that was stopped: let the browser's error page settle first, so it cannot cut into the next navigation. */
+  async leave() {
+    await this.page.waitForURL(/^chrome-error:/, { timeout: 2000 }).catch(() => {});
+    await this.page.goto('about:blank').catch(() => {});
   }
   /** After any action: if a redirect landed somewhere private, leave it. */
   async afterMove() {
     await this.page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => {});
-    const u = this.page.url(); const why = u === 'about:blank' ? null : checkUrl(u, this.guard());
-    if (why) { await this.page.goto('about:blank').catch(() => {}); throw Object.assign(new Error(why), { code: 'refused' }); }
+    const fresh = this.blocked.length > (this._seenBlocked || 0); this._seenBlocked = this.blocked.length;
+    const u = this.page.url(); const why = u === 'about:blank' ? null : (fresh && u.startsWith('chrome-error:')) ? this.blocked.at(-1).why : checkUrl(u, this.guard());
+    if (why) { await this.leave(); throw Object.assign(new Error(why), { code: 'refused' }); }
     this.snap();
   }
 
@@ -174,6 +198,7 @@ export class Computer {
     try { await this.cdp?.send('Page.stopScreencast'); } catch {}
     this.cdp = null;
     if (c) await Promise.race([c.close().catch(() => {}), new Promise(r => setTimeout(r, 4000))]);
+    const h = this.hops; this.hops = null; await h?.close();
     if (this._handBack) { const r = this._handBack; this._handBack = null; r('closed'); }
   }
 }
