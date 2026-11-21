@@ -178,6 +178,9 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Inside, the desk is now a "house" (the server, Panic, Offline, downloads, the local model, updates) and a "space" (one person's data), the first step toward several people sharing one PC. Nothing you see changes yet: the desk still runs one space, and a second can only be opened by tests.
 - Finder now keeps the breaks between parts of a page, ranks readable sentences that bear on the question above contents lists, headings and reference lists, and favours the opening of a page. A passage must cover the question's key words to count as an answer.
 - When nothing in your library answers a question, Finder says so in one line with the next step, and a page whose title answers the question is shown as a source. On a real run on 21 Nov 2026 an independent re-check still found the answer below the top two passages for one of three questions; the later correction was checked by its builder only.
+- Council tells every seat your country and currency, and a figure with no record or page behind it is marked "(not checked)" on that figure, never inside a phrase. Amounts in another currency are marked the same way and never converted by guess.
+- A Verdict's count comes from the seats' own recommendations. When they differ it says so, lists each seat's line, and never presents one seat's plan as the decision. Formatting marks are no longer shown raw.
+- Hiring an advisor for the first time says "joined your team"; a re-hire says "back on your team". Seats can still write a source that does not exist; nothing marks that yet.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

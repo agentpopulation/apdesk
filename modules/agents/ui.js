@@ -46,9 +46,9 @@ async function render(el, ui, route) {
   }
   async function hireBack(a) {
     try {
-      await api(API + 'retired/' + encodeURIComponent(a.id) + '/hire', { method: 'POST', body: {} });
+      const r = await api(API + 'retired/' + encodeURIComponent(a.id) + '/hire', { method: 'POST', body: {} });
       if (ui.moduleOn('chat')) await api('m/chat/rooms/fit', { method: 'POST' });   // the same call first start makes; a room with two of its agents on comes back
-      toast(`${a.name} is back on your team.`, 'ok'); ui.go('agents', a.id, 'profile');
+      toast(r.message || `${a.name} joined your team.`, 'ok'); ui.go('agents', a.id, 'profile');
     } catch (e) { toast(e.message, 'err'); }
   }
   async function paintDetail(id) {

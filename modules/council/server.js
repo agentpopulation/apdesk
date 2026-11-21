@@ -3,9 +3,10 @@
 // Stage 3: the chairman writes the Verdict. Method from karpathy/llm-council backend/council.py (no code copied).
 import crypto from 'node:crypto';
 import { FORMATS, guessFormat } from './formats.js';
-import { buildBrief, DEFAULT_QUESTION } from './brief.js';
+import { buildBrief, ownerLine, DEFAULT_QUESTION } from './brief.js';
+import { CHAT_DEADLINE_MS } from '../../app/core/model-door.js';
 import { liveSlots, spread, modelNote, figuresNote } from './seats.js';
-import { answerMessages, rankMessages, chairMessages, parseRanking, aggregate, parseJson, toLastSentence, wholeSentences, continueMessages, joinContinuation, agreement, rankLineFor, parseRecommendation, recommendMessages } from './stages.js';
+import { answerMessages, rankMessages, chairMessages, parseRanking, aggregate, parseJson, toLastSentence, wholeSentences, continueMessages, joinContinuation, agreement, rankLineFor, parseRecommendation, recommendMessages, plainText, markFigures, markSources, givenFigures, majority, belongsTo } from './stages.js';
 
 const uid = (p) => p + crypto.randomBytes(6).toString('hex');
 const nowIso = () => new Date().toISOString();
@@ -14,6 +15,10 @@ const J = (x, f = null) => { try { return x ? JSON.parse(x) : f; } catch { retur
 const NO_RANK = 'the seats did not rank each other';
 /** "answered by X; Y was not answering" when a seat's own model failed and another wrote its answer. */
 export const fellBackNote = (a) => a?.text && a.fellBack && a.setLabel && a.label && a.setLabel !== a.label ? `answered by ${a.label}; ${a.setLabel} was not answering` : '';
+/** How long a seat may take to start answering: the model door's own limit for one call, counted once across the seat's
+ *  fallbacks (each used to get the whole limit again). A seat that has not started by then is skipped and the run goes on.
+ *  A thinking model can be quiet for a minute before its first word, so the limit is not shorter. Tests shorten it. */
+export const SEAT_WAIT = { ms: CHAT_DEADLINE_MS };
 const PREFER = ['gemini', 'router', 'openrouter', 'anthropic', 'openai', 'groq', 'mistral', 'deepseek', 'together', 'fireworks', 'cerebras', 'xai', 'custom', 'ollama'];
 
 export async function activate(ctx) {
@@ -48,12 +53,12 @@ export async function activate(ctx) {
   async function defaultChair() { return asModel((await live()).chair); }
 
   /** One call for one seat: its own model first; then a live model no other seat sits on, the provider's own choice, the desk's chain. */
-  async function seatCall(model, messages, { signal, json = false, maxTokens = 500, spare = [] }) {
+  async function seatCall(model, messages, { signal, json = false, maxTokens = 500, spare = [], onDelta }) {
     const tries = model?.provider ? [model, ...spare, ...(model.model ? [{ provider: model.provider, model: null }] : []), null] : [null];
     let last;
     for (const m of tries) {
       try {
-        const r = await ctx.model.chat({ purpose: 'council', messages, json, maxTokens, temperature: 0.6, signal, ...(m ? { model: m } : {}) });
+        const r = await ctx.model.chat({ purpose: 'council', messages, json, maxTokens, temperature: 0.6, signal, ...(onDelta ? { onDelta } : {}), ...(m ? { model: m } : {}) });
         return { ...r, fellBack: m !== tries[0] };
       } catch (e) { last = e; if (signal?.aborted || ['halted', 'aborted', 'offline'].includes(e.code)) throw e; }
     }
@@ -79,12 +84,12 @@ export async function activate(ctx) {
     : { title: clip(text, 80), prompt: `The Council decided on "${room.question}": ${text}\nReasons: ${why}\nPlan and do the next steps.` };
   function verdictCard(room, run) {
     const v = run.verdict;
-    return { kind: 'council.verdict', id: 'council-verdict-' + run.id, runId: run.id, roomId: room.id, title: 'Verdict · ' + v.voteLine, question: room.question, decision: v.decision, reasons: v.reasons, notes: v.notes || [], label: v.label, voteLine: v.voteLine, agreeLine: v.agreeLine || '', rankLine: v.rankLine || '', agree: v.agree || [], differ: v.differ || [],
+    return { kind: 'council.verdict', id: 'council-verdict-' + run.id, runId: run.id, roomId: room.id, title: 'Verdict · ' + v.voteLine, question: room.question, decision: v.decision, reasons: v.reasons, notes: v.notes || [], label: v.label, voteLine: v.voteLine, split: !!v.split, plan: !!FORMATS[room.format]?.plan, agreeLine: v.agreeLine || '', rankLine: v.rankLine || '', agree: v.agree || [], differ: v.differ || [],
       steps: (v.steps || []).map((x, i) => ({ text: x.text, by: x.by, action: { label: 'Turn into a task', tool: 'task_create', step: i, args: stepArgs(room, x.text, '', x.by) } })),
-      seats: run.answers.map(a => ({ name: a.name, stance: a.stance, label: a.label, fellBack: fellBackNote(a), summary: wholeSentences(a.text, 240), cut: !!a.cut, ok: !!a.text })),
+      seats: run.answers.map(a => ({ name: a.name, stance: a.stance, label: a.label, fellBack: fellBackNote(a), summary: wholeSentences(a.text, 240), cut: !!a.cut, ok: !!a.text, late: !!a.late })),
       text: verdictText(room, run),
       actions: [
-        ...(v.steps?.length ? [] : [{ label: 'Turn into a task', tool: 'task_create', args: stepArgs(room, v.decision, (v.reasons || []).join(' ')) }]),
+        ...(v.steps?.length || v.split ? [] : [{ label: 'Turn into a task', tool: 'task_create', args: stepArgs(room, v.decision, (v.reasons || []).join(' ')) }]),
         ...(FORMATS[room.format]?.plan ? [] : [{ label: 'Research this', tool: 'research_deep', args: { question: room.question } }]),
         { label: 'Open the Council', go: '#/research/council/' + room.id },
       ] };
@@ -98,6 +103,9 @@ export async function activate(ctx) {
     let tasks = null; try { const js = ctx.jobs.list({ limit: 100 }).filter(j => !j.quiet && !String(j.kind).startsWith('council.')); if (js.length) tasks = { of: js.length, running: js.filter(j => j.status === 'running' || j.status === 'waiting').length, done: js.filter(j => j.status === 'done').length, failed: js.filter(j => j.status === 'failed').length }; } catch {}
     return { about, leads: totals ? safe(() => totals.leads) : null, inTalks: totals ? safe(() => totals.inTalks) : null, draftsWaiting: totals ? safe(() => totals.draftsWaiting) : null, customers: sales?.customers ? safe(() => sales.customers().length) : null, tasks };
   }
+
+  /** What every seat and the chairman read: the owner's country and currency and the rule for figures; for a plan, the records too. */
+  const briefFor = (format) => [ownerLine({ country: ctx.settings.get('country'), currency: ctx.settings.get('currency'), locale: ctx.settings.get('locale') }), FORMATS[format]?.plan ? buildBrief(gatherFacts()) : ''].filter(Boolean).join('\n\n');
 
   // ---------- the run
   async function startRun(room, { chatId = null, agentId = null } = {}) {
@@ -117,14 +125,26 @@ export async function activate(ctx) {
       const signal = job.signal; const plan = !!FORMATS[room.format]?.plan;
       const card = (detail, progress, status = 'running') => job.card({ kind: 'progress', id: 'council-' + runId, title: 'Council: ' + clip(room.question, 70), detail, progress, status, go: '#/research/council/' + room.id });
       const answers = seats.map(s => ({ seatId: s.id, name: s.name, stance: s.stance, text: null, label: null, error: null }));
+      // what reaches the screen: plain text, every figure no record gave marked on that figure, in the owner's currency
+      const given = givenFigures(room.question + ' ' + (room.brief || '')); const currency = ctx.settings.get('currency') || '';
+      const shown = (x) => markSources(markFigures(plainText(x), { given, currency }));
+      /** One seat's call with its own stop: skipped when no reply has started within the door's own first-answer limit. */
+      async function inTime(fn) {
+        const ac = new AbortController(); const stop = () => ac.abort('aborted'); signal.addEventListener('abort', stop, { once: true });
+        let started = false, late = false;
+        const timer = setTimeout(() => { if (!started) { late = true; ac.abort('late'); } }, SEAT_WAIT.ms);
+        try { return await fn(ac.signal, () => { started = true; }); }
+        catch (e) { if (late && !signal.aborted) throw Object.assign(new Error('did not answer in time'), { code: 'late' }); throw e; }
+        finally { clearTimeout(timer); signal.removeEventListener('abort', stop); }
+      }
       try {
         // stage 1: each seat on its own, in parallel
         job.progress(0.05, 'The seats are answering'); card('The seats are answering', 0.05); emit('answering');
         let done = 0;
         await Promise.all(seats.map(async (s, i) => {
-          try {
+          try { await inTime(async (signal, started) => {
             const msgs = answerMessages(room.question, s, FORMATS[room.format], room.brief);
-            const r = await seatCall(s.model, msgs, { signal, maxTokens: 900, spare: spareFor(i) });
+            const r = await seatCall(s.model, msgs, { signal, maxTokens: 900, spare: spareFor(i), onDelta: started });
             let text = String(r.text || '').trim(), cut = false;
             if (text && r.cutOff === true) {
               // the model door says the reply hit its length limit: ask the same model once to finish; if that is cut off too
@@ -140,10 +160,10 @@ export async function activate(ctx) {
               try { const c = await ctx.model.chat({ purpose: 'council', messages: recommendMessages(msgs, text), maxTokens: 200, temperature: 0.2, signal, model: { provider: r.provider, model: r.model } }); recommendation = parseRecommendation(c.text, { bare: true }); }
               catch (e) { if (signal.aborted || e.code === 'halted' || e.code === 'aborted') throw e; }
             }
-            answers[i] = { ...answers[i], text, cut, recommendation, label: r.label, fellBack: r.fellBack, setLabel: label(s.model), ms: r.ms };
-          } catch (e) { if (signal.aborted || e.code === 'halted' || e.code === 'aborted') throw e; answers[i].error = e.message; }
+            answers[i] = { ...answers[i], text: shown(text), cut, recommendation: recommendation && shown(recommendation), label: r.label, fellBack: r.fellBack, setLabel: label(s.model), ms: r.ms };
+          }); } catch (e) { if (signal.aborted || e.code === 'halted' || e.code === 'aborted') throw e; answers[i].error = e.message; if (e.code === 'late') answers[i].late = true; }
           done++; saveRun(runId, { answers });
-          const msg = answers[i].text ? `${s.name} answered (${answers[i].label})` : `${s.name} could not answer`;
+          const msg = answers[i].text ? `${s.name} answered (${answers[i].label})` : answers[i].late ? `${s.name} did not answer in time` : `${s.name} could not answer`;
           job.progress(0.05 + 0.4 * done / seats.length, msg); card(msg, 0.05 + 0.4 * done / seats.length); emit('answer', { seat: i, answer: answers[i] });
         }));
         const ok = answers.map((a, i) => ({ ...a, i })).filter(a => a.text);
@@ -158,7 +178,7 @@ export async function activate(ctx) {
         await Promise.all(seats.map(async (s, i) => {
           if (!answers[i].text) return;
           try {
-            const r = await seatCall(s.model, rankMessages(room.question, order.map((ai, k) => ({ letter: letters[k], text: answers[ai].text }))), { signal, json: true, maxTokens: 900, spare: spareFor(i) });
+            const r = await inTime((signal, started) => seatCall(s.model, rankMessages(room.question, order.map((ai, k) => ({ letter: letters[k], text: answers[ai].text }))), { signal, json: true, maxTokens: 900, spare: spareFor(i), onDelta: started }));
             const parsed = parseRanking(r, letters);
             rankings.push({ seat: i, name: s.name, label: r.label, order: parsed.order, ranked: parsed.order.map(l => answers[byLetter[l]].name), notes: Object.fromEntries(Object.entries(parsed.notes).filter(([l]) => byLetter[l] != null).map(([l, v]) => [answers[byLetter[l]].name, v])), raw: parsed.order.length ? null : clip(r.text, 300) });
           } catch (e) { if (signal.aborted || e.code === 'halted' || e.code === 'aborted') throw e; rankings.push({ seat: i, name: s.name, error: e.message, order: [] }); }
@@ -168,19 +188,20 @@ export async function activate(ctx) {
           job.progress(0.5 + 0.3 * ranked / ok.length, msg); card(msg, 0.5 + 0.3 * ranked / ok.length); emit('rank', { seat: i, ranking: last });
         }));
         const agg = aggregate(rankings, byLetter, answers);
-        agg.agreeLine = agreement(ok.map(a => ({ name: a.name, recommendation: a.recommendation })));
+        const recs = ok.map(a => ({ name: a.name, recommendation: a.recommendation }));
+        agg.agreeLine = agreement(recs); agg.major = majority(recs);
         // stage 3: the chairman writes the Verdict
         job.progress(0.85, 'The chairman is writing the Verdict'); card('The chairman is writing the Verdict', 0.85); emit('verdict-writing');
-        let r = await seatCall(chair, chairMessages(room.question, answers, seats, agg, { plan }), { signal, json: true, maxTokens: plan ? 1800 : 1200 });
+        let r = await seatCall(chair, chairMessages(room.question, answers, seats, agg, { plan, brief: room.brief }), { signal, json: true, maxTokens: plan ? 1800 : 1200 });
         const usable = (x) => x && [x.decision, x.answer].some(v => typeof v === 'string' && v.trim()) ? x : null;   // JSON without a decision is no Verdict
         let j = usable(parseJson(r));
-        if (!j) { r = await seatCall(chair, chairMessages(room.question, answers, seats, agg, { plan }), { signal, json: true, maxTokens: 2400 }); j = usable(parseJson(r)); }   // cut off or unreadable: once more, with more room
+        if (!j) { r = await seatCall(chair, chairMessages(room.question, answers, seats, agg, { plan, brief: room.brief }), { signal, json: true, maxTokens: 2400 }); j = usable(parseJson(r)); }   // cut off or unreadable: once more, with more room
         if (!j) {            // still cut off: take the decision as far as its last full sentence, never half a sentence
           const m = String(r.text || '').match(/"decision"\s*:\s*"((?:[^"\\]|\\.)*)/);
           const raw = m ? m[1].replace(/\\n/g, ' ').replace(/\\"/g, '"') : String(r.text || '').replace(/[{}"]/g, ' ');
           j = { decision: toLastSentence(raw) || 'The chairman could not finish the Verdict. Run it again.' };
         }
-        const whole = (x, n) => wholeSentences(x, n);
+        const whole = (x, n) => shown(wholeSentences(plainText(x), n));
         const verdict = {
           decision: whole(j.decision || j.answer, 400), reasons: (Array.isArray(j.reasons) ? j.reasons : []).map(x => whole(x, 220)).filter(Boolean).slice(0, 2),
           answer: whole(j.answer || '', 1600), label: r.label, winner: agg.winner != null ? answers[agg.winner].name : null,
@@ -190,13 +211,35 @@ export async function activate(ctx) {
         };
         if (plan) {
           const lines = (x) => (Array.isArray(x) ? x : []).map(v => whole(typeof v === 'string' ? v : v?.text || '', 200)).filter(Boolean).slice(0, 5);
-          verdict.agree = lines(j.agree); if (!verdict.agree.length && agg.agreeLine) verdict.agree = [agg.agreeLine];
+          verdict.agree = lines(j.agree); if (!verdict.agree.length && agg.major) verdict.agree = [agg.agreeLine];   // a "seats differ" line is no agreement
           verdict.differ = lines(j.differ);
           verdict.steps = (Array.isArray(j.steps) ? j.steps : []).map(x => typeof x === 'string' ? { text: whole(x, 200), by: '' } : { text: whole(x?.step || x?.text || '', 200), by: seats.some(s => s.name === x?.by) ? x.by : '' }).filter(x => x.text).slice(0, 6);
         }
+        // the text under the Verdict belongs to its count: a decision against the seats' majority course gives way to the seats' own words
+        // with no majority, it must follow one seat's own course, or the Verdict says the seats differ in their own words
+        const firstOf = (n) => { const a = answers.find(x => x.name === n); return `${n}: ${wholeSentences(String(a?.text || '').split(/(?<=[.!?])\s/)[0], 220)}`; };
+        const withRec = recs.filter(x => x.recommendation);
+        let followed = true;
+        if (agg.major && !belongsTo(verdict.decision, agg.major.course)) {
+          followed = false;
+          verdict.decision = agg.major.course.charAt(0).toUpperCase() + agg.major.course.slice(1) + '.';
+          verdict.reasons = agg.major.names.slice(0, 2).map(firstOf);
+          verdict.answer = '';
+          if (verdict.steps) verdict.steps = verdict.steps.filter(x => agg.major.names.includes(x.by));
+        } else if (!agg.major && withRec.length) {
+          // no majority: the Verdict says the seats differ, so its text is each seat's own line, and a chairman's text that
+          // follows one seat's course is shown as that seat's (the best-ranked such seat), never as the Council's decision
+          verdict.split = true;
+          const rank = (n) => agg.averages.find(x => x.name === n)?.avg ?? 9;
+          const near = withRec.filter(x => belongsTo(verdict.decision, x.recommendation)).sort((a, b) => rank(a.name) - rank(b.name))[0];
+          followed = !!near;
+          verdict.decision = 'The seats differ, so there is no one course yet. ' + (near ? `The chairman's text follows the ${near.name}'s course: ${verdict.decision}` : 'Each seat\'s own line is listed below.');
+          verdict.reasons = withRec.slice(0, 4).map(x => firstOf(x.name));
+          verdict.answer = '';
+        }
         // plain notes on the result: one model for every seat, offline, and figures no page was read for
         const noAgree = agg.agreeLine ? '' : 'No seat gave a clear recommendation, so the Verdict cannot say how far the seats agree' + (agg.rankLine ? '; the headline shows how they ranked each other instead.' : '.');
-        verdict.notes = [noAgree, modelNote(answers), offline() ? 'The desk was offline, so the Council ran on local models only.' : '', figuresNote(room.question + ' ' + (room.brief || ''), answers, { ...verdict, steps: verdict.steps }, { plan })].filter(Boolean);
+        verdict.notes = [noAgree, followed ? '' : (agg.major ? 'The chairman\'s text went against what most seats recommend' : 'The chairman\'s text followed no seat\'s own course') + ', so the Verdict shows the seats\' own words.', modelNote(answers), offline() ? 'The desk was offline, so the Council ran on local models only.' : '', figuresNote(room.question + ' ' + (room.brief || ''), answers, { ...verdict, steps: verdict.steps }, { plan })].filter(Boolean);
         saveRun(runId, { verdict, status: 'done', finished: nowIso() });
         ctx.db.run('UPDATE m_council_rooms SET updated = ? WHERE id = ?', nowIso(), room.id);
         const run = getRun(runId);
@@ -219,7 +262,7 @@ export async function activate(ctx) {
     const f = FORMATS[format] ? format : guessFormat(q);
     const base = await defaultSeats(f);
     const list = base.map((s, i) => ({ ...s, ...(seats?.[i] || {}), model: seats?.[i]?.model !== undefined ? seats[i].model : s.model }));
-    const room = { id: uid('room_'), question: q, format: f, seats: list.map(({ modelLabel, ...s }) => s), chair: chair || await defaultChair(), chatId, brief: FORMATS[f]?.plan ? buildBrief(gatherFacts()) : '' };
+    const room = { id: uid('room_'), question: q, format: f, seats: list.map(({ modelLabel, ...s }) => s), chair: chair || await defaultChair(), chatId, brief: briefFor(f) };
     ctx.db.run('INSERT INTO m_council_rooms (id, question, format, seats, chair, chat_id, brief, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', room.id, room.question, room.format, JSON.stringify(room.seats), JSON.stringify(room.chair), chatId, room.brief, nowIso(), nowIso());
     return roomRow(ctx.db.get('SELECT * FROM m_council_rooms WHERE id = ?', room.id));
   }
@@ -232,7 +275,7 @@ export async function activate(ctx) {
     const room = roomRow(ctx.db.get('SELECT * FROM m_council_rooms WHERE id = ?', roomId)); if (!room) throw Object.assign(new Error('That room is gone.'), { status: 404 });
     if (Array.isArray(seats)) room.seats = room.seats.map((s, i) => ({ ...s, ...(seats[i]?.model !== undefined ? { model: seats[i].model } : {}), ...(seats[i]?.name ? { name: clip(seats[i].name, 40) } : {}), ...(seats[i]?.stance ? { stance: clip(seats[i].stance, 60) } : {}) }));
     if (chair !== undefined) room.chair = chair;
-    if (FORMATS[room.format]?.plan) { room.brief = buildBrief(gatherFacts()); ctx.db.run('UPDATE m_council_rooms SET brief = ? WHERE id = ?', room.brief, room.id); }   // the records may have changed since
+    room.brief = briefFor(room.format); ctx.db.run('UPDATE m_council_rooms SET brief = ? WHERE id = ?', room.brief, room.id);   // the records and settings may have changed since
     ctx.db.run('UPDATE m_council_rooms SET seats = ?, chair = ?, updated = ? WHERE id = ?', JSON.stringify(room.seats), JSON.stringify(room.chair), nowIso(), room.id);
     return startRun(room, { chatId: chatId ?? null });
   }

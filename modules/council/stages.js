@@ -4,12 +4,12 @@
 
 export function answerMessages(question, seat, format, brief = '') {
   if (format?.plan) return [
-    { role: 'system', content: `You are ${seat.name}, one of four advisors to a business owner (${format.label}). Your view: ${seat.stance}. ${seat.brief}\nRead the brief and propose a 30-day plan of three or four steps, one per line, each starting "Step 1:", "Step 2:" and so on, each short enough to become one task. Say first, in one sentence, what you see. Use only figures the brief gives; for anything else write "not checked". These are proposals: nothing is done or sent.\nEnd with one more line on its own that starts with "Recommendation:" and names your first move in two to six words, key word first.` },
+    { role: 'system', content: `You are ${seat.name}, one of four advisors to a business owner (${format.label}). Your view: ${seat.stance}. ${seat.brief}\nRead the brief and propose a 30-day plan of three or four steps, one per line, each starting "Step 1:", "Step 2:" and so on, each short enough to become one task. Say first, in one sentence, what you see. Use only figures the brief gives. Plain text, no Markdown. These are proposals: nothing is done or sent.\nEnd with one more line on its own that starts with "Recommendation:" and names your first move in two to six words, key word first.` },
     { role: 'user', content: `${question}\n\n${brief}` },
   ];
   return [
-    { role: 'system', content: `You are ${seat.name}, one of three seats on a council that advises a business owner (format: ${format?.label || 'Council'}). Your stance: ${seat.stance}. ${seat.brief}\nAnswer on your own, in at most 120 words of plain English, no headings. Your first sentence states your position. You cannot look anything up here: give a figure only as your own estimate, and say it is an estimate.\nEnd with one more line on its own that starts with "Recommendation:" and names the course you recommend in two to six words, key word first: yes, no or wait for a yes-or-no question, otherwise the option you pick, named the way the question names it.` },
-    { role: 'user', content: question },
+    { role: 'system', content: `You are ${seat.name}, one of three seats on a council that advises a business owner (format: ${format?.label || 'Council'}). Your stance: ${seat.stance}. ${seat.brief}\nAnswer on your own, in at most 120 words of plain English, no headings, no Markdown. Your first sentence states your position. You cannot look anything up here, so use only figures the question or the brief gives.\nEnd with one more line on its own that starts with "Recommendation:" and names the course you recommend in two to six words, key word first: yes, no or wait for a yes-or-no question, otherwise the option you pick, named the way the question names it.` },
+    { role: 'user', content: brief ? `${question}\n\n${brief}` : question },
   ];
 }
 
@@ -21,13 +21,13 @@ export function rankMessages(question, items) {
   ];
 }
 
-export function chairMessages(question, answers, seats, agg, { plan = false } = {}) {
+export function chairMessages(question, answers, seats, agg, { plan = false, brief = '' } = {}) {
   const body = answers.map((a, i) => a.text ? `${a.name} (${seats[i].stance}):\n${a.text}` : null).filter(Boolean).join('\n\n');
   const ranks = agg.averages.map(x => `${x.name}: average place ${x.avg} from ${x.n} reviews`).join('\n');
-  const agree = agg.agreeLine ? `\nWhat the seats recommend: ${agg.agreeLine}.\n` : '';
+  const agree = agg.agreeLine ? `\nWhat the seats recommend: ${agg.agreeLine}.\n${agg.major ? `Most seats recommend: ${agg.major.course}. Your decision is that course, and your reasons${plan ? ' and plan' : ''} support it.` : 'No course has a majority. Do not say the seats agree; in the decision, say what the choice between their first moves turns on.'}\n` : '';
   return [
     { role: 'system', content: 'You are the chairman of a council advising a business owner. Write the final Verdict from the seats\' answers and how they ranked each other. Be decisive and plain.' },
-    { role: 'user', content: `Question: ${question}\n\nThe seats' answers:\n${body}\n\nPeer ranking (lower is better):\n${ranks || 'no rankings'}\nThe best-ranked answer was ${agg.winner != null ? answers[agg.winner].name + "'s" : 'not clear'}.\n${agree}\n${plan ? 'Return JSON only: {"decision":"the one thing to do first, in one or two sentences","reasons":["the main reason","a second reason"],"agree":["where the advisors agree, one short line each"],"differ":["where they differ, one short line each, naming who"],"steps":[{"step":"one step of the 30-day plan, short enough to be one task","by":"the advisor it came from"}],"answer":"a fuller plan in at most 150 words"}. At most six steps. Use only figures the advisors took from the brief; write "not checked" for the rest.' : 'Return JSON only: {"decision":"the decision or answer in one or two sentences","reasons":["the main reason","a second reason"],"answer":"a fuller final answer in at most 150 words"}'}` },
+    { role: 'user', content: `Question: ${question}\n${brief ? '\n' + brief + '\n' : ''}\nThe seats' answers:\n${body}\n\nPeer ranking (lower is better):\n${ranks || 'no rankings'}\nThe best-ranked answer was ${agg.winner != null ? answers[agg.winner].name + "'s" : 'not clear'}.\n${agree}\n${plan ? 'Return JSON only: {"decision":"the one thing to do first, in one or two sentences","reasons":["the main reason","a second reason"],"agree":["where the advisors agree, one short line each"],"differ":["where they differ, one short line each, naming who"],"steps":[{"step":"one step of the 30-day plan, short enough to be one task","by":"the advisor it came from"}],"answer":"a fuller plan in at most 150 words"}. At most six steps. Use only figures the brief gives. Plain text, no Markdown.' : 'Return JSON only: {"decision":"the decision or answer in one or two sentences","reasons":["the main reason","a second reason"],"answer":"a fuller final answer in at most 150 words"}. Plain text, no Markdown.'}` },
   ];
 }
 
@@ -90,23 +90,47 @@ export function parseRecommendation(text, { bare = false } = {}) {
   return t.split(' ').slice(0, 8).join(' ');
 }
 /** The course a phrase names, for counting: yes, no, wait, "no <thing>" or the key word the phrase starts with. */
-export function recKey(phrase) {
-  const w = String(phrase || '').toLowerCase().replace(/[\u2019]/g, "'").replace(/[^\p{L}\p{N}\s'-]/gu, ' ').split(/\s+/).filter(Boolean).filter(x => !['the', 'a', 'an', 'just'].includes(x));
-  const [a, b, c] = w;
-  if (['yes', 'proceed'].includes(a) || (a === 'go' && b === 'ahead') || (a === 'do' && b === 'it')) return 'yes';
-  if (['wait', 'delay', 'postpone', 'defer'].includes(a) || (a === 'hold' && b === 'off') || (a === 'not' && b === 'yet')) return 'wait';
-  if (a === 'no') return 'no';
-  if (['not', "don't", 'dont', 'never', 'avoid'].includes(a)) return b ? 'no ' + stem(b) : 'no';
-  if (a === 'do' && b === 'not') return c ? 'no ' + stem(c) : 'no';
-  return stem(a || '');
+export function recKey(phrase) { return keyParts(phrase).key; }
+const words = (phrase) => String(phrase || '').toLowerCase().replace(/[\u2019]/g, "'").replace(/[^\p{L}\p{N}\s'-]/gu, ' ').split(/\s+/).filter(Boolean).filter(x => !['the', 'a', 'an', 'just'].includes(x));
+/** The key and how many leading words it took. */
+function keyParts(phrase) {
+  const w = words(phrase); const [a, b, c] = w;
+  const k = (key, used) => ({ key, rest: w.slice(used) });
+  if (['yes', 'proceed'].includes(a)) return k('yes', 1);
+  if ((a === 'go' && b === 'ahead') || (a === 'do' && b === 'it')) return k('yes', 2);
+  if (['wait', 'delay', 'postpone', 'defer'].includes(a)) return k('wait', 1);
+  if ((a === 'hold' && b === 'off') || (a === 'not' && b === 'yet')) return k('wait', 2);
+  if (a === 'no') return k('no', 1);
+  if (['not', "don't", 'dont', 'never', 'avoid', 'skip', 'drop'].includes(a)) return b ? k('no ' + stem(b), 2) : k('no', 1);
+  if (a === 'do' && b === 'not') return c ? k('no ' + stem(c), 3) : k('no', 2);
+  return k(stem(a || ''), 1);
 }
+const FILLER = new Set(['to', 'for', 'of', 'with', 'and', 'in', 'on', 'at', 'by', 'your', 'our', 'my', 'it', 'this', 'that', 'first', 'now', 'then', 'more', 'new', 'some', 'all']);
+/** The content words after the key, stemmed, without figures: what makes "launch a starter pack" a different course from "launch a brunch box". */
+const restOf = (phrase) => new Set(keyParts(phrase).rest.filter(x => !FILLER.has(x) && !/\d/.test(x)).map(stem));
 const stem = (w) => (w.length > 4 ? w.replace(/(ing|ed|es|s)$/, '') : w).replace(/e$/, '');   // buying, buys, buy: one key
 const figures = (p) => (String(p).replace(/(\d),(?=\d)/g, '$1').match(/\d+(?:\.\d+)?/g) || []).join(' ');
 /** Two phrases recommend the same course when they start with the same key word and give no different figures. */
 export function sameCourse(p, q) {
   if (recKey(p) !== recKey(q)) return false;
   const [x, y] = [figures(p), figures(q)];
-  return !x || !y || x === y;
+  if (x && y && x !== y) return false;
+  const [a, b] = [restOf(p), restOf(q)].sort((m, n) => m.size - n.size);   // the shorter phrase's words all in the longer one
+  return [...a].every(w => b.has(w));
+}
+const groupsOf = (given) => { const groups = []; for (const r of given) { const g = groups.find(x => sameCourse(x[0].recommendation, r.recommendation)); g ? g.push(r) : groups.push([r]); } return groups.sort((a, b) => b.length - a.length); };
+/** The course more than half of the seats that answered recommend ({ course, names }), or null. */
+export function majority(recs) {
+  const top = groupsOf(recs.filter(r => r.recommendation))[0];
+  return top && top.length * 2 > recs.length ? { course: top[0].recommendation, names: top.map(r => r.name) } : null;
+}
+/** True when a Verdict's text follows the course: the same key, or most of the course's words with no turn to no or wait. */
+export function belongsTo(text, course) {
+  const k = recKey(course), d = recKey(text); if (k === d) return true;
+  const neg = (x) => x === 'no' || x.startsWith('no ');
+  if (d === 'wait' || k === 'wait' || neg(d) !== neg(k)) return false;
+  const have = new Set(words(text).map(stem)); const need = [...(k === 'yes' ? [] : [k]), ...restOf(course)];
+  return need.length > 0 && need.filter(w => have.has(w)).length * 2 >= need.length;
 }
 const COUNT = ['no', 'one', 'two', 'three', 'four', 'five'];
 /** The agreement line from the seats that answered ([{ name, recommendation }]), counted by code; '' when no seat gave a
@@ -114,18 +138,69 @@ const COUNT = ['no', 'one', 'two', 'three', 'four', 'five'];
 export function agreement(recs) {
   const n = recs.length; const given = recs.filter(r => r.recommendation);
   if (n < 2 || !given.length) return '';
-  const groups = [];
-  for (const r of given) { const g = groups.find(x => sameCourse(x[0].recommendation, r.recommendation)); g ? g.push(r) : groups.push([r]); }
-  groups.sort((a, b) => b.length - a.length);
+  const groups = groupsOf(given);
   const missing = n - given.length;
   const none = missing ? `; ${missing === 1 ? 'one seat' : (COUNT[missing] || missing) + ' seats'} gave no clear recommendation` : '';
   const top = groups[0]; const course = top[0].recommendation;
+  if (top.length * 2 <= n) return 'The seats differ: ' + given.map(r => `${r.name}: ${r.recommendation}`).join('; ') + none;   // no majority: each seat's own line
   if (groups.length === 1) {
     if (missing) return `${top.length} of ${n} seats recommend${top.length === 1 ? 's' : ''} ${course}${none}`;
     return n === 2 ? `Both seats that answered agree: ${course}` : `All ${COUNT[n] || n} seats agree: ${course}`;
   }
-  if (top.length > groups[1].length) return `${top.length} of ${n} seats agree: ${course}; ` + groups.slice(1).flat().map(r => `${r.name} differs: ${r.recommendation}`).join('; ') + none;
-  return 'The seats disagree: ' + given.map(r => `${r.name}: ${r.recommendation}`).join('; ') + none;
+  return `${top.length} of ${n} seats agree: ${course}; ` + groups.slice(1).flat().map(r => `${r.name} differs: ${r.recommendation}`).join('; ') + none;
+}
+
+// ---- what reaches the screen: plain text, and every figure no record gave marked on that figure
+/** Markdown marks drawn as plain text: bold, italics, headings, quotes, code and "* " bullets. "5 * 3" stays. */
+export function plainText(text) {
+  return String(text ?? '')
+    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, '').replace(/^[ \t]*>[ \t]?/gm, '').replace(/^([ \t]*)[*+][ \t]+/gm, '$1- ')
+    .replace(/\*\*([^*\n]+?)\*\*/g, '$1').replace(/__([^_\n]+?)__/g, '$1').replace(/\*\*/g, '')
+    .replace(/(^|[\s(])\*(?=\S)([^*\n]+?)(?<=\S)\*(?=[\s).,;:!?]|$)/gm, '$1$2')
+    .replace(/`([^`\n]*)`/g, '$1').replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, '$1 ($2)');
+}
+const PRE = String.raw`(?:US\$|A\$|C\$|S\$|Rs\.?\s?|INR\s?|USD\s?|EUR\s?|GBP\s?|[₹$€£¥])`;
+const NUM = String.raw`\d+(?:,\d{2,3})*(?:\.\d+)?`;
+const FIGURE = new RegExp(String.raw`(?<![\p{L}\p{N}_:/.,$₹€£¥\-‐‑‒])(${PRE})?(${NUM})(?:\s?(?:[\-‐‑‒–—]|to)\s?(?:${PRE})?(${NUM}))?(?:\+(?!\p{N}))?(\s?(?:%|per ?cent\b|k\b|K\b|lakhs?\b|lacs?\b|crores?\b|cr\b|million\b|mn\b|billion\b|bn\b))?(?:\+(?!\p{N}))?(\s(?:rupees?|INR|USD|dollars?|euros?|pounds?)\b)?((?:[-‐‑]\p{L}+)+)?(?![\p{N}\p{L}]|[:/.,]\d)`, 'gu');
+const CODE = [[/^(?:₹|rs\.?|inr|rupees?)$/i, 'INR'], [/^(?:\$|usd|dollars?|us\$)$/i, 'USD'], [/^a\$$/i, 'AUD'], [/^c\$$/i, 'CAD'], [/^s\$$/i, 'SGD'], [/^(?:€|eur|euros?)$/i, 'EUR'], [/^(?:£|gbp|pounds?)$/i, 'GBP'], [/^¥$/, 'JPY']];
+const codeOf = (t) => { const x = String(t || '').trim(); return x ? (CODE.find(([re]) => re.test(x))?.[1] || null) : null; };
+const TIME = /^(?:[-‐‑]|\s)?(?:days?|weeks?|months?|years?|yrs?|hours?|hrs?|minutes?|mins?|am|pm|a\.m\.|p\.m\.)(?![\p{L}])/iu;
+const LABEL = /\b(?:step|day|week|month|phase|stage|option|round|part|point|record|source|page|item|table|no\.)\s*$/i;
+/** Numbers the question and the brief give: the only records a seat has. */
+export const givenFigures = (text) => new Set((String(text || '').match(/\d+(?:,\d{2,3})*(?:\.\d+)?/g) || []).map(x => x.replace(/,/g, '')));
+/** Each figure that no record gave, and each amount in another currency than the owner's, gets " (not checked)" right after
+ *  the whole figure (its sign, scale and unit included). Labels, counts of seats, durations, times and years are not figures. */
+export function markFigures(text, { given = new Set(), currency = '' } = {}) {
+  // the mark is put by this rule only: one a model wrote itself (after a word as often as after a figure) goes first;
+  // digits a model wrote small ("₹350–₄₅₀") are read as the digits they are
+  const t = String(text ?? '').replace(/[ \t]*\((?:source )?not checked\)/gi, '').replace(/[\u2080-\u2089]/g, (d) => String(d.charCodeAt(0) - 0x2080));
+  return t.replace(FIGURE, (m, pre, a, b, scale, post, comp, at, all) => {
+    const after = all.slice(at + m.length), before = all.slice(0, at);
+    if (/^\s*\(?not checked/i.test(after)) return m;
+    const cur = codeOf(pre) || codeOf(post);
+    const foreign = !!(cur && currency && cur !== String(currency).toUpperCase());
+    if (!foreign) {
+      if (!cur && !scale && (TIME.test(comp || '') || TIME.test(after))) return m;
+      if (!cur && (LABEL.test(before) || (/(?:^|\n)[ \t]*$/.test(before) && /^[.)]/.test(after)))) return m;   // "Step 2", a numbered line
+      if (!cur && (/^\s+of\s+\d/.test(after) || /\d\s+of\s+$/.test(before))) return m;
+      if (!cur && !scale && !b && /^(?:19|20)\d\d$/.test(a)) return m;
+      if ([a, b].filter(Boolean).every(x => given.has(x.replace(/,/g, '')))) return m;
+    }
+    return m + ' (not checked)';
+  });
+}
+
+/** A source the seat says it used. The seats read no page and hold no talks with the owner: only the question and the brief
+ *  are records. "according to ..." runs to the end of its clause; "studies show" and "as we discussed" are the claim itself. */
+const SOURCE = new RegExp(String.raw`\b(?:according to|as per|based on)\s+(?:our|your|the|my|recent|past|previous|earlier|industry|market)\b[^,.;:!?\n]{0,60}|\b(?:as (?:we|I) (?:discussed|mentioned|agreed|noted|said)|as (?:discussed|mentioned|agreed|noted) (?:earlier|before|previously))\b|\b(?:(?:our|your) (?:previous|earlier|past) (?:discussions?|conversations?|talks?|meetings?))\b|\b(?:studies|research|surveys?|data|reports?|statistics|industry data|market research)\s+(?:shows?|suggests?|found|finds|indicates?|says?)\b`, 'gi');
+const RECORD = /\b(?:brief|question|desk'?s records)\b/i;
+/** Each such source gets " (source not checked)" right after it, unless it names the brief or the question. */
+export function markSources(text) {
+  return String(text ?? '').replace(SOURCE, (m, at, all) => {
+    const w = m.replace(/\s+$/, ''); const after = all.slice(at + w.length);
+    if (RECORD.test(w) || /^\s*\(?(?:source )?not checked/i.test(after)) return m;
+    return w + ' (source not checked)' + m.slice(w.length);
+  });
 }
 
 // ---- answers cut off by a token limit: no half sentence reaches the seat card or the Verdict

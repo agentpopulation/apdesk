@@ -15,7 +15,7 @@ const CSS = `
 .cn .seats.four{grid-template-columns:repeat(2,minmax(0,1fr))}
 .cn-steps{margin:6px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
 .cn-steps li{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap}.cn-steps li span{flex:1;min-width:180px}
-@media (max-width:860px){.cn{grid-template-columns:minmax(0,1fr)}.cn .seats{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:860px){.cn-root{overflow:auto}.cn{grid-template-columns:minmax(0,1fr);flex:none}.cn-main,.cn-side{overflow:visible}.cn .seats{grid-template-columns:minmax(0,1fr)}}
 `;
 const API = 'm/council/';
 /** The Verdict's lists for a plan: where the advisors agree and differ, and the proposed steps, each with its own task button. */
@@ -83,7 +83,7 @@ async function render(el, ui, routeArg) {
       h('div', { class: 'row' }, h('span', { class: 'av' + (i === 2 ? ' g' : '') }, seat.name[0]), h('div', null, h('b', null, seat.name), h('div', { class: 'sub' }, `${seat.stance} · ${label}`)),
         running && !a?.text && !a?.error ? pill('Answering', 'run') : a?.cut ? pill('Cut short', 'wait') : null),
       a?.text && a.fellBack && a.setLabel && a.label && a.setLabel !== a.label ? h('div', { class: 'sub cn-note' }, `answered by ${a.label}; ${a.setLabel} was not answering`) : null,
-      a?.text ? h('div', { class: 'sub cn-ans' }, a.text) : a?.error ? h('p', { class: 'sub' }, 'Could not answer: ' + a.error) : run ? h('p', { class: 'sub' }, running ? 'Thinking on its own…' : 'No answer.') : h('p', { class: 'sub' }, seat.brief || ''),
+      a?.text ? h('div', { class: 'sub cn-ans' }, a.text) : a?.late ? h('p', { class: 'sub' }, 'Did not answer in time, so the Council went on without this seat.') : a?.error ? h('p', { class: 'sub' }, 'Could not answer: ' + a.error) : run ? h('p', { class: 'sub' }, running ? 'Thinking on its own…' : 'No answer.') : h('p', { class: 'sub' }, seat.brief || ''),
       rk?.ranked?.length ? h('div', { class: 'sub' }, `Ranked the answers: ${rk.ranked.join(' › ')}${rk.label && rk.label !== a?.label ? ' (' + rk.label + ')' : ''}`) : running && a?.text ? h('div', { class: 'sub' }, 'Reviewing the others…') : null,
       v ? h('div', { class: 'row' }, firsts ? pill(firsts === 1 ? 'First choice of 1 seat' : `First choice of ${firsts} seats`, 'ok') : null, avg ? pill(`Average place ${avg.avg}`) : null) : null,
       !running ? h('div', { class: 'row' }, h('span', { class: 'sub' }, 'Seat\'s model setting'), modelSelect(seat, i)) : null);
@@ -106,7 +106,7 @@ async function render(el, ui, routeArg) {
       v.agreeLine && v.rankLine ? h('div', { class: 'sub' }, v.rankLine) : null,
       h('div', { class: 'sub' }, `Written by ${v.label}`),
       v.answer ? full : null,
-      h('div', { class: 'row' }, v.steps?.length ? null : btn('Turn into a task', { kind: 'ghost', onClick: act('task') }), v.steps?.length ? null : btn('Research this', { kind: 'ghost', onClick: act('research') }), v.answer ? btn('Full answer', { kind: 'ghost sm', onClick: () => { full.hidden = !full.hidden; } }) : null));
+      h('div', { class: 'row' }, v.steps?.length || v.split ? null : btn('Turn into a task', { kind: 'ghost', onClick: act('task') }), v.steps?.length || st.formats.find(f => f.id === st.format)?.plan ? null : btn('Research this', { kind: 'ghost', onClick: act('research') }), v.answer ? btn('Full answer', { kind: 'ghost sm', onClick: () => { full.hidden = !full.hidden; } }) : null));
   }
 
   function paint() {
@@ -114,7 +114,7 @@ async function render(el, ui, routeArg) {
     const q = h('input', { type: 'text', class: 'cn-q', placeholder: st.formats.find(f => f.id === st.format)?.plan ? 'Optional: what to focus on. Leave empty for a 30-day plan.' : 'Ask the Council: build or buy? Open a sales office? …', value: st.room ? st.room.question : draft, 'aria-label': 'Question for the Council', oninput: (e) => { draft = e.target.value; }, onkeydown: (e) => { if (e.key === 'Enter') go(); } });
     const fmtIdx = Math.max(0, st.formats.findIndex(f => f.id === st.format));
     const head = st.room
-      ? h('div', { class: 'row' }, h('h3', { style: { flex: '1', minWidth: '0' } }, st.room.question), pill(st.room.formatLabel),
+      ? h('div', { class: 'row' }, h('h3', { style: { flex: '1 1 260px', minWidth: '0' } }, st.room.question), pill(st.room.formatLabel),
           running ? btn('Stop', { kind: 'stop', onClick: async () => { try { await api(`jobs/${run.jobId}/stop`, { method: 'POST' }); } catch (e) { toast(e.message, 'err'); } } }) : btn(run ? 'Run again with these models' : 'Run the debate', { onClick: () => rerun() }))
       : h('div', { class: 'row' }, q, st.formats.length ? seg(st.formats.map(f => f.label), fmtIdx, async (_, i) => { st.format = st.formats[i].id; await loadDefaults(); paint(); }) : null, btn('Run the debate', { onClick: () => go() }));
     const runs = st.runs.length > 1 ? h('div', { class: 'row' }, h('span', { class: 'sub' }, 'Runs of this room:'), st.runs.map(r => btn(`${fmt.when(r.created)} · ${r.verdict?.voteLine || STATUS[r.status] || r.status}`, { kind: r.id === run?.id ? 'sm' : 'ghost sm', onClick: () => { st.run = r; paint(); } }))) : null;
@@ -156,12 +156,12 @@ export const chatCards = {
     const { h, btn, toast } = ui;
     const act = (action) => async () => { try { const r = await ui.api(`m/council/runs/${c.runId}/action`, { body: { action } }); toast(action === 'research' ? 'Research started' : 'Task created', 'ok'); if (r.go) location.hash = r.go; } catch (e) { toast(e.message, 'err'); } };
     return h('div', { class: 'card verdict' },
-      h('div', { class: 'stack', style: { gap: '6px', marginBottom: '8px' } }, (c.seats || []).map(s => h('div', { class: 'sub' }, h('b', null, s.name), ` · ${s.stance} · ${s.fellBack || s.label || 'no answer'}: `, (s.summary || 'Could not answer.') + (s.cut ? ' (cut short)' : '')))),
+      h('div', { class: 'stack', style: { gap: '6px', marginBottom: '8px' } }, (c.seats || []).map(s => h('div', { class: 'sub' }, h('b', null, s.name), ` · ${s.stance} · ${s.fellBack || s.label || 'no answer'}: `, (s.summary || (s.late ? 'Did not answer in time.' : 'Could not answer.')) + (s.cut ? ' (cut short)' : '')))),
       h('b', null, c.title || 'Verdict'), c.agreeLine && c.rankLine ? h('div', { class: 'sub' }, c.rankLine) : null, h('p', null, c.decision),
       c.reasons?.length ? h('ul', { class: 'sub', style: { margin: '4px 0', paddingLeft: '18px' } }, c.reasons.map(r => h('li', null, r))) : null,
       ...planBits({ agree: c.agree, differ: c.differ, steps: c.steps }, c.runId, ui),
       (c.notes || []).map(n => h('div', { class: 'sub', style: { borderLeft: '3px solid var(--warn)', paddingLeft: '8px', margin: '4px 0' } }, n)),
       h('div', { class: 'sub' }, 'Written by ' + c.label),
-      h('div', { class: 'row', style: { marginTop: '8px' } }, c.steps?.length ? null : btn('Turn into a task', { kind: 'ghost sm', onClick: act('task') }), c.steps?.length ? null : btn('Research this', { kind: 'ghost sm', onClick: act('research') }), btn('Open the Council', { kind: 'ghost sm', onClick: () => { location.hash = '#/research/council/' + c.roomId; } })));
+      h('div', { class: 'row', style: { marginTop: '8px' } }, c.steps?.length || c.split ? null : btn('Turn into a task', { kind: 'ghost sm', onClick: act('task') }), c.steps?.length || c.plan ? null : btn('Research this', { kind: 'ghost sm', onClick: act('research') }), btn('Open the Council', { kind: 'ghost sm', onClick: () => { location.hash = '#/research/council/' + c.roomId; } })));
   },
 };

@@ -77,9 +77,10 @@ export async function activate(ctx) {
     if (!owner) return ownerOnly(res);
     if (!BUILT_IN.some(b => b.id === params.id)) return noAgent(res);
     if (ctx.agents.get(params.id)) return ctx.json(res, { error: 'That agent is already on your team.' }, 409);
+    const back = !!retired()[params.id];   // retired before: it comes back; never on the team before: it joins
     const a = ctx.agents.create(offTeam().find(b => b.id === params.id));
     const { [a.id]: _, ...rest } = retired(); ctx.kv.set('retired', rest);
-    ctx.json(res, a);
+    ctx.json(res, { ...a, back, message: back ? `${a.name} is back on your team.` : `${a.name} joined your team.` });
   });
   /** One of the owner's own skills (text). It is on for no agent until he ticks it on an agent's page. */
   function addSkill(body) {

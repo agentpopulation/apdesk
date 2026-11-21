@@ -95,7 +95,7 @@ test('council: an answer cut off mid-sentence is continued once, else trimmed to
     let r = (await t.call('/api/m/council/ask', { body: { question: 'Should we build or buy?' } })).json;
     assert.equal((await t.core.jobs.wait(r.jobId, 10000)).status, 'done');
     let run = (await t.call('/api/m/council/runs/' + r.runId)).json.run;
-    for (const a of run.answers) { assert.equal(a.text, half + ' three years. So we should buy.'); assert.equal(a.cut, false); }
+    for (const a of run.answers) { assert.equal(a.text, half.replace('540,000 rupees', '540,000 rupees (not checked)') + ' three years. So we should buy.'); assert.equal(a.cut, false); }
     // the continuation is cut too: kept up to the last full sentence, marked "cut short"; the chairman's own cut-off reply is not quoted half
     r = (await t.call('/api/m/council/ask', { body: { question: 'Should we build or buy? (trim)' } })).json;
     assert.equal((await t.core.jobs.wait(r.jobId, 10000)).status, 'done');
@@ -138,10 +138,10 @@ test('council: each seat\'s recommendation line is read tolerantly, and agreemen
   const seats = (...r) => ['Builder', 'Buyer', 'Judge'].map((name, k) => ({ name, recommendation: r[k] ?? null }));
   assert.equal(agreement(seats('buy the CRM', 'Buy a CRM', 'buy')), 'All three seats agree: buy the CRM');
   assert.equal(agreement(seats('buy the CRM', 'buy', 'build in-house')), '2 of 3 seats agree: buy the CRM; Judge differs: build in-house');
-  assert.equal(agreement(seats('build', 'buy', 'wait')), 'The seats disagree: Builder: build; Buyer: buy; Judge: wait');
+  assert.equal(agreement(seats('build', 'buy', 'wait')), 'The seats differ: Builder: build; Buyer: buy; Judge: wait');
   assert.equal(agreement(seats('buy the CRM', null, 'buy')), '2 of 3 seats recommend buy the CRM; one seat gave no clear recommendation');
-  assert.equal(agreement(seats('build', null, 'buy')), 'The seats disagree: Builder: build; Judge: buy; one seat gave no clear recommendation');
-  assert.equal(agreement(seats(null, null, 'wait')), '1 of 3 seats recommends wait; two seats gave no clear recommendation');
+  assert.equal(agreement(seats('build', null, 'buy')), 'The seats differ: Builder: build; Judge: buy; one seat gave no clear recommendation');
+  assert.equal(agreement(seats(null, null, 'wait')), 'The seats differ: Judge: wait; two seats gave no clear recommendation', 'one of three is no majority');
   assert.equal(agreement(seats(null, null, null)), '', 'nothing to count: the Verdict falls back to the ranking with a plain note');
   assert.equal(agreement([{ name: 'Builder', recommendation: 'buy' }, { name: 'Judge', recommendation: 'buy now' }]), 'Both seats that answered agree: buy');
 });
@@ -174,7 +174,7 @@ test('council: no code rewrites a sum in an answer (checkArithmetic removed; it 
   assert.equal(stages.checkArithmetic, undefined);
 });
 
-test('council: the Verdict headline counts the seats\' recommendations, the ranking keeps its own name, a fallback model is named, the seats\' sums are left as written with the figures note', async () => {
+test('council: the Verdict headline counts the seats\' recommendations, the ranking keeps its own name, a fallback model is named, the seats\' sums are left as written, each unchecked figure marked', async () => {
   const script = (body) => {
     const u = body.messages.at(-1).content; const s = body.messages[0].content;
     if (body.model === 'broken-model') return { status: 500, text: 'down' };
@@ -191,8 +191,9 @@ test('council: the Verdict headline counts the seats\' recommendations, the rank
     assert.match(run.verdict.rankLine, /^Best-argued answer by the seats' own ranking: (Builder|Buyer|Judge|\w+)/);
     assert.ok(!/agreed \d+ to \d+/.test(JSON.stringify(run.verdict)));
     // a case the earlier rule got wrong: a correct lakh sum was flagged; now no seat answer or Verdict line is changed by code
-    for (const a of run.answers) assert.equal(a.text, 'Buy the CRM. At 1,500 × 10 × 12 = 18,000 rupees a year it is cheaper than building.\nRecommendation: buy the CRM');
-    assert.equal(run.verdict.reasons[0], 'Hiring 2 people at ₹6 lakh each plus ₹3 lakh tools = ₹15 lakh.');
+    // the figures the question gave (1,500 and 10) stay as they are; the others are marked on the figure, the sum itself unchanged
+    for (const a of run.answers) assert.equal(a.text, 'Buy the CRM. At 1,500 × 10 × 12 (not checked) = 18,000 rupees (not checked) a year it is cheaper than building.\nRecommendation: buy the CRM');
+    assert.equal(run.verdict.reasons[0], 'Hiring 2 (not checked) people at ₹6 lakh (not checked) each plus ₹3 lakh (not checked) tools = ₹15 lakh (not checked).');
     assert.ok(!/does not add up/.test(JSON.stringify(run)));
     assert.ok(run.verdict.notes.includes(FIGURES_NOTE), 'the figures note tells the owner the figures are not checked');
     // a seat whose set model is not answering: another model writes it, and the answer says so
@@ -292,4 +293,165 @@ test('turnaround: counts come from Sales and recent tasks when they are on; Task
     const a = await t.call(`/api/m/council/runs/${r.runId}/action`, { body: { action: 'task', step: 0 } });
     assert.equal(a.status, 409); assert.match(a.json.error, /Tasks is not on/);
   } finally { await t.close(); }
+});
+
+// ---- figures, currency, markdown, agreement that is not forced, slow seats
+import { markFigures, plainText, majority } from './stages.js';
+import { ownerLine } from './brief.js';
+
+test('council: a figure no record gave is marked on that figure, whole, never inside a word; another currency is marked, never converted', () => {
+  const inr = { currency: 'INR' };
+  const given = new Set(['12']);
+  assert.equal(markFigures('Start with $10,000 initially and charge $30 per box.', { given, ...inr }), 'Start with $10,000 (not checked) initially and charge $30 (not checked) per box.');
+  assert.equal(markFigures('Expect ₹4,500 monthly from 3 offices.', { given, ...inr }), 'Expect ₹4,500 (not checked) monthly from 3 (not checked) offices.');
+  assert.equal(markFigures('Budget ₹6 lakh each, about 1,50,000 rupees a quarter, a 20% margin.', { given, ...inr }), 'Budget ₹6 lakh (not checked) each, about 1,50,000 rupees (not checked) a quarter, a 20% (not checked) margin.');
+  assert.equal(markFigures('Call the 12 leads you have.', { given, ...inr }), 'Call the 12 leads you have.', 'a figure from the records stays as it is');
+  assert.equal(markFigures('Step 1: a 30-day trial. Step 2: review in 2 weeks. Run it in Q3 for B2B buyers on gpt-4o at 9:30 in 2027.', { given, ...inr }), 'Step 1: a 30-day trial. Step 2: review in 2 weeks. Run it in Q3 for B2B buyers on gpt-4o at 9:30 in 2027.');
+  assert.equal(markFigures('Charge ₹250 (not checked) per box.', { given, ...inr }), 'Charge ₹250 (not checked) per box.', 'never marked twice');
+  assert.equal(markFigures('Price it at $30.', { given: new Set(['30']), ...inr }), 'Price it at $30 (not checked).', 'an amount in another currency is marked even when the number was given');
+  assert.equal(markFigures('Price it at $30.', { given: new Set(['30']), currency: 'USD' }), 'Price it at $30.');
+  assert.equal(markFigures('2 of 4 advisors want a ₹200-300 box.', { given, ...inr }), '2 of 4 advisors want a ₹200-300 (not checked) box.');
+  assert.equal(markFigures('Compile a 50\u2011office list; see Record 2. Reach 20-office parks in a 30\u2011day push.', { given, ...inr }), 'Compile a 50\u2011office (not checked) list; see Record 2. Reach 20-office (not checked) parks in a 30\u2011day push.', 'a compound stays whole; a label number is not a figure');
+});
+
+test('council: Markdown marks are drawn as plain text, never shown raw', () => {
+  assert.equal(plainText('**Step 1:** Call the office.\n## Plan\n- *Try* `one` box\n* Two\n> __Note__'), 'Step 1: Call the office.\nPlan\n- Try one box\n- Two\nNote');
+  assert.equal(plainText('Costs 5 * 3 = 15.'), 'Costs 5 * 3 = 15.');
+});
+
+test('council: agreement needs a majority of the same course; fewer says the seats differ and lists each', () => {
+  const four = (...r) => ['AI officer', 'Product lead', 'Sales lead', 'Co-founder'].map((name, k) => ({ name, recommendation: r[k] ?? null }));
+  assert.ok(!sameCourse('Launch targeted office starter pack', 'Launch weekend brunch box'), 'one shared first word is not one course');
+  assert.equal(agreement(four('Launch targeted office starter pack', 'Launch weekend brunch box', 'Call office managers', 'Launch office starter pack')),
+    'The seats differ: AI officer: Launch targeted office starter pack; Product lead: Launch weekend brunch box; Sales lead: Call office managers; Co-founder: Launch office starter pack');
+  assert.equal(majority(four('Launch office starter pack', 'Launch weekend brunch box', 'Call office managers', 'Launch targeted office starter pack')), null);
+  assert.equal(agreement(four('fix the offer', 'fix the offer first', 'call leads', 'fix offer')), '3 of 4 seats agree: fix the offer; Sales lead differs: call leads');
+  assert.deepEqual(majority(four('fix the offer', 'fix the offer first', 'call leads', 'fix offer')).names, ['AI officer', 'Product lead', 'Co-founder']);
+  const three = (...r) => ['Builder', 'Buyer', 'Judge'].map((name, k) => ({ name, recommendation: r[k] ?? null }));
+  assert.equal(agreement(three(null, null, 'wait')), 'The seats differ: Judge: wait; two seats gave no clear recommendation');
+});
+
+test('council: every seat reads the owner\'s country and currency and that a figure needs a record or a page; figures are marked, Markdown is gone, the Verdict text belongs to its count', async () => {
+  assert.match(ownerLine({ country: 'IN', currency: 'INR', locale: 'en-IN' }), /India.*Indian rupees? \(INR, ₹\)/i);
+  assert.match(ownerLine({ country: 'IN', currency: 'INR', locale: 'en-IN' }), /record or a page/);
+  const seen = [];
+  const script = (body) => {
+    const s = body.messages[0].content; const u = body.messages.at(-1).content;
+    if (/chairman/.test(s)) { seen.push({ chair: u }); return JSON.stringify({ decision: 'Skip the brunch box and run a $500 ad.', reasons: ['Ads reach more offices.'], answer: 'Run ads.' }); }
+    if (/review answers/.test(s)) return JSON.stringify({ ranking: ['A', 'B', 'C'] });
+    seen.push({ seat: s, user: u });
+    if (/You are Buyer/.test(s)) return '**Not now.** It needs $10,000 initially and only reaches 40 offices.\nRecommendation: wait';
+    return '**Yes.** At $30 per box it makes $4,500 monthly.\nRecommendation: yes, add the brunch box';
+  };
+  const t = await testDesk({ modules: ['council'], script });
+  try {
+    for (const [k, v] of Object.entries({ country: 'IN', currency: 'INR', timeZone: 'Asia/Kolkata', locale: 'en-IN' })) t.core.settings.set(k, v);
+    const r = (await t.call('/api/m/council/ask', { body: { question: 'Should my bakery add a weekend brunch box for office teams?', format: 'decision' } })).json;
+    assert.equal((await t.core.jobs.wait(r.jobId, 10000)).status, 'done');
+    const run = (await t.call('/api/m/council/runs/' + r.runId)).json.run;
+    for (const p of seen.filter(x => x.seat)) { assert.match(p.seat + p.user, /India/); assert.match(p.seat + p.user, /INR/); assert.match(p.seat + p.user, /record or a page/); assert.ok(!/write "not checked"/.test(p.seat + p.user), 'no seat is told to put the words in place of a fact'); }
+    assert.match(seen.find(x => x.chair).chair, /India/);
+    const all = JSON.stringify(run.answers.map(a => a.text)) + JSON.stringify(run.verdict);
+    assert.ok(!/\*\*/.test(all), 'no raw Markdown');
+    assert.ok(!/\$\d[\d,]*(?! \(not checked\))(?![\d,])/.test(all), 'every dollar amount is marked: ' + all);
+    assert.match(run.answers[0].text, /\$30 \(not checked\) per box/);
+    assert.equal(run.verdict.voteLine, '2 of 3 seats agree: yes, add the brunch box; Buyer differs: wait');
+    assert.ok(!/Skip the brunch box/.test(run.verdict.decision), 'a decision against the counted course is not shown under it: ' + run.verdict.decision);
+    assert.match(run.verdict.decision, /brunch box/i);
+  } finally { await t.close(); }
+});
+
+test('council: a seat that has not started answering within the door\'s own limit is skipped as "did not answer in time" and the run goes on', async () => {
+  const srv = await import('./server.js');
+  const was = { ...srv.SEAT_WAIT }; srv.SEAT_WAIT.ms = 400;
+  const script = (body) => {
+    const s = body.messages[0].content;
+    if (/chairman/.test(s)) return JSON.stringify({ decision: 'Buy the CRM.', reasons: ['Cheaper'] });
+    if (/review answers/.test(s)) return JSON.stringify({ ranking: ['A', 'B'] });
+    if (/You are Judge/.test(s)) return { text: 'Late.\nRecommendation: buy', delayMs: 4000 };
+    return 'Buy it.\nRecommendation: buy the CRM';
+  };
+  const t = await testDesk({ modules: ['council'], script });
+  try {
+    const t0 = Date.now();
+    const r = (await t.call('/api/m/council/ask', { body: { question: 'Should we build or buy a CRM?' } })).json;
+    assert.equal((await t.core.jobs.wait(r.jobId, 15000)).status, 'done');
+    assert.ok(Date.now() - t0 < 3500, 'the run did not wait for the slow seat');
+    const run = (await t.call('/api/m/council/runs/' + r.runId)).json.run;
+    assert.equal(run.answers[2].late, true); assert.equal(run.answers[2].text, null); assert.equal(run.answers[2].error, 'did not answer in time');
+    assert.ok(run.answers[0].text && run.answers[1].text);
+  } finally { Object.assign(srv.SEAT_WAIT, was); await t.close(); }
+});
+
+test('council: when the seats differ, a Verdict text that follows no seat\'s course gives way to each seat\'s own words', async () => {
+  let decision = 'Launch a marketing campaign.';
+  const script = (body) => {
+    const s = body.messages[0].content;
+    if (/chairman/.test(s)) return JSON.stringify({ decision, reasons: ['Reach'] });
+    if (/review answers/.test(s)) return JSON.stringify({ ranking: ['A', 'B', 'C'] });
+    const seat = s.match(/You are (\w+)/)[1];
+    return { Builder: 'Build it.\nRecommendation: build in-house', Buyer: 'Buy it.\nRecommendation: buy the CRM', Judge: 'Wait.\nRecommendation: wait for the quote' }[seat];
+  };
+  const t = await testDesk({ modules: ['council'], script });
+  try {
+    let r = (await t.call('/api/m/council/ask', { body: { question: 'Build or buy a CRM?' } })).json;
+    assert.equal((await t.core.jobs.wait(r.jobId, 10000)).status, 'done');
+    let v = (await t.call('/api/m/council/runs/' + r.runId)).json.run.verdict;
+    assert.match(v.voteLine, /^The seats differ: Builder: build in-house; Buyer: buy the CRM; Judge: wait for the quote$/);
+    assert.equal(v.decision, 'The seats differ, so there is no one course yet. Each seat\'s own line is listed below.'); assert.deepEqual(v.reasons, ['Builder: Build it.', 'Buyer: Buy it.', 'Judge: Wait.']); assert.equal(v.split, true);
+    decision = 'Wait for the vendor quote, then decide.';
+    r = (await t.call('/api/m/council/ask', { body: { question: 'Build or buy a CRM?' } })).json;
+    assert.equal((await t.core.jobs.wait(r.jobId, 10000)).status, 'done');
+    v = (await t.call('/api/m/council/runs/' + r.runId)).json.run.verdict;
+    assert.equal(v.decision, 'The seats differ, so there is no one course yet. The chairman\'s text follows the Judge\'s course: Wait for the vendor quote, then decide.', 'a text that follows one seat\'s course is said to be that seat\'s'); assert.equal(v.reasons.length, 3);
+  } finally { await t.close(); }
+});
+
+test('council: a range written with a non-breaking hyphen, and a figure with a plus, are marked whole', () => {
+  const inr = { given: new Set(), currency: 'INR' };
+  assert.equal(markFigures('priced below ₹350‑400 per box', inr), 'priced below ₹350‑400 (not checked) per box');
+  assert.equal(markFigures('lock in 10‑15 corporate clients', inr), 'lock in 10‑15 (not checked) corporate clients');
+  assert.equal(markFigures('at ₹400+ per box', inr), 'at ₹400+ (not checked) per box');
+  assert.equal(markFigures('reach 10k+ offices; 5+3 is 8', { given: new Set(['5', '3', '8']), currency: 'INR' }), 'reach 10k+ (not checked) offices; 5+3 is 8');
+  assert.equal(markFigures('a 48‑hour lead time', inr), 'a 48‑hour lead time');
+});
+
+test('council: a source the seat says it used, which no record or page gave, is marked on that source', () => {
+  const m = stages.markSources;
+  assert.equal(m('It needs more staff, according to our previous discussions.'), 'It needs more staff, according to our previous discussions (source not checked).');
+  assert.equal(m('Studies show office teams order on Fridays.'), 'Studies show (source not checked) office teams order on Fridays.');
+  assert.equal(m('As we discussed, start small.'), 'As we discussed (source not checked), start small.');
+  assert.equal(m('According to the brief, there are 12 leads.'), 'According to the brief, there are 12 leads.', 'the brief is a record the seat has');
+  assert.equal(m('Research shows (source not checked) it works.'), 'Research shows (source not checked) it works.', 'never marked twice');
+});
+
+test('turnaround: when the advisors differ, "Where they agree" never holds the "seats differ" line, the text names the one seat it follows, and no task is offered for the whole Verdict', async () => {
+  const recs = { 'AI officer': 'automate lead sourcing', 'Product lead': 'launch website and social pages', 'Sales lead': 'build office lead list', 'Co-founder': 'partner with office parks' };
+  const script = (body) => {
+    const s = body.messages[0].content;
+    if (/chairman/.test(s)) return JSON.stringify({ decision: 'Launch a simple website and social pages, then a trial discount.', reasons: ['Visibility'] });
+    if (/review answers/.test(s)) return JSON.stringify({ ranking: ['A', 'B', 'C', 'D'] });
+    const seat = s.match(/You are ([\w -]+?), one of/)[1];
+    return `I see few leads.\nStep 1: Do it.\nRecommendation: ${recs[seat]}`;
+  };
+  const t = await testDesk({ modules: ['council', 'tasks'], script });
+  try {
+    const r = (await t.call('/api/m/council/ask', { body: { format: 'turnaround' } })).json;
+    assert.equal((await t.core.jobs.wait(r.jobId, 10000)).status, 'done');
+    const v = (await t.call('/api/m/council/runs/' + r.runId)).json.run.verdict;
+    assert.match(v.voteLine, /^The seats differ: /);
+    assert.deepEqual(v.agree, [], 'no agreement line when the seats differ');
+    assert.match(v.decision, /^The seats differ, so there is no one course yet\. The chairman's text follows the Product lead's course: Launch a simple website/);
+    assert.equal(v.reasons.length, 4, 'each seat\'s own line');
+    assert.deepEqual(v.steps, []); assert.equal(v.split, true);
+    const a = await t.call(`/api/m/council/runs/${r.runId}/action`, { body: { action: 'task' } });
+    assert.equal(a.status, 404, 'no one course, so no task for the whole Verdict');
+  } finally { await t.close(); }
+});
+
+test('council: "(not checked)" is put only by code, on a figure; one a model wrote after a word goes, and digits written small are read as digits', () => {
+  const shown = (x) => stages.markSources(markFigures(plainText(x), { given: new Set(['50']), currency: 'INR' }));
+  assert.equal(shown('Write 50 messages for the owner to check (not checked). Save the owner time (not checked).'), 'Write 50 messages for the owner to check. Save the owner time.');
+  assert.equal(shown('Charge ₹350 (not checked) per box.'), 'Charge ₹350 (not checked) per box.');
+  assert.equal(shown('hit a ₹350–₄₅₀ price point'), 'hit a ₹350–450 (not checked) price point');
 });

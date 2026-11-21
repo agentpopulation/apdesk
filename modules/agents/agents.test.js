@@ -90,3 +90,14 @@ test('four advisor roles wait under "Not on your team"; one click hires one, wit
     assert.ok((await t.call('/api/m/agents/retired')).json.agents.some(a => a.id === 'sales-lead'), 'retired advisors come back to the list');
   } finally { await t.close(); }
 });
+
+test('a first hire says the agent joined the team; a hire after retiring says it is back', async () => {
+  const t = await testDesk({ modules: ['agents'] });
+  try {
+    const first = await t.call('/api/m/agents/retired/ai-officer/hire', { body: {} });
+    assert.equal(first.status, 200); assert.equal(first.json.message, 'AI officer joined your team.');
+    assert.equal((await t.call('/api/m/agents/agents/ai-officer', { method: 'DELETE' })).status, 200);
+    const again = await t.call('/api/m/agents/retired/ai-officer/hire', { body: {} });
+    assert.equal(again.json.message, 'AI officer is back on your team.');
+  } finally { await t.close(); }
+});
