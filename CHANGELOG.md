@@ -181,6 +181,7 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Council tells every seat your country and currency, and a figure with no record or page behind it is marked "(not checked)" on that figure, never inside a phrase. Amounts in another currency are marked the same way and never converted by guess.
 - A Verdict's count comes from the seats' own recommendations. When they differ it says so, lists each seat's line, and never presents one seat's plan as the decision. Formatting marks are no longer shown raw.
 - Hiring an advisor for the first time says "joined your team"; a re-hire says "back on your team". Seats can still write a source that does not exist; nothing marks that yet.
+- The Doctor page tells a refused key from a provider that is only busy: a busy provider is no longer called a key problem. The built-in Free API route is listed with its own last result.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

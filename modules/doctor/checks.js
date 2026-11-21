@@ -17,33 +17,50 @@ export function secondsText(ms) {
 const row = (id, name, state, line, extra = {}) => ({ id, name, state, line, ...extra });
 const stopped = (halted, online, what) => halted ? `Not checked: everything is stopped. Press Resume first, then check again.` : !online ? `Not checked: the desk is Offline, so ${what}.` : null;
 
-/** One tiny call through the door to the free or local route. chat(provider) returns the door's answer or throws. */
-export async function modelCheck({ halted, online, routes, chat }) {
+/** The door's last call with a provider, read apart: a refused key (401, 403), a busy provider (429), no connection
+ *  (a timeout or a network error) or anything else (the provider's own short message). last: { ok, at, error } or none. */
+export function lastResult(last, when) {
+  if (!last) return { kind: 'none', text: 'Not used yet.' };
+  const w = when(last.at);
+  if (last.ok) return { kind: 'ok', text: `The last call worked (${w}).` };
+  const msg = String(last.error || '').trim().replace(/[.!?\s]+$/, '');
+  const status = Number((msg.match(/^HTTP (\d{3})\b/) || [])[1]);
+  if (status === 401 || status === 403) return { kind: 'refused', text: `The provider refused the key (${w}).` };
+  if (status === 429) return { kind: 'busy', text: `Busy right now (${w}): the provider is limiting requests; nothing to change, try again later.` };
+  if (!status && /no answer within|timed? ?out|timeout|fetch failed|network|socket|ECONN|ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(msg)) return { kind: 'unreached', text: `The last call did not reach the provider (${w}); see The internet line.` };
+  return { kind: 'other', text: `The last call did not work (${w})${msg ? ': ' + msg : ''}.` };
+}
+
+/** One tiny call through the door to the free or local route. chat(provider) returns the door's answer or throws.
+ *  free: { name, on } for the built-in Free API, listed with its own last result read after the call. */
+export async function modelCheck({ halted, online, routes, chat, free, lastCalls = () => ({}), when = (x) => x }) {
   const why = stopped(halted, online, 'no model is called');
   if (why) return row('model', 'A model answers', 'skipped', why);
+  const freeLine = () => free ? [`${free.name}: ${free.on ? lastResult(lastCalls().router, when).text : 'switched off.'}`] : [];
   const tried = [];
   for (const provider of routes) {
-    try { const r = await chat(provider); return row('model', 'A model answers', 'fine', `${r.label} answered in ${secondsText(r.ms)}.`, { details: ['This was one real call; it shows in your model calls.'] }); }
+    try { const r = await chat(provider); return row('model', 'A model answers', 'fine', `${r.label} answered in ${secondsText(r.ms)}.`, { details: ['This was one real call; it shows in your model calls.', ...freeLine()] }); }
     catch (e) { if (e?.code === 'halted' || e?.code === 'aborted') return row('model', 'A model answers', 'skipped', 'Not checked: it was stopped.'); tried.push(e?.message ? String(e.message).split('. ')[0] : 'no answer'); }
   }
-  return row('model', 'A model answers', 'problem', routes.length ? 'No free or local model answered.' : 'No free or local model is switched on.', { details: tried.slice(0, 3), todo: 'Open Models and press Test beside the Free API, or get a local model.', place: { page: 'models' } });
+  return row('model', 'A model answers', 'problem', routes.length ? 'No free or local model answered.' : 'No free or local model is switched on.', { details: [...freeLine(), ...tried.slice(0, 3)], todo: 'Open Models and press Test beside the Free API, or get a local model.', place: { page: 'models' } });
 }
 
 /** Which providers have a key and whether the door's last call with it worked. Never a key, not even masked. */
 export function keysCheck({ keys, lastCalls, names, when }) {
   const have = Object.entries(keys || {}).map(([pid, list]) => ({ pid, on: (list || []).filter(k => k.enabled).length, all: (list || []).length })).filter(x => x.all);
   if (!have.length) return row('keys', 'Keys', 'fine', 'No model keys are added. The Free API works without one.', { todo: 'A free key in Models gives faster, steadier answers.', place: { page: 'models' } });
-  const details = []; let bad = 0;
+  const details = []; let bad = 0, refused = 0;
   for (const h of have) {
-    const name = names[h.pid] || h.pid; const last = lastCalls[h.pid];
+    const name = names[h.pid] || h.pid;
     const count = `${h.on} of ${h.all} ${h.all === 1 ? 'key' : 'keys'} on`;
     if (!h.on) { details.push(`${name}: ${count}.`); continue; }
-    if (!last) details.push(`${name}: ${count}. Not used yet.`);
-    else if (last.ok) details.push(`${name}: ${count}. The last call worked (${when(last.at)}).`);
-    else { bad++; details.push(`${name}: ${count}. The last call did not work (${when(last.at)})${last.error ? ': ' + last.error : ''}.`); }
+    const r = lastResult(lastCalls[h.pid], when);
+    if (r.kind === 'refused') refused++;
+    if (r.kind === 'refused' || r.kind === 'other') bad++;
+    details.push(`${name}: ${count}. ${r.text}`);
   }
   return bad
-    ? row('keys', 'Keys', 'problem', `${bad} ${bad === 1 ? 'provider' : 'providers'} failed on the last call.`, { details, todo: 'Open Models, press Test beside that key, and replace it if it is refused.', place: { page: 'models' } })
+    ? row('keys', 'Keys', 'problem', `${bad} ${bad === 1 ? 'provider' : 'providers'} failed on the last call.`, { details, todo: refused ? 'Open Models, press Test beside that key, and replace or re-enter the key.' : 'Open Models and press Test beside that key.', place: { page: 'models' } })
     : row('keys', 'Keys', 'fine', `${have.length} ${have.length === 1 ? 'provider has' : 'providers have'} a key.`, { details });
 }
 

@@ -25,9 +25,41 @@ test('keys: which providers have one and whether the last call worked; never a k
   assert.equal(r.state, 'problem'); assert.match(r.line, /1 provider failed/);
   const text = JSON.stringify(r);
   assert.doesNotMatch(text, /gsk_|AIza|••••|abcd|wxyz/);
-  assert.match(text, /Groq: 1 of 1 key on\. The last call did not work \(10 Mar, 5:30 pm\): HTTP 401/);
+  assert.match(text, /Groq: 1 of 1 key on\. The provider refused the key \(10 Mar, 5:30 pm\)\./);
   assert.match(text, /Google Gemini: 1 of 1 key on\. The last call worked/);
   assert.equal(C.keysCheck({ keys: {}, lastCalls: {}, names: {}, when }).state, 'fine');
+});
+
+test('keys: a refused key, a busy provider, no connection and other errors read apart; only a refused key says replace', () => {
+  const keys = { openrouter: [{ id: 'k1', enabled: true }] };
+  const names = { openrouter: 'OpenRouter' };
+  const run = (error) => C.keysCheck({ keys, lastCalls: { openrouter: { ok: false, at: 'x', error } }, names, when });
+  const busy = run('HTTP 429 Rate limit exceeded: free-models-per-min.');
+  assert.equal(busy.state, 'fine', 'a rate limit is not a key problem');
+  assert.match(busy.details.join(' '), /OpenRouter: 1 of 1 key on\. Busy right now \(10 Mar, 5:30 pm\): the provider is limiting requests; nothing to change, try again later\./);
+  assert.doesNotMatch(JSON.stringify(busy), /replace|re-enter/i);
+  for (const e of ['HTTP 401 Invalid API Key.', 'HTTP 403 Forbidden']) {
+    const r = run(e);
+    assert.equal(r.state, 'problem'); assert.match(r.details.join(' '), /refused the key/); assert.match(r.todo, /replace or re-enter the key/);
+  }
+  for (const e of ['No answer within 30 seconds', 'fetch failed', 'The operation was aborted due to timeout']) {
+    const r = run(e);
+    assert.equal(r.state, 'fine', e); assert.match(r.details.join(' '), /did not reach the provider .*The internet line/); assert.doesNotMatch(JSON.stringify(r), /replace|re-enter/i);
+  }
+  const other = run('HTTP 400 This model does not support tools.');
+  assert.equal(other.state, 'problem'); assert.match(other.details.join(' '), /did not work \(10 Mar, 5:30 pm\): HTTP 400 This model does not support tools\./);
+  assert.doesNotMatch(JSON.stringify(other), /replace|re-enter|\.\./i);
+});
+
+test('the model check lists the built-in Free API with its own last result', async () => {
+  const chat = async () => ({ label: 'Ollama · q', ms: 900 });
+  const busy = await C.modelCheck({ halted: false, online: true, routes: ['router', 'ollama'], chat, free: { name: 'Free API', on: true }, lastCalls: () => ({ router: { ok: false, at: 'x', error: 'HTTP 429 Too many requests.' } }), when });
+  assert.equal(busy.state, 'fine');
+  assert.match(busy.details.join(' '), /Free API: Busy right now \(10 Mar, 5:30 pm\): the provider is limiting requests/);
+  const ok = await C.modelCheck({ halted: false, online: true, routes: ['router'], chat, free: { name: 'Free API', on: true }, lastCalls: () => ({ router: { ok: true, at: 'x' } }), when });
+  assert.match(ok.details.join(' '), /Free API: The last call worked \(10 Mar, 5:30 pm\)\./);
+  const off = await C.modelCheck({ halted: false, online: true, routes: [], chat, free: { name: 'Free API', on: false }, lastCalls: () => ({}), when });
+  assert.match(off.details.join(' '), /Free API: switched off\./);
 });
 
 test('disk, port, updates, local model and switches read as plain lines', () => {
@@ -66,7 +98,7 @@ test('Check my desk on a desk: on by default, owner only, one real call counted,
     const r = (await t.call('/api/m/doctor/check', { body: {} })).json;
     const by = Object.fromEntries(r.checks.map(c => [c.id, c]));
     assert.deepEqual(Object.keys(by), ['model', 'keys', 'internet', 'disk', 'local', 'updates', 'port', 'switches']);
-    assert.equal(by.model.state, 'fine', by.model.line); assert.match(by.model.line, /answered in/);
+    assert.equal(by.model.state, 'fine', by.model.line); assert.match(by.model.line, /answered in/); assert.match(by.model.details.join(' '), /Free API: The last call worked/);
     assert.equal(t.core.storage.get('SELECT COUNT(*) AS n FROM calls').n, before + 1, 'counted as a real call');
     assert.equal(t.core.storage.get('SELECT purpose FROM calls ORDER BY id DESC LIMIT 1').purpose, 'small');
     assert.equal(by.internet.state, 'fine'); assert.equal(out.length, 1);

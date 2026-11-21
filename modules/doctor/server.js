@@ -87,7 +87,7 @@ export async function activate(ctx) {
     const bench = ctx.modules.api('bench');
     let benchEnabled = false; try { benchEnabled = !!bench?.view?.()?.settings?.enabled; } catch {}
     const checks = [
-      await C.modelCheck({ halted, online: on, routes: halted || !on ? [] : await freeRoutes(), chat: askModel }),
+      await C.modelCheck({ halted, online: on, routes: halted || !on ? [] : await freeRoutes(), chat: askModel, free: { name: active.find(a => a.provider === 'router')?.shortLabel || 'Free API', on: S('router.enabled') !== false }, lastCalls: () => ctx.model.lastCalls(), when }),
       C.keysCheck({ keys: ctx.model.keys.list(), lastCalls: last, names: names(), when }),
       await C.internetCheck({ halted, online: on, probe: probeInternet, networkOn: ctx.modules.isOn('network') }),
       C.diskCheck(disk()),
