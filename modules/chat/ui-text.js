@@ -255,3 +255,9 @@ export const LENGTH_ASK = {
     + 'If there is no reply after two notes, stop for now. People go quiet for reasons that have nothing to do with you, such as a busy month or a budget freeze, and a calm check-in next quarter keeps the door open.',
   saved: 'Saved. You can change this in Settings › General.',
 };
+
+/** The text sent as the owner's answer when he saves the three lines read from his website (same words as the server's aboutFromLines). */
+export const siteAboutText = ({ sell = '', buyers = '', tone = '' }) => {
+  const one = (v) => String(v || '').replace(/\s+/g, ' ').trim().replace(/[.!]+$/, '');
+  return [sell && `We sell: ${one(sell)}.`, buyers && `Who buys it: ${one(buyers)}.`, tone && `Tone: ${one(tone)}.`].filter(Boolean).join(' ').slice(0, 600);
+};

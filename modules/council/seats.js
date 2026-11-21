@@ -61,10 +61,12 @@ export function modelNote(answers) {
 
 /** Numbers in the answers that the question did not give. The seats answer from what the models know: no page was read. */
 export const FIGURES_NOTE = 'Figures here come from the models, not from pages read: not checked';
-export function figuresNote(question, answers, verdict) {
-  const nums = (t) => String(t || '').match(/\d[\d,.]*\d|\d/g) || [];
+export function figuresNote(question, answers, verdict, { plan = false } = {}) {
+  // in a plan, "Step 2", "day 10" and "30-day" are labels, not figures
+  const bare = (t) => plan ? String(t || '').replace(/\b(?:step|day|week|month)s?\s*\d+\b|\b\d+[- ](?:day|week|month)s?\b|^\s*\d+[.)]\s/gim, ' ') : String(t || '');
+  const nums = (t) => bare(t).match(/\d[\d,.]*\d|\d/g) || [];
   const given = new Set(nums(question));
-  const texts = [...answers.map(a => a?.text), verdict?.decision, ...(verdict?.reasons || []), verdict?.answer];
+  const texts = [...answers.map(a => a?.text), verdict?.decision, ...(verdict?.reasons || []), verdict?.answer, ...(verdict?.steps || []).map(x => x?.text)];
   const has = texts.some(t => nums(t).some(n => !given.has(n)));
   const cited = answers.some(a => a?.searched && /https?:\/\/\S+/.test(a.text || ''));   // no seat has a search tool today
   return has && !cited ? FIGURES_NOTE : '';

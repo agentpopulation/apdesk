@@ -165,6 +165,8 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Updates and rollbacks keep module folders you added by hand. Background update downloads rest on your own switch alone; no module can use it.
 - The desk learns from its own call log which free or local model answers best for each kind of ask and tries that one first. It never puts a paid model ahead of a free one, adds a model, or moves one you picked.
 - A new Doctor page: "Check my desk" checks models, keys, internet, disk, the local engine, updates, the port and your switches, with one plain line and a settings button for each problem. It changes nothing by itself.
+- Four advisor roles you can hire from "Not on your team": AI officer, Product lead, Sales lead and Co-founder.
+- A ready-made "Turnaround review" council: each advisor proposes a 30-day plan from what the desk knows, the Verdict shows where they agree and differ, and each step can be turned into a task. Proposals only.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

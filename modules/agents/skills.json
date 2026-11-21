@@ -112,6 +112,90 @@
    "category": "Research",
    "description": "Contrast two authoritative pages; quote lightly and link both.",
    "body": "Contrast two authoritative pages; quote lightly and link both.\n\n## Rules\n\n1. Never invent sources. Always include URLs you actually fetched or searched.\n2. Say \"not checked\" where the pages do not say it."
+  },
+  {
+   "id": "ai-where-it-helps",
+   "title": "Where AI helps here",
+   "category": "Advisors",
+   "description": "Use when the owner asks where agents or tools could save him time: list the jobs worth handing over, with the cost of checking them.",
+   "body": "## Steps\n\n1. Read what the owner sells (Settings, General) and the tasks and notes the desk holds.\n2. List the repeated jobs: replies, quotes, follow-ups, reports.\n3. For each, say what an agent would do, what the owner still checks, and the risk if it is wrong.\n4. Pick the one or two worth doing first and say why.\n5. End with proposals the owner can turn into tasks.\n\n## Checks\n- Every figure comes from a record or a page, or is marked not checked\n- Nothing is started or sent"
+  },
+  {
+   "id": "ai-risk-check",
+   "title": "AI risk check",
+   "category": "Advisors",
+   "description": "Use before the owner trusts an agent with a new job: what can go wrong, and what to approve by hand.",
+   "body": "## Steps\n\n1. Name the job and what the agent would touch (mail, files, money, customers).\n2. List what could go wrong in plain words.\n3. Say which steps must stay with the owner's approval.\n4. Say how the owner can see afterwards what was done.\n5. Propose a small first trial.\n\n## Checks\n- Nothing is switched on by this skill\n- Costs are not guessed: say not checked"
+  },
+  {
+   "id": "ai-tool-gaps",
+   "title": "Tool gaps",
+   "category": "Advisors",
+   "description": "Use to find what the desk lacks for the business: a missing module, key or connection.",
+   "body": "## Steps\n\n1. Read which modules and keys the desk has.\n2. Match them to what the business does every week.\n3. List what is missing and what it would unlock.\n4. Propose, in order, what to add first. The owner decides.\n\n## Checks\n- Only modules and keys that are actually there are named\n- No purchase is made"
+  },
+  {
+   "id": "product-offer-review",
+   "title": "Offer review",
+   "category": "Advisors",
+   "description": "Use to review what the business sells: what it is, who buys it, and what to change.",
+   "body": "## Steps\n\n1. Read what the owner sells and who buys it (Settings, General) and any notes or pages the desk holds.\n2. Say the offer in one line. If the desk does not know, write not checked and ask.\n3. List what buyers seem to want and what is unclear.\n4. Propose one change to the offer and one thing to test.\n\n## Checks\n- Every figure comes from a record or a page, or is marked not checked\n- Quoted words are marked as quotes"
+  },
+  {
+   "id": "product-customer-voice",
+   "title": "Customer voice",
+   "category": "Advisors",
+   "description": "Use to turn replies, reviews and notes into what customers actually say.",
+   "body": "## Steps\n\n1. Gather the replies, reviews and notes the desk holds.\n2. Group what people say into three to five themes.\n3. Quote one short line per theme, with where it came from.\n4. Say what each theme asks the owner to change.\n5. Mark any theme with fewer than three sources as thin.\n\n## Checks\n- Quotes are copied exactly\n- Nothing is made up to fill a theme"
+  },
+  {
+   "id": "product-next-three",
+   "title": "Next three changes",
+   "category": "Advisors",
+   "description": "Use to choose the next three changes to the product or service, smallest first.",
+   "body": "## Steps\n\n1. List the ideas the desk already holds.\n2. Score each by effort and by how many buyers it helps, in words not numbers.\n3. Pick three and put the smallest first.\n4. For each, write the first step as one line the owner can turn into a task.\n\n## Checks\n- Effort is an honest guess and says so\n- Each change has a first step"
+  },
+  {
+   "id": "sales-pipeline-review",
+   "title": "Pipeline review",
+   "category": "Advisors",
+   "description": "Use to review the leads and follow-ups the desk holds and say who to contact next.",
+   "body": "## Steps\n\n1. Read the leads, their status and the last contact.\n2. Count them by status. Say not checked for anything the desk does not hold.\n3. Name the leads that have gone quiet and the ones waiting on the owner.\n4. Propose the next five contacts and the reason for each.\n5. Offer to draft the messages. Nothing is sent without the owner's approval.\n\n## Checks\n- Every figure comes from a record or a page, or is marked not checked\n- Counts match the records"
+  },
+  {
+   "id": "sales-who-buys",
+   "title": "Who buys",
+   "category": "Advisors",
+   "description": "Use to describe the buyers the business should go after, from what the desk knows.",
+   "body": "## Steps\n\n1. Read what the owner sells and who buys it.\n2. Read the leads and customers the desk holds.\n3. Describe the buyer in three lines: who, what they need, how they decide.\n4. Say which kinds of lead do not fit and should be dropped.\n5. Propose where to find more of the ones that fit.\n\n## Checks\n- No buyer is invented\n- Sources for any claim are named"
+  },
+  {
+   "id": "sales-follow-up-plan",
+   "title": "Follow-up plan",
+   "category": "Advisors",
+   "description": "Use to plan the next two weeks of follow-ups.",
+   "body": "## Steps\n\n1. List open leads and when each was last contacted.\n2. Set a gap for each: one week for warm, two for cold.\n3. Write one line per follow-up: who, what to say, by when.\n4. Mark which ones need the owner to write the first words.\n\n## Checks\n- Dates are in the owner's zone\n- Nothing is sent"
+  },
+  {
+   "id": "cofounder-30-day",
+   "title": "30-day plan",
+   "category": "Advisors",
+   "description": "Use to turn what the desk knows into a small plan for the next 30 days.",
+   "body": "## Steps\n\n1. Read what the owner sells, his leads, tasks and notes.\n2. Say in two lines where the business stands. Mark what is not checked.\n3. Pick at most three goals for the month.\n4. For each goal, list up to three steps, each short enough to be one task.\n5. Say what to stop doing to make room.\n\n## Checks\n- Every figure comes from a record or a page, or is marked not checked\n- At most nine steps in all"
+  },
+  {
+   "id": "cofounder-stop-keep-try",
+   "title": "Stop, keep, try",
+   "category": "Advisors",
+   "description": "Use for a plain look at what to stop, keep and try.",
+   "body": "## Steps\n\n1. List what the owner spends time on that the desk can see.\n2. Put each under Stop, Keep or Try with one reason.\n3. Pick the first Try and write its first step.\n\n## Checks\n- Reasons are plain and short\n- Nothing is decided for the owner"
+  },
+  {
+   "id": "cofounder-money-view",
+   "title": "Money view",
+   "category": "Advisors",
+   "description": "Use to read what the desk holds about income and costs and say what stands out.",
+   "body": "## Steps\n\n1. Read the records of money the desk holds, in the owner's currency.\n2. Say what is coming in and going out, or not checked when there are no records.\n3. Name the one cost or gap that stands out.\n4. Propose one step and ask before assuming anything.\n\n## Checks\n- Money is shown in the owner's currency from settings\n- No figure is guessed"
   }
  ],
  "packs": [
@@ -204,6 +288,26 @@
   "coder": [
    "code-small-tool",
    "doc-filer"
+  ],
+  "ai-officer": [
+   "ai-where-it-helps",
+   "ai-risk-check",
+   "ai-tool-gaps"
+  ],
+  "product-lead": [
+   "product-offer-review",
+   "product-customer-voice",
+   "product-next-three"
+  ],
+  "sales-lead": [
+   "sales-pipeline-review",
+   "sales-who-buys",
+   "sales-follow-up-plan"
+  ],
+  "co-founder": [
+   "cofounder-30-day",
+   "cofounder-stop-keep-try",
+   "cofounder-money-view"
   ]
  }
 }

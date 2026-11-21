@@ -229,3 +229,67 @@ test('council: a chairman reply that is JSON but has no decision is asked once m
     assert.equal(chair, 2); assert.equal(run.verdict.decision, 'Buy the CRM.');
   } finally { await t.close(); }
 });
+
+// ---- Turnaround review: four advisor seats on one brief from the desk's own records, a 30-day plan, steps that become tasks
+import { buildBrief, DEFAULT_QUESTION } from './brief.js';
+import { FORMATS } from './formats.js';
+
+test('turnaround: the brief says "not checked" for what it cannot reach and quotes only what the desk holds', () => {
+  const b = buildBrief({ about: 'Payroll software for small firms; India.', leads: 12, inTalks: 3, draftsWaiting: null, customers: 0, tasks: { running: 1, done: 4, failed: 2, of: 7 } });
+  assert.match(b, /What the owner sells: "Payroll software for small firms; India\."/);
+  assert.match(b, /Leads in the pipeline: 12/); assert.match(b, /In talks: 3/); assert.match(b, /Drafts waiting for approval: not checked/); assert.match(b, /Customers: 0/);
+  assert.match(b, /Recent tasks \(last 7\): 1 running, 4 finished, 2 failed/);
+  const empty = buildBrief({ about: '', leads: null, inTalks: null, draftsWaiting: null, customers: null, tasks: null });
+  assert.match(empty, /What the owner sells: not checked/); assert.match(empty, /Leads in the pipeline: not checked/); assert.match(empty, /Recent tasks: not checked/);
+  assert.match(empty, /not checked/);
+});
+
+test('turnaround: the format has the four advisor seats; a run reads the same brief, gives a plan with steps, agree and differ, and each step can become a task', async () => {
+  const prompts = [];
+  const script = (body) => {
+    const s = body.messages[0].content;
+    if (/chairman/.test(s)) { prompts.push({ chair: body.messages.at(-1).content }); return JSON.stringify({ decision: 'Fix the offer first, then call the warm leads.', reasons: ['Buyers are unclear on the offer', 'Three leads are in talks'], answer: 'Plan.', agree: ['Start with the offer'], differ: ['Sales lead wants calls this week; the AI officer wants a tool first'], steps: [{ step: 'Write the offer in one line and test it on three buyers', by: 'Product lead' }, { step: 'Call the three leads that are in talks', by: 'Sales lead' }, 'List the three jobs an agent could take over'] }); }
+    if (/review answers/.test(s)) return JSON.stringify({ notes: { A: 'ok' }, ranking: ['A', 'B', 'C', 'D'] });
+    prompts.push({ seat: s, user: body.messages.at(-1).content });
+    return 'Step 1: Write the offer in one line.\nStep 2: Call the warm leads.\nRecommendation: fix the offer';
+  };
+  const t = await testDesk({ modules: ['council', 'tasks'], script });
+  try {
+    t.core.settings.set('business.about', 'Payroll software for small firms; India.');
+    const fm = (await t.call('/api/m/council/formats')).json.formats.find(f => f.id === 'turnaround');
+    assert.equal(fm.label, 'Turnaround review');
+    assert.deepEqual(FORMATS.turnaround.seats.map(s => s.name), ['AI officer', 'Product lead', 'Sales lead', 'Co-founder']);
+    const r = (await t.call('/api/m/council/ask', { body: { format: 'turnaround' } })).json;
+    assert.equal((await t.core.jobs.wait(r.jobId, 10000)).status, 'done');
+    const run = (await t.call('/api/m/council/runs/' + r.runId)).json.run;
+    const room = (await t.call('/api/m/council/rooms/' + r.roomId)).json.room;
+    assert.equal(room.question, DEFAULT_QUESTION); assert.equal(room.seats.length, 4); assert.equal(run.answers.length, 4);
+    const seatPrompts = prompts.filter(p => p.seat);
+    assert.equal(seatPrompts.length, 4);
+    for (const p of seatPrompts) { assert.match(p.user, /Payroll software for small firms/); assert.match(p.user, /Leads in the pipeline: not checked/, 'Sales is off, so it is not checked'); assert.match(p.seat, /30-day plan/); }
+    assert.equal(new Set(seatPrompts.map(p => p.user)).size, 1, 'every seat reads the same brief');
+    const v = run.verdict;
+    assert.deepEqual(v.agree, ['Start with the offer']); assert.equal(v.differ.length, 1);
+    assert.deepEqual(v.steps.map(s => s.by), ['Product lead', 'Sales lead', '']);
+    assert.ok(v.steps.every(s => s.text));
+    // the task button: one step becomes one task, through the Tasks module
+    const a = await t.call(`/api/m/council/runs/${r.runId}/action`, { body: { action: 'task', step: 1 } });
+    assert.equal(a.status, 200, JSON.stringify(a.json)); assert.equal(a.json.ok, true);
+    const tasks = t.core.jobs.list({ limit: 20 }).filter(j => /^Call the three leads/.test(j.title));
+    assert.equal(tasks.length, 1, 'the chosen step only');
+    assert.equal((await t.call(`/api/m/council/runs/${r.runId}/action`, { body: { action: 'task', step: 9 } })).status, 404);
+  } finally { await t.close(); }
+});
+
+test('turnaround: counts come from Sales and recent tasks when they are on; Tasks off leaves the step button answering plainly', async () => {
+  const seen = [];
+  const t = await testDesk({ modules: ['council'], script: (b) => { if (/chairman/.test(b.messages[0].content)) return JSON.stringify({ decision: 'Go.', reasons: [], steps: ['Do one thing'] }); if (/review answers/.test(b.messages[0].content)) return JSON.stringify({ ranking: ['A'] }); seen.push(b.messages.at(-1).content); return 'Step 1: x\nRecommendation: go'; } });
+  try {
+    t.core.modules.api = ((orig) => (id) => id === 'sales' ? { totals: () => ({ leads: 5, inTalks: 2, draftsWaiting: 1 }), customers: () => [{ name: 'A' }] } : orig(id))(t.core.modules.api.bind(t.core.modules));
+    const r = (await t.call('/api/m/council/ask', { body: { format: 'turnaround' } })).json;
+    await t.core.jobs.wait(r.jobId, 10000);
+    assert.ok(seen.length >= 4); assert.match(seen[0], /Leads in the pipeline: 5/); assert.match(seen[0], /In talks: 2/); assert.match(seen[0], /Drafts waiting for approval: 1/); assert.match(seen[0], /Customers: 1/);
+    const a = await t.call(`/api/m/council/runs/${r.runId}/action`, { body: { action: 'task', step: 0 } });
+    assert.equal(a.status, 409); assert.match(a.json.error, /Tasks is not on/);
+  } finally { await t.close(); }
+});

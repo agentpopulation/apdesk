@@ -2,7 +2,11 @@
 // ranking line, average the positions, a chairman synthesises) follows karpathy/llm-council backend/council.py;
 // the wording is ours (that repository states no licence, so no text was copied).
 
-export function answerMessages(question, seat, format) {
+export function answerMessages(question, seat, format, brief = '') {
+  if (format?.plan) return [
+    { role: 'system', content: `You are ${seat.name}, one of four advisors to a business owner (${format.label}). Your view: ${seat.stance}. ${seat.brief}\nRead the brief and propose a 30-day plan of three or four steps, one per line, each starting "Step 1:", "Step 2:" and so on, each short enough to become one task. Say first, in one sentence, what you see. Use only figures the brief gives; for anything else write "not checked". These are proposals: nothing is done or sent.\nEnd with one more line on its own that starts with "Recommendation:" and names your first move in two to six words, key word first.` },
+    { role: 'user', content: `${question}\n\n${brief}` },
+  ];
   return [
     { role: 'system', content: `You are ${seat.name}, one of three seats on a council that advises a business owner (format: ${format?.label || 'Council'}). Your stance: ${seat.stance}. ${seat.brief}\nAnswer on your own, in at most 120 words of plain English, no headings. Your first sentence states your position. You cannot look anything up here: give a figure only as your own estimate, and say it is an estimate.\nEnd with one more line on its own that starts with "Recommendation:" and names the course you recommend in two to six words, key word first: yes, no or wait for a yes-or-no question, otherwise the option you pick, named the way the question names it.` },
     { role: 'user', content: question },
@@ -17,13 +21,13 @@ export function rankMessages(question, items) {
   ];
 }
 
-export function chairMessages(question, answers, seats, agg) {
+export function chairMessages(question, answers, seats, agg, { plan = false } = {}) {
   const body = answers.map((a, i) => a.text ? `${a.name} (${seats[i].stance}):\n${a.text}` : null).filter(Boolean).join('\n\n');
   const ranks = agg.averages.map(x => `${x.name}: average place ${x.avg} from ${x.n} reviews`).join('\n');
   const agree = agg.agreeLine ? `\nWhat the seats recommend: ${agg.agreeLine}.\n` : '';
   return [
     { role: 'system', content: 'You are the chairman of a council advising a business owner. Write the final Verdict from the seats\' answers and how they ranked each other. Be decisive and plain.' },
-    { role: 'user', content: `Question: ${question}\n\nThe seats' answers:\n${body}\n\nPeer ranking (lower is better):\n${ranks || 'no rankings'}\nThe best-ranked answer was ${agg.winner != null ? answers[agg.winner].name + "'s" : 'not clear'}.\n${agree}\nReturn JSON only: {"decision":"the decision or answer in one or two sentences","reasons":["the main reason","a second reason"],"answer":"a fuller final answer in at most 150 words"}` },
+    { role: 'user', content: `Question: ${question}\n\nThe seats' answers:\n${body}\n\nPeer ranking (lower is better):\n${ranks || 'no rankings'}\nThe best-ranked answer was ${agg.winner != null ? answers[agg.winner].name + "'s" : 'not clear'}.\n${agree}\n${plan ? 'Return JSON only: {"decision":"the one thing to do first, in one or two sentences","reasons":["the main reason","a second reason"],"agree":["where the advisors agree, one short line each"],"differ":["where they differ, one short line each, naming who"],"steps":[{"step":"one step of the 30-day plan, short enough to be one task","by":"the advisor it came from"}],"answer":"a fuller plan in at most 150 words"}. At most six steps. Use only figures the advisors took from the brief; write "not checked" for the rest.' : 'Return JSON only: {"decision":"the decision or answer in one or two sentences","reasons":["the main reason","a second reason"],"answer":"a fuller final answer in at most 150 words"}'}` },
   ];
 }
 

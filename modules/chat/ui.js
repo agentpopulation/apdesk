@@ -1,6 +1,6 @@
 // Chat page: rail of chats, the conversation at full width, the folding panel. Matches the Chat section of the approved preview.
 import { chipsFor, chipText, chipNeedsBusiness } from '/ui/pages/home.js';
-import { cleanReply, uniqueOutputs, previewText, stepChips, footTag, waitLine, hasTable, shortCell, railLine, liveText, PANEL_PREFIXES, BARE_LINES, bareStart, lastAsk, cutAtWord, LENGTH_ASK } from '/modules/chat/ui-text.js';
+import { cleanReply, uniqueOutputs, previewText, stepChips, footTag, waitLine, hasTable, shortCell, railLine, liveText, PANEL_PREFIXES, BARE_LINES, bareStart, lastAsk, cutAtWord, LENGTH_ASK, siteAboutText } from '/modules/chat/ui-text.js';
 
 const API = 'm/chat/';
 const PRESETS = [['everyone', 'Everyone'], ['sales-room', 'Sales room'], ['build-room', 'Build room']];
@@ -269,6 +269,13 @@ async function render(el, ui, route) {
             pill(word, cls),
             ...actionBtns(c.actions),
             running && c.jobId ? btn('Stop', { kind: 'ghost sm', onClick: async () => { try { await api(`jobs/${c.jobId}/stop`, { method: 'POST' }); } catch (e) { toast(e.message, 'err'); } } }) : null));
+        }
+        case 'business.site': {
+          // the three lines read from the owner's website: he edits them, and only what he saves becomes his answer
+          const boxes = (c.items || []).map(it => ({ it, box: h('input', { type: 'text', value: it.line || '', maxlength: 120, placeholder: 'Not found on the pages. Type it, or leave it empty.', 'aria-label': it.label }) }));
+          return h('div', { class: 'card stack', style: { gap: '8px' } }, h('b', null, 'From ' + (c.site || 'your site')),
+            ...boxes.map(({ it, box }) => h('label', { class: 'f' }, it.label[0].toUpperCase() + it.label.slice(1), box, it.quote ? h('span', { class: 'sub' }, 'The page says: "' + it.quote + '"') : null)),
+            h('div', { class: 'act' }, btn('Save these', { kind: 'sm', onClick: (ev) => { const v = Object.fromEntries(boxes.map(({ it, box }) => [it.key, box.value])); const t = siteAboutText(v); if (!t) return toast('Type at least one line, or press Not now.', 'err'); ev.currentTarget.disabled = true; send(t); } }), ...actionBtns(c.actions)));
         }
         case 'file': return h('div', { class: 'card', style: { padding: '4px 12px' } }, h('div', { class: 'line' },
           h('div', null, h('b', null, c.name || baseName(c.path)), h('span', { class: 'd' }, [c.note, c.size != null ? fmt.bytes(c.size) : null].filter(Boolean).join(' · '))),

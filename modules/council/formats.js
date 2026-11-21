@@ -19,6 +19,15 @@ export const FORMATS = {
       { id: 'strategist', name: 'Strategist', stance: 'independent expert', brief: 'Answer as a strategist: the bigger picture, options, second-order effects.' },
     ],
   },
+  turnaround: {
+    id: 'turnaround', label: 'Turnaround review', plan: true, blurb: 'Four advisors read the same brief from the desk\'s own records and each propose a 30-day plan. Proposals only: nothing starts until you turn a step into a task.',
+    seats: [
+      { id: 'ai-officer', name: 'AI officer', stance: 'where AI helps', brief: 'Look for the few jobs where an agent or a tool would save the owner real time, and what it would cost him to check them.' },
+      { id: 'product-lead', name: 'Product lead', stance: 'the offer', brief: 'Look at what is sold and who buys it, and propose the next change to the offer.' },
+      { id: 'sales-lead', name: 'Sales lead', stance: 'who to sell to', brief: 'Look at leads and follow-ups, and propose who to contact next and what to say.' },
+      { id: 'co-founder', name: 'Co-founder', stance: 'the whole business', brief: 'Weigh the whole picture: what to stop, what to keep, what to try first.' },
+    ],
+  },
   devil: {
     id: 'devil', label: "Devil's advocate", blurb: 'One seat challenges every claim so soft agreement does not win by default.',
     seats: [

@@ -3,9 +3,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { SEED } from '../../app/core/agents.js';
+import { ADVISORS } from './advisors.js';
 
 // The desk's own agents besides the Coordinator. Retiring one keeps its profile here so one click hires it back as it was.
-const BUILT_IN = SEED.filter(a => a.id !== 'coordinator');
+// The four advisor roles are built in too, but start off the team.
+const BUILT_IN = [...SEED.filter(a => a.id !== 'coordinator'), ...ADVISORS];
 
 export async function activate(ctx) {
   const DATA = JSON.parse(fs.readFileSync(path.join(ctx.dir, 'skills.json'), 'utf8'));

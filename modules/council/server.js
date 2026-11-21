@@ -3,6 +3,7 @@
 // Stage 3: the chairman writes the Verdict. Method from karpathy/llm-council backend/council.py (no code copied).
 import crypto from 'node:crypto';
 import { FORMATS, guessFormat } from './formats.js';
+import { buildBrief, DEFAULT_QUESTION } from './brief.js';
 import { liveSlots, spread, modelNote, figuresNote } from './seats.js';
 import { answerMessages, rankMessages, chairMessages, parseRanking, aggregate, parseJson, toLastSentence, wholeSentences, continueMessages, joinContinuation, agreement, rankLineFor, parseRecommendation, recommendMessages } from './stages.js';
 
@@ -21,6 +22,7 @@ export async function activate(ctx) {
     CREATE TABLE IF NOT EXISTS m_council_runs (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, job_id TEXT, chat_id TEXT, status TEXT NOT NULL, seats TEXT NOT NULL, chair TEXT, answers TEXT, rankings TEXT, verdict TEXT, error TEXT, created TEXT NOT NULL, finished TEXT);
     CREATE INDEX IF NOT EXISTS m_council_runs_room ON m_council_runs(room_id, created);
   `);
+  ctx.db.migrate(2, `ALTER TABLE m_council_rooms ADD COLUMN brief TEXT;`);
   ctx.db.run("UPDATE m_council_runs SET status = 'interrupted', finished = ? WHERE status = 'running'", nowIso());
 
   // ---------- models the seats can use: whatever the door says is live, spread across providers
@@ -61,26 +63,40 @@ export async function activate(ctx) {
   // a Verdict stored by an earlier build counted ranking first picks as "agreed N to M": it is shown under its true name
   const trueVerdict = (v) => v && !v.rankLine && /^(agreed \d+ to \d+|all three agreed)$/.test(v.voteLine || '') ? { ...v, rankLine: v.winner ? rankLineFor(v.winner) : '', voteLine: v.winner ? rankLineFor(v.winner) : NO_RANK } : v;
   const runRow = (r) => r && ({ id: r.id, roomId: r.room_id, jobId: r.job_id, chatId: r.chat_id, status: r.status, seats: J(r.seats, []), chair: J(r.chair), answers: J(r.answers, []), rankings: J(r.rankings, []), verdict: trueVerdict(J(r.verdict)), error: r.error, created: r.created, finished: r.finished });
-  const roomRow = (r) => r && ({ id: r.id, question: r.question, format: r.format, formatLabel: FORMATS[r.format]?.label || r.format, seats: J(r.seats, []), chair: J(r.chair), chatId: r.chat_id, created: r.created, updated: r.updated });
+  const roomRow = (r) => r && ({ id: r.id, question: r.question, format: r.format, formatLabel: FORMATS[r.format]?.label || r.format, seats: J(r.seats, []), chair: J(r.chair), chatId: r.chat_id, brief: r.brief || '', created: r.created, updated: r.updated });
   const getRun = (id) => runRow(ctx.db.get('SELECT * FROM m_council_runs WHERE id = ?', id));
   const saveRun = (id, patch) => { const sets = Object.keys(patch).map(k => `${k} = ?`).join(', '); ctx.db.run(`UPDATE m_council_runs SET ${sets} WHERE id = ?`, ...Object.values(patch).map(v => v && typeof v === 'object' ? JSON.stringify(v) : v), id); };
 
   function verdictText(room, run) {
     const v = run.verdict; const lines = [];
     for (const a of run.answers || []) if (a?.text) { const fb = fellBackNote(a); lines.push(`**${a.name}** (${a.stance} · ${a.label}${fb ? '; ' + fb.replace(/^answered by [^;]+; /, '') : ''}): ${wholeSentences(a.text, 240)}${a.cut ? ' (cut short)' : ''}`); }
-    if (v) { lines.push('', `**Verdict · ${v.voteLine}** (written by ${v.label})`, ...(v.agreeLine && v.rankLine ? [v.rankLine] : []), v.decision, ...(v.reasons || []).map(r => '- ' + r), ...(v.notes || []).map(n => `*${n}*`)); }
+    if (v) { lines.push('', `**Verdict · ${v.voteLine}** (written by ${v.label})`, ...(v.agreeLine && v.rankLine ? [v.rankLine] : []), v.decision, ...(v.reasons || []).map(r => '- ' + r), ...(v.agree?.length ? ['Where they agree:', ...v.agree.map(x => '- ' + x)] : []), ...(v.differ?.length ? ['Where they differ:', ...v.differ.map(x => '- ' + x)] : []), ...(v.steps?.length ? ['30-day plan (proposals):', ...v.steps.map((x, i) => `${i + 1}. ${x.text}${x.by ? ' (' + x.by + ')' : ''}`)] : []), ...(v.notes || []).map(n => `*${n}*`)); }
     return lines.join('\n');
   }
+  /** The task a plan step becomes: only a proposal until the owner presses the button. */
+  const stepArgs = (room, text, why = '', by = '') => FORMATS[room.format]?.plan
+    ? { title: clip(text, 80), prompt: `From the Turnaround review (30-day plan)${by ? ', proposed by the ' + by : ''}: ${text}\nPlan the first move and do what you can. Nothing is sent to anyone without the owner approving that item.` }
+    : { title: clip(text, 80), prompt: `The Council decided on "${room.question}": ${text}\nReasons: ${why}\nPlan and do the next steps.` };
   function verdictCard(room, run) {
     const v = run.verdict;
-    return { kind: 'council.verdict', id: 'council-verdict-' + run.id, runId: run.id, roomId: room.id, title: 'Verdict · ' + v.voteLine, question: room.question, decision: v.decision, reasons: v.reasons, notes: v.notes || [], label: v.label, voteLine: v.voteLine, agreeLine: v.agreeLine || '', rankLine: v.rankLine || '',
+    return { kind: 'council.verdict', id: 'council-verdict-' + run.id, runId: run.id, roomId: room.id, title: 'Verdict · ' + v.voteLine, question: room.question, decision: v.decision, reasons: v.reasons, notes: v.notes || [], label: v.label, voteLine: v.voteLine, agreeLine: v.agreeLine || '', rankLine: v.rankLine || '', agree: v.agree || [], differ: v.differ || [],
+      steps: (v.steps || []).map((x, i) => ({ text: x.text, by: x.by, action: { label: 'Turn into a task', tool: 'task_create', step: i, args: stepArgs(room, x.text, '', x.by) } })),
       seats: run.answers.map(a => ({ name: a.name, stance: a.stance, label: a.label, fellBack: fellBackNote(a), summary: wholeSentences(a.text, 240), cut: !!a.cut, ok: !!a.text })),
       text: verdictText(room, run),
       actions: [
-        { label: 'Turn into a task', tool: 'task_create', args: { title: clip(v.decision, 80), prompt: `The Council decided on "${room.question}": ${v.decision}\nReasons: ${(v.reasons || []).join(' ')}\nPlan and do the next steps.` } },
-        { label: 'Research this', tool: 'research_deep', args: { question: room.question } },
+        ...(v.steps?.length ? [] : [{ label: 'Turn into a task', tool: 'task_create', args: stepArgs(room, v.decision, (v.reasons || []).join(' ')) }]),
+        ...(FORMATS[room.format]?.plan ? [] : [{ label: 'Research this', tool: 'research_deep', args: { question: room.question } }]),
         { label: 'Open the Council', go: '#/research/council/' + room.id },
       ] };
+  }
+
+  // ---------- the Turnaround review's brief: counts the Council can reach, written as "not checked" when it cannot
+  function gatherFacts() {
+    const about = String(ctx.settings.get('business.about') || '').replace(/\s+/g, ' ').trim().slice(0, 600);
+    const safe = (fn) => { try { const v = fn(); return Number.isFinite(v) ? v : null; } catch { return null; } };
+    const sales = ctx.modules.api('sales'); const totals = (() => { try { return sales?.totals?.() || null; } catch { return null; } })();
+    let tasks = null; try { const js = ctx.jobs.list({ limit: 100 }).filter(j => !j.quiet && !String(j.kind).startsWith('council.')); if (js.length) tasks = { of: js.length, running: js.filter(j => j.status === 'running' || j.status === 'waiting').length, done: js.filter(j => j.status === 'done').length, failed: js.filter(j => j.status === 'failed').length }; } catch {}
+    return { about, leads: totals ? safe(() => totals.leads) : null, inTalks: totals ? safe(() => totals.inTalks) : null, draftsWaiting: totals ? safe(() => totals.draftsWaiting) : null, customers: sales?.customers ? safe(() => sales.customers().length) : null, tasks };
   }
 
   // ---------- the run
@@ -98,7 +114,7 @@ export async function activate(ctx) {
     ctx.db.run('INSERT INTO m_council_runs (id, room_id, chat_id, status, seats, chair, answers, rankings, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', runId, room.id, chatId, 'running', JSON.stringify(seats), JSON.stringify(chair), '[]', '[]', nowIso());
     const emit = (stage, extra = {}) => ctx.events.emit('council', { runId, roomId: room.id, stage, ...extra });
     const job = await ctx.jobs.start({ kind: 'council.ask', title: 'Council: ' + clip(room.question, 70), agentId, chatId, input: { question: room.question, roomId: room.id, runId }, async run(job) {
-      const signal = job.signal;
+      const signal = job.signal; const plan = !!FORMATS[room.format]?.plan;
       const card = (detail, progress, status = 'running') => job.card({ kind: 'progress', id: 'council-' + runId, title: 'Council: ' + clip(room.question, 70), detail, progress, status, go: '#/research/council/' + room.id });
       const answers = seats.map(s => ({ seatId: s.id, name: s.name, stance: s.stance, text: null, label: null, error: null }));
       try {
@@ -107,7 +123,7 @@ export async function activate(ctx) {
         let done = 0;
         await Promise.all(seats.map(async (s, i) => {
           try {
-            const msgs = answerMessages(room.question, s, FORMATS[room.format]);
+            const msgs = answerMessages(room.question, s, FORMATS[room.format], room.brief);
             const r = await seatCall(s.model, msgs, { signal, maxTokens: 900, spare: spareFor(i) });
             let text = String(r.text || '').trim(), cut = false;
             if (text && r.cutOff === true) {
@@ -155,10 +171,10 @@ export async function activate(ctx) {
         agg.agreeLine = agreement(ok.map(a => ({ name: a.name, recommendation: a.recommendation })));
         // stage 3: the chairman writes the Verdict
         job.progress(0.85, 'The chairman is writing the Verdict'); card('The chairman is writing the Verdict', 0.85); emit('verdict-writing');
-        let r = await seatCall(chair, chairMessages(room.question, answers, seats, agg), { signal, json: true, maxTokens: 1200 });
+        let r = await seatCall(chair, chairMessages(room.question, answers, seats, agg, { plan }), { signal, json: true, maxTokens: plan ? 1800 : 1200 });
         const usable = (x) => x && [x.decision, x.answer].some(v => typeof v === 'string' && v.trim()) ? x : null;   // JSON without a decision is no Verdict
         let j = usable(parseJson(r));
-        if (!j) { r = await seatCall(chair, chairMessages(room.question, answers, seats, agg), { signal, json: true, maxTokens: 2000 }); j = usable(parseJson(r)); }   // cut off or unreadable: once more, with more room
+        if (!j) { r = await seatCall(chair, chairMessages(room.question, answers, seats, agg, { plan }), { signal, json: true, maxTokens: 2400 }); j = usable(parseJson(r)); }   // cut off or unreadable: once more, with more room
         if (!j) {            // still cut off: take the decision as far as its last full sentence, never half a sentence
           const m = String(r.text || '').match(/"decision"\s*:\s*"((?:[^"\\]|\\.)*)/);
           const raw = m ? m[1].replace(/\\n/g, ' ').replace(/\\"/g, '"') : String(r.text || '').replace(/[{}"]/g, ' ');
@@ -172,9 +188,15 @@ export async function activate(ctx) {
           agreeLine: agg.agreeLine, rankLine: agg.rankLine, voteLine: agg.agreeLine || agg.rankLine || NO_RANK,
           vote: agg.vote, averages: agg.averages,
         };
+        if (plan) {
+          const lines = (x) => (Array.isArray(x) ? x : []).map(v => whole(typeof v === 'string' ? v : v?.text || '', 200)).filter(Boolean).slice(0, 5);
+          verdict.agree = lines(j.agree); if (!verdict.agree.length && agg.agreeLine) verdict.agree = [agg.agreeLine];
+          verdict.differ = lines(j.differ);
+          verdict.steps = (Array.isArray(j.steps) ? j.steps : []).map(x => typeof x === 'string' ? { text: whole(x, 200), by: '' } : { text: whole(x?.step || x?.text || '', 200), by: seats.some(s => s.name === x?.by) ? x.by : '' }).filter(x => x.text).slice(0, 6);
+        }
         // plain notes on the result: one model for every seat, offline, and figures no page was read for
         const noAgree = agg.agreeLine ? '' : 'No seat gave a clear recommendation, so the Verdict cannot say how far the seats agree' + (agg.rankLine ? '; the headline shows how they ranked each other instead.' : '.');
-        verdict.notes = [noAgree, modelNote(answers), offline() ? 'The desk was offline, so the Council ran on local models only.' : '', figuresNote(room.question, answers, verdict)].filter(Boolean);
+        verdict.notes = [noAgree, modelNote(answers), offline() ? 'The desk was offline, so the Council ran on local models only.' : '', figuresNote(room.question + ' ' + (room.brief || ''), answers, { ...verdict, steps: verdict.steps }, { plan })].filter(Boolean);
         saveRun(runId, { verdict, status: 'done', finished: nowIso() });
         ctx.db.run('UPDATE m_council_rooms SET updated = ? WHERE id = ?', nowIso(), room.id);
         const run = getRun(runId);
@@ -192,12 +214,13 @@ export async function activate(ctx) {
   }
 
   async function makeRoom({ question, format, seats, chair, chatId }) {
-    const q = clip(question, 1000); if (!q) throw Object.assign(new Error('Ask the Council a question first.'), { status: 400 });
+    const plan = !!FORMATS[format]?.plan;
+    const q = clip(question, 1000) || (plan ? DEFAULT_QUESTION : ''); if (!q) throw Object.assign(new Error('Ask the Council a question first.'), { status: 400 });
     const f = FORMATS[format] ? format : guessFormat(q);
     const base = await defaultSeats(f);
     const list = base.map((s, i) => ({ ...s, ...(seats?.[i] || {}), model: seats?.[i]?.model !== undefined ? seats[i].model : s.model }));
-    const room = { id: uid('room_'), question: q, format: f, seats: list.map(({ modelLabel, ...s }) => s), chair: chair || await defaultChair(), chatId };
-    ctx.db.run('INSERT INTO m_council_rooms (id, question, format, seats, chair, chat_id, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', room.id, room.question, room.format, JSON.stringify(room.seats), JSON.stringify(room.chair), chatId, nowIso(), nowIso());
+    const room = { id: uid('room_'), question: q, format: f, seats: list.map(({ modelLabel, ...s }) => s), chair: chair || await defaultChair(), chatId, brief: FORMATS[f]?.plan ? buildBrief(gatherFacts()) : '' };
+    ctx.db.run('INSERT INTO m_council_rooms (id, question, format, seats, chair, chat_id, brief, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', room.id, room.question, room.format, JSON.stringify(room.seats), JSON.stringify(room.chair), chatId, room.brief, nowIso(), nowIso());
     return roomRow(ctx.db.get('SELECT * FROM m_council_rooms WHERE id = ?', room.id));
   }
   async function ask({ question, chatId = null, seats, format, chair, agentId = null } = {}) {
@@ -209,6 +232,7 @@ export async function activate(ctx) {
     const room = roomRow(ctx.db.get('SELECT * FROM m_council_rooms WHERE id = ?', roomId)); if (!room) throw Object.assign(new Error('That room is gone.'), { status: 404 });
     if (Array.isArray(seats)) room.seats = room.seats.map((s, i) => ({ ...s, ...(seats[i]?.model !== undefined ? { model: seats[i].model } : {}), ...(seats[i]?.name ? { name: clip(seats[i].name, 40) } : {}), ...(seats[i]?.stance ? { stance: clip(seats[i].stance, 60) } : {}) }));
     if (chair !== undefined) room.chair = chair;
+    if (FORMATS[room.format]?.plan) { room.brief = buildBrief(gatherFacts()); ctx.db.run('UPDATE m_council_rooms SET brief = ? WHERE id = ?', room.brief, room.id); }   // the records may have changed since
     ctx.db.run('UPDATE m_council_rooms SET seats = ?, chair = ?, updated = ? WHERE id = ?', JSON.stringify(room.seats), JSON.stringify(room.chair), nowIso(), room.id);
     return startRun(room, { chatId: chatId ?? null });
   }
@@ -217,7 +241,7 @@ export async function activate(ctx) {
   const label = (m) => m?.provider ? (m.model ? ctx.model.label(m.provider, m.model) : ctx.model.label(m.provider) + ' · auto') : 'Default model';
   const decorate = (room) => room && ({ ...room, seats: room.seats.map(s => ({ ...s, modelLabel: label(s.model) })), chairLabel: label(room.chair) });
   const fail = (res, e) => ctx.json(res, { error: e.message }, e.status || (e.code === 'halted' ? 409 : 500));
-  ctx.route('GET', '/formats', (req, res) => ctx.json(res, { formats: Object.values(FORMATS).map(f => ({ id: f.id, label: f.label, blurb: f.blurb })) }));
+  ctx.route('GET', '/formats', (req, res) => ctx.json(res, { formats: Object.values(FORMATS).map(f => ({ id: f.id, label: f.label, blurb: f.blurb, plan: !!f.plan })) }));
   ctx.route('GET', '/models', async (req, res) => ctx.json(res, { options: await options() }));
   ctx.route('GET', '/defaults', async (req, res, { query }) => { const l = await live(); ctx.json(res, { seats: await defaultSeats(query.format || 'decision'), chair: { ...asModel(l.chair), label: l.chair?.label || 'No model' }, distinct: l.distinct, notice: l.notice, offline: offline() }); });
   ctx.route('GET', '/rooms', (req, res) => {
@@ -235,7 +259,9 @@ export async function activate(ctx) {
   ctx.route('POST', '/runs/:id/action', async (req, res, { params, body }) => {
     const run = getRun(params.id); if (!run?.verdict) return ctx.json(res, { error: 'That Verdict is not ready.' }, 404);
     const room = roomRow(ctx.db.get('SELECT * FROM m_council_rooms WHERE id = ?', run.roomId));
-    const a = verdictCard(room, run).actions.find(x => x.tool === (body?.action === 'research' ? 'research_deep' : 'task_create'));
+    const card = verdictCard(room, run);
+    const a = body?.step != null ? card.steps[Number(body.step)]?.action : card.actions.find(x => x.tool === (body?.action === 'research' ? 'research_deep' : 'task_create'));
+    if (!a) return ctx.json(res, { error: 'That step is not in this Verdict.' }, 404);
     try {
       if (a.tool === 'task_create') { const api = ctx.modules.api('tasks'); if (!api?.create) return ctx.json(res, { error: 'Tasks is not on, so the Verdict cannot become a task yet.' }, 409); const j = await api.create({ ...a.args, agentId: 'coordinator', chatId: run.chatId }); return ctx.json(res, { ok: true, go: '#/tasks', jobId: j?.id || null }); }
       const api = ctx.modules.api('research'); if (!api?.deep) return ctx.json(res, { error: 'Research is not on yet.' }, 409);
