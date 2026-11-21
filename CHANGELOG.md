@@ -188,6 +188,8 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - The Rulebook now finds rules written as a plain list under a rules heading, the count line reads in grammar, and your own name for Bench is used across its pages.
 - The top menu never shows half a word at any width, the browser tab names the page you are on, and an approval you raised yourself (such as Get on the APIs page) opens its card at once and reads "The desk asks", never a made-up agent.
 - The Tracker names the desk's own work when a job has no agent, and renaming a menu place carries the new name into its page title.
+- A call on a free-tier key is recorded with no spend, and where the desk cannot know whether a call was charged it records the cost as not known rather than guessing; a provider's free-tier report is kept when the desk restarts. Spend windows count the owner's day in your zone.
+- The Tasks page and the Network Desk view name who did each job: the agent when there is one, otherwise the module that started it, and calls with no agent are shown under "The desk" split by purpose.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

@@ -155,3 +155,19 @@ test('V: a provider whose last check failed more than a day ago is still marked'
     assert.deepEqual(d.deps.agents.filter(a => a.affected).map(a => a.id), ['operator']);
   } finally { await t.close(); }
 });
+
+test('V: calls with no agent are drawn under The desk by purpose, the totals match the call log, and the Free API takes its hosts\' checks', async () => {
+  const t = await on(['network']);
+  try {
+    const now = new Date().toISOString();
+    for (const [agent, purpose, provider] of [['operator', 'chat', 'gemini'], [null, 'council', 'router'], [null, 'council', 'router'], [null, 'draft', 'router'], [null, 'small', 'gemini']])
+      t.core.storage.run('INSERT INTO calls (at, agent_id, purpose, provider, model, ok, ms) VALUES (?, ?, ?, ?, ?, 1, 5)', now, agent, purpose, provider, 'm');
+    t.core.storage.run("INSERT INTO m_network_api (at, provider, label, url, ok, status, ms) VALUES (?, 'router:ovh', 'Free API: OVH', 'x', 0, 500, 9)", now);
+    const d = (await t.call('/api/m/network/desk')).json.deps;
+    const logged = t.core.storage.get('SELECT COUNT(*) AS n FROM calls WHERE at >= ?', new Date(Date.now() - 86400_000).toISOString()).n;
+    assert.equal(d.edges.reduce((s, e) => s + e.count, 0), logged); assert.equal(d.table.reduce((s, r) => s + r.calls, 0), logged);
+    assert.equal(d.agents.find(a => a.name === 'The desk').calls, 4);
+    assert.ok(d.table.some(r => r.agent === 'The desk (Council)' && r.calls === 2));
+    assert.equal(d.providers.find(p => p.provider === 'router').down, true, 'its only checked host failed');
+  } finally { await t.close(); }
+});

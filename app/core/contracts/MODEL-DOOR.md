@@ -106,7 +106,28 @@ Every reply in chat shows `r.label` ("Free API · Qwen3.8-27B (OVHcloud AI Endpo
 
 ## Spend
 
-A keyed call records `usage` and an estimated cost (from `app/core/providers.json`) into `m_core_calls`. The approval door reads today's and this month's totals for the spend limits (APPROVAL-DOOR.md). Free router and Ollama cost nothing.
+Every call is written to the `calls` table with its tokens and `cost_minor` (minor units of the owner's currency), which holds one of three things:
+
+- `0`: known free. The Free API, Ollama, the local model and LAN nodes; a model the provider lists as free (OpenRouter ids ending `:free`, `openrouter/free`, or a price-list entry with in and out 0); a key on a free tier; a call that failed.
+- a number: a paid route, estimated at the list price in `providers.json` (`prices`, USD per million tokens, converted with `usdRates`). Rough: the provider's bill is the truth.
+- `NULL`: not known whether the call was charged. Never written as 0 or as a guessed number.
+
+What the desk can and cannot know, per provider:
+
+| provider | what the door records |
+|---|---|
+| Free API, Ollama, local model, LAN | 0 |
+| OpenRouter | 0 for free models; any other model is billed, so the list price (not known when the model is not on the list) |
+| OpenAI, Anthropic, DeepSeek, Together, Fireworks, xAI (`tier: 'paid'`) | the list price; not known when the model is not on the list or no token count came back |
+| Gemini, Groq, Mistral, Cerebras, NVIDIA, Z.ai, Cohere, Cloudflare (`tier: 'free-signup'`), and `custom` | not known: the same key can be on a free tier or billed and the replies do not say which. 0 once the owner marks the key free tier, or once Google answers a Gemini key with its free-tier quota notice (a 429 naming `free_tier` or `FreeTier`; kept in the data folder, so it holds after a restart, until the owner marks the key or removes it). The list price once the owner marks the key paid. |
+
+Token counts: a streamed call to a provider with `streamUsage: true` in `providers.json` asks for the count (`stream_options.include_usage`); other providers send it only on calls that are not streamed. A call with no count is recorded with 0 tokens.
+
+The owner's mark lives in the key's `meta.tier` (`'free'`, `'paid'` or none): `ctx.model.keys.add(provider, value, label, { tier })` or `ctx.model.keys.tier(keyId, 'free'|'paid'|null)`.
+
+Limits. Before any keyed call that may cost money (anything but a known-free route), the door checks the owner's guard (approvals and known costs, APPROVAL-DOOR.md) and its own count of today's and this month's model calls (the day and the month start at midnight in the owner's zone, setting `timeZone`) in which every unknown cost counts at its list price (a model not on the list at the highest price there). So a limit is never passed by "not known".
+
+`ctx.model.usage().today` rows (today in the owner's zone): `cost` is the known costs only, `unknown` the number of calls whose cost is not known, `atList` those calls at the list price (minor units), with `input` and `output` tokens. Wherever spend is listed, a row with `unknown > 0` shows "not known" with its tokens and the line "counted in your limit at the list price: about <atList>", never a number of its own.
 
 ## Testing
 

@@ -64,3 +64,20 @@ test('a task whose turn did not do its work ends failed with the reason in plain
     assert.equal(ok.status, 'done'); assert.equal(ok.output.answer, 'I started the research.');
   } finally { await t.close(); }
 });
+
+test('each job names who did the work: its agent when it has one, otherwise the module that started it', async () => {
+  const t = await testDesk({ modules: ['tasks', 'council', 'tables', 'apis', 'bench'], script: () => 'ok' });
+  try {
+    const start = (kind, extra = {}) => t.core.jobs.start({ kind, title: kind, ...extra, run: async () => ({}) });
+    const ids = {
+      council: (await start('council.ask')).id, tables: (await start('tables.read')).id, apis: (await start('apis.pack')).id,
+      bench: (await start('bench.draft', { quiet: true })).id, scout: (await start('council.ask', { agentId: 'scout' })).id, odd: (await start('fx')).id,
+    };
+    for (const id of Object.values(ids)) await t.core.jobs.wait(id, 5000);
+    const by = Object.fromEntries((await t.call('/api/m/tasks/jobs')).json.jobs.map(j => [j.id, j.by]));
+    assert.equal(by[ids.council], 'Council'); assert.equal(by[ids.tables], 'Tables'); assert.equal(by[ids.apis], 'APIs');
+    assert.equal(by[ids.bench], 'Bench'); assert.equal(by[ids.scout], t.core.agents.get('scout').name); assert.equal(by[ids.odd], 'The desk');
+    const listed = await t.core.modules.runTool('task_list', {}, {});
+    assert.ok(!listed.finished.some(j => j.by === 'Coordinator'), 'no job is put down to the Coordinator by default');
+  } finally { await t.close(); }
+});

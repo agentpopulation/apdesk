@@ -113,3 +113,31 @@ export function apiHealthFrom(rows = [], now = Date.now(), { slowMs = 1500 } = {
   }
   return out.sort((a, b) => a.provider.localeCompare(b.provider));
 }
+
+/**
+ * What API health checks: each active keyed provider's models list, and for the built-in Free API each of its hosts that
+ * is on (the same check), as "Free API: <host>". The owner's own router runs on this PC and is not pinged.
+ *   active: ctx.model.active()   providers: providers.json's providers   upstreams: ctx.model.freeRouter().upstreams
+ */
+export function apiEndpointsFrom({ active = [], providers = {}, upstreams = [], routerName = 'Free API' } = {}) {
+  const seen = new Set(); const list = [];
+  const models = (base) => String(base).replace(/\/$/, '') + '/models';
+  for (const a of active) {
+    if (a.provider === 'router') {
+      if (!a.builtin || seen.has('router')) continue; seen.add('router');
+      const on = new Set((a.upstreams || []).map(u => u.id));
+      for (const u of upstreams) if (u?.baseUrl && u.enabled !== false && on.has(u.id)) list.push({ provider: 'router:' + u.id, label: `${routerName}: ${u.name || u.id}`, url: models(u.baseUrl) });
+      continue;
+    }
+    const def = providers[a.provider]; if (!def?.baseUrl || seen.has(a.provider)) continue;
+    seen.add(a.provider); list.push({ provider: a.provider, label: a.label || def.name || a.provider, url: models(def.baseUrl) });
+  }
+  return list;
+}
+
+/** The Free API's state from its hosts' checks: up (or slow) when any host passed, down when all failed, null when none was checked. */
+export function routerHealth(health = []) {
+  const hosts = health.filter(h => String(h.provider).startsWith('router:'));
+  if (!hosts.length) return null;
+  return hosts.some(h => h.status === 'up') ? 'up' : hosts.some(h => h.status === 'slow') ? 'slow' : 'down';
+}

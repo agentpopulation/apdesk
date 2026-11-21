@@ -31,7 +31,9 @@ export const pages = {
         h('div', { class: 'row' }, h('h2', { style: { margin: 0 } }, ui.label('tasks', 'Tasks')), h('span', { class: 'grow' }), btn('New task', { onClick: newTask })),
         h('div', { class: 'tk-two' }, left, right));
 
-      const who = (id) => ui.agent(id)?.name || 'Coordinator';
+      // the server names who did each job (its agent, else the module that started it); a live update may come without it
+      const moduleOf = (j) => { const m = (ui.state.modules || []).find(x => x.id === String(j.kind || '').split('.')[0]); return m ? (m.menu?.[0]?.label || m.name) : null; };
+      const who = (j) => j.by || ui.agent(j.agentId)?.name || moduleOf(j) || 'The desk';
       const isRepeatable = (j) => j.kind === 'tasks.run' || String(j.kind).startsWith('flows.');
       function results(j) {
         const o = j.output && typeof j.output === 'object' ? j.output : {};
@@ -59,7 +61,7 @@ export const pages = {
         const ans = answerOf(j);
         const card = h('div', { class: 'card tk-job' },
           h('div', { class: 'top' },
-            h('div', { class: 'what' }, h('b', null, j.title), h('div', { class: 'sub', title: detail }, `${j.quiet ? 'The desk' : who(j.agentId)} · ${when}${detail ? ' · ' + detail : ''}`)),
+            h('div', { class: 'what' }, h('b', null, j.title), h('div', { class: 'sub', title: detail }, `${who(j)} · ${when}${detail ? ' · ' + detail : ''}`)),
             active ? meter(j.progress || 0, { live: j.status === 'running' }) : null,
             pill(active && j.status === 'running' ? fmt.pct(j.progress) : word, kind),
             active ? btn('Stop', { kind: 'ghost sm', onClick: async () => { try { await api(`jobs/${j.id}/stop`, { method: 'POST' }); } catch (e) { toast(e.message, 'err'); } } }) : null),

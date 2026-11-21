@@ -2,7 +2,7 @@
 // No network, no database.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { statusStrip, diffAddresses, diffDns, issuesFrom, apiHealthFrom } from './health.js';
+import { statusStrip, diffAddresses, diffDns, issuesFrom, apiHealthFrom, apiEndpointsFrom, routerHealth } from './health.js';
 
 test('status strip: counts from the roster and jobs; a missing source stays null, not a made-up number', () => {
   const agents = [{ id: 'coordinator', enabled: true }, { id: 'scout', enabled: true }, { id: 'closer', enabled: true }, { id: 'coder', enabled: false }];
@@ -69,4 +69,27 @@ test('API health fold: last state, latency and the 24h error rate per provider',
   assert.equal(g.status, 'up'); assert.equal(g.lastMs, 180); assert.equal(g.checks24h, 2);
   assert.equal(g.errors24h, 1); assert.equal(g.errorRate24h, 0.5, 'the check older than 24h is left out of the rate');
   assert.equal(h.find(p => p.provider === 'groq').status, 'slow', 'a reachable but slow endpoint is slow, not down');
+});
+
+test('API health lists the built-in Free API: one check per free host that is on, the same models-list check as the others', () => {
+  const providers = { gemini: { name: 'Google Gemini', baseUrl: 'https://g.example/v1beta/openai/' } };
+  const active = [
+    { provider: 'router', builtin: true, upstreams: [{ id: 'ovh' }, { id: 'pol' }] },
+    { provider: 'ollama' }, { provider: 'gemini', label: 'Google Gemini' }, { provider: 'gemini', label: 'Google Gemini' },
+  ];
+  const upstreams = [{ id: 'ovh', name: 'OVHcloud', baseUrl: 'https://ovh.example/v1/' }, { id: 'pol', name: 'Pollinations', baseUrl: 'https://p.example/openai' }, { id: 'off', name: 'Off host', baseUrl: 'https://off.example/v1', enabled: false }];
+  const eps = apiEndpointsFrom({ active, providers, upstreams, routerName: 'Free API' });
+  assert.deepEqual(eps, [
+    { provider: 'router:ovh', label: 'Free API: OVHcloud', url: 'https://ovh.example/v1/models' },
+    { provider: 'router:pol', label: 'Free API: Pollinations', url: 'https://p.example/openai/models' },
+    { provider: 'gemini', label: 'Google Gemini', url: 'https://g.example/v1beta/openai/models' },
+  ]);
+  assert.equal(apiEndpointsFrom({ active: [{ provider: 'router', builtin: false }], providers, upstreams, routerName: 'Free API' }).length, 0, "the owner's own router on this PC is not pinged");
+});
+
+test('the Free API counts as up when any of its hosts passed its last check, down when all failed, not checked when none was', () => {
+  assert.equal(routerHealth([{ provider: 'router:ovh', status: 'down' }, { provider: 'router:pol', status: 'up' }, { provider: 'gemini', status: 'down' }]), 'up');
+  assert.equal(routerHealth([{ provider: 'router:ovh', status: 'down' }]), 'down');
+  assert.equal(routerHealth([{ provider: 'router:ovh', status: 'slow' }]), 'slow');
+  assert.equal(routerHealth([{ provider: 'gemini', status: 'up' }]), null);
 });

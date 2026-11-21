@@ -19,32 +19,42 @@ export function agentStates({ agents = [], jobs = [], now = Date.now() } = {}) {
   });
 }
 
+/** The node for calls no agent made (Council seats, Bench, drafts, the Doctor, ...), split by the purpose stored with each call. */
+export const DESK = '(desk)';
+const PURPOSE = { chat: 'Chat', council: 'Council', research: 'Research', draft: 'Drafts', plan: 'Plans', small: 'Small jobs', code: 'Code', embed: 'Search index', vision: 'Pictures', business: 'Business' };
+const firstCap = (w) => w.charAt(0).toUpperCase() + w.slice(1);
+export const purposeWord = (p) => PURPOSE[p] || (p ? firstCap(String(p)) : 'Other');
+
 /**
- * Agents on one side, providers on the other, joined by the number of calls in the last 24 hours.
- *   calls: [{ agent_id, provider, ok }] from the core calls table   health: [{ provider, status }] (up, slow, down)
+ * Agents on one side, providers on the other, joined by the number of calls in the last 24 hours. Every call is drawn:
+ * a call with no agent (or one no longer on the team) goes to one node, "The desk", whose rows are split by purpose.
+ *   calls: [{ agent_id, provider, ok, purpose }] from the core calls table   health: [{ provider, status }] (up, slow, down)
  *   visits: [{ agentId, host }] pages the agents opened (for the domain side of the selection)
  * Only agents that made calls are drawn. A provider whose last check failed is down, and so are its callers' marks.
  */
 export function dependencyModel({ agents = [], calls = [], health = [], visits = [], label = (p) => p } = {}) {
-  const name = new Map(agents.map(a => [a.id, a.name || a.id]));
+  const name = new Map([...agents.map(a => [a.id, a.name || a.id]), [DESK, 'The desk']]);
   const hmap = new Map(health.map(h => [h.provider, h.status]));
   const edgeMap = new Map(), prov = new Map();
   for (const c of calls) {
     const p = c.provider || 'unknown';
     prov.set(p, (prov.get(p) || 0) + 1);
-    if (!c.agent_id || !name.has(c.agent_id)) continue;
-    const k = c.agent_id + '\u0000' + p; edgeMap.set(k, (edgeMap.get(k) || 0) + 1);
+    const desk = !c.agent_id || c.agent_id === DESK || !name.has(c.agent_id);
+    const k = (desk ? DESK : c.agent_id) + '\u0000' + p; const e = edgeMap.get(k) || { count: 0, parts: new Map() };
+    e.count++; if (desk) { const w = purposeWord(c.purpose); e.parts.set(w, (e.parts.get(w) || 0) + 1); }
+    edgeMap.set(k, e);
   }
-  const edges = [...edgeMap].map(([k, count]) => { const [agentId, provider] = k.split('\u0000'); return { agentId, provider, count }; })
+  const edges = [...edgeMap].map(([k, e]) => { const [agentId, provider] = k.split('\u0000'); return { agentId, provider, count: e.count, ...(agentId === DESK ? { parts: [...e.parts].map(([purpose, count]) => ({ purpose, count })).sort((a, b) => b.count - a.count || a.purpose.localeCompare(b.purpose)) } : {}) }; })
     .sort((a, b) => b.count - a.count || a.agentId.localeCompare(b.agentId) || a.provider.localeCompare(b.provider));
   const providers = [...prov].map(([provider, n]) => ({ provider, label: label(provider) || provider, calls: n, health: hmap.get(provider) ?? null, down: hmap.get(provider) === 'down' }))
     .sort((a, b) => b.calls - a.calls || a.provider.localeCompare(b.provider));
   const downSet = new Set(providers.filter(p => p.down).map(p => p.provider));
-  const order = agents.map(a => a.id);
+  const order = [...agents.map(a => a.id), DESK];
   const ids = [...new Set(edges.map(e => e.agentId))].sort((a, b) => order.indexOf(a) - order.indexOf(b));
   const out = ids.map(id => ({ id, name: name.get(id), calls: edges.filter(e => e.agentId === id).reduce((s, e) => s + e.count, 0), affected: edges.some(e => e.agentId === id && downSet.has(e.provider)) }));
   const plabel = new Map(providers.map(p => [p.provider, p.label]));
-  const table = out.flatMap(a => edges.filter(e => e.agentId === a.id).map(e => ({ agent: a.name, provider: plabel.get(e.provider), calls: e.count, down: downSet.has(e.provider), health: hmap.get(e.provider) ?? null })));
+  const row = (agent, e, calls) => ({ agent, provider: plabel.get(e.provider), calls, down: downSet.has(e.provider), health: hmap.get(e.provider) ?? null });
+  const table = out.flatMap(a => edges.filter(e => e.agentId === a.id).flatMap(e => (e.parts ? e.parts.map(x => row(`${a.name} (${x.purpose})`, e, x.count)) : [row(a.name, e, e.count)])));
   return { agents: out, providers, edges, table, visits: visits.filter(v => v.agentId && v.host).map(v => ({ agentId: v.agentId, host: String(v.host).toLowerCase() })) };
 }
 

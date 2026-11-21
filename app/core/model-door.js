@@ -36,6 +36,19 @@ export const LEARN = Object.freeze({ days: 7, minCalls: 5, ttlMs: 60000 });
 const DEFAULT_CHAIN = ['router', 'ollama', 'keyed'];
 const ENV_KEYS = ['OPENROUTER_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GROQ_API_KEY', 'GEMINI_API_KEY', 'MISTRAL_API_KEY', 'DEEPSEEK_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'CEREBRAS_API_KEY', 'XAI_API_KEY'];
 
+const BIG = { input: 1e6, output: 1e6 };
+const KV_NS = 'core.model';
+/** Midnight at the start of the day (or of the month) that holds `ms`, in the owner's zone, as a Date. A zone this
+ *  computer does not know falls back to the computer's own midnight. */
+export function dayStart(ms, timeZone, month = false) {
+  try {
+    const f = new Intl.DateTimeFormat('en-US', { timeZone: timeZone || undefined, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
+    const parts = (t) => Object.fromEntries(f.formatToParts(new Date(t)).filter(x => x.type !== 'literal').map(x => [x.type, Number(x.value)]));
+    const offset = (t) => { const p = parts(t); return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(t / 1000) * 1000; };
+    const p = parts(ms); const wall = Date.UTC(p.year, p.month - 1, month ? 1 : p.day);
+    return new Date(wall - offset(wall - offset(ms)));   // the offset at midnight itself, so a day the clocks change starts right
+  } catch { const d = new Date(ms); if (month) d.setDate(1); d.setHours(0, 0, 0, 0); return d; }
+}   // a stand-in token count: does this route charge at all?
 export class ModelError extends Error { constructor(code, message, extra = {}) { super(message); this.code = code; Object.assign(this, extra); } }
 
 export class ModelDoor {
@@ -51,6 +64,8 @@ export class ModelDoor {
     this.localEngine = null;      // the desk's own llama-server (core/downloads-routes.js sets it): provider 'llama'
     this.clock = () => Date.now(); // what "the last 7 days" counts from (tests use a fixed one)
     this.learnCache = null;       // { at, v } the learned table, read again after LEARN.ttlMs
+    // key ids the provider itself said are on its free tier (a Gemini free-tier quota notice), kept across restarts
+    this.reportedFree = new Set(); try { for (const k of this.s.kvGet(KV_NS, 'freeTierKeys', []) || []) this.reportedFree.add(k); } catch {}
     this.loadEnvKeys();
   }
   loadEnvKeys(env = process.env) {
@@ -78,8 +93,22 @@ export class ModelDoor {
     this.cache.clear(); this.events.emit('models', { change: 'key' });
     return { id, provider, label, value: mask(value), enabled: true };
   }
+  /** The owner's word on a key: 'free' (its calls cost nothing), 'paid' (priced at the list price), or null (not known). */
+  setKeyTier(id, tier) {
+    if (tier !== 'free' && tier !== 'paid' && tier != null) throw new ModelError('bad_tier', 'A key is free, paid or not known.');
+    const env = this.envKeys.find(k => k.id === id);
+    if (env) env.meta = { ...(env.meta || {}), tier: tier || null };
+    else { const r = this.s.get("SELECT meta FROM secrets WHERE kind = 'provider-key' AND id = ?", id); if (!r) throw new ModelError('no_key', 'That key is gone.'); this.s.run('UPDATE secrets SET meta = ? WHERE id = ?', JSON.stringify({ ...safeJson(r.meta), tier: tier || null }), id); }
+    this.reported(id, false); this.events.emit('models', { change: 'key' });
+  }
+  /** Keep or drop a provider's free-tier report for a key, in the data folder so it holds after a restart. */
+  reported(id, free) {
+    if (free === this.reportedFree.has(id)) return;
+    if (free) this.reportedFree.add(id); else this.reportedFree.delete(id);
+    try { this.s.kvSet(KV_NS, 'freeTierKeys', [...this.reportedFree]); } catch (e) { this.log('free-tier note not saved', e.message); }
+  }
   toggleKey(id, enabled) { this.s.run('UPDATE secrets SET enabled = ? WHERE id = ?', enabled ? 1 : 0, id); this.cache.clear(); this.events.emit('models', { change: 'key' }); }
-  removeKey(id) { this.s.run('DELETE FROM secrets WHERE id = ?', id); this.cache.clear(); this.events.emit('models', { change: 'key' }); }
+  removeKey(id) { this.s.run('DELETE FROM secrets WHERE id = ?', id); this.reported(id, false); this.cache.clear(); this.events.emit('models', { change: 'key' }); }
   liveKeys(provider) { return this.keysFor(provider, true).filter(k => k.enabled && !this.onCooldown(provider, k.id)); }
   onCooldown(provider, keyId) { const u = this.cooldown.get(provider + '|' + keyId); return u && u > Date.now(); }
   cool(provider, keyId, ms) { this.cooldown.set(provider + '|' + keyId, Date.now() + ms); }
@@ -187,7 +216,7 @@ export class ModelDoor {
         if (attempts.length >= MAX_ATTEMPTS) break;
         if (Date.now() >= deadline) { late = true; break; }
         // a paid model is not called once today's or this month's spend has reached the owner's limit
-        if (t.key && this.priceOf(t.model) && this.spendGuard) { const over = this.spendGuard(); if (over) { attempts.push({ provider: t.provider, model: t.model, ok: false, error: `not called: your ${over} is reached` }); continue; } }
+        if (t.key && this.estimate(t.provider, t.model, BIG, t.keyId) !== 0) { const over = this.overLimit(); if (over) { attempts.push({ provider: t.provider, model: t.model, ok: false, error: `not called: your ${over} is reached` }); continue; } }
         const t0 = Date.now();
         if (t.via) this.lastPick.set(t.keyId, t0);
         try {
@@ -197,14 +226,15 @@ export class ModelDoor {
           attempts.push({ provider: t.provider, model: t.model, ok: true, ms });
           this.last.set(t.provider, { ok: true, at: now(), model: t.model, ms });
           if (t.provider === 'llama') this.localEngine?.touch?.();
-          this.record({ ...opts, provider: t.provider, model: t.model, ok: true, ms, usage: r.usage });
+          this.record({ ...opts, provider: t.provider, model: t.model, keyId: t.keyId, ok: true, ms, usage: r.usage });
           return { ...r, provider: t.provider, model: t.model, via: t.via || null, label: this.label(t.provider, t.model, t.viaName), ms, attempts, fallbackUsed: attempts.length > 1 };
         } catch (e) {
           const ms = Date.now() - t0;
           if (signal.aborted || e.name === 'AbortError' || e.code === 'aborted') throw new ModelError('aborted', 'Stopped.', { attempts });
           attempts.push({ provider: t.provider, model: t.model, ok: false, error: e.message, ms });
           if (!this.last.get(t.provider)?.ok || this.last.get(t.provider).model === t.model) this.last.set(t.provider, { ok: false, at: now(), model: t.model, error: short(e.message) });
-          this.record({ ...opts, provider: t.provider, model: t.model, ok: false, ms, error: e.message });
+          if (e.freeTier && t.keyId) this.reported(t.keyId, true);   // the provider said this key is on its free tier
+          this.record({ ...opts, provider: t.provider, model: t.model, keyId: t.keyId, ok: false, ms, error: e.message });
           if (t.via) { const b = this.backoffFor(e); this.cool('router', t.keyId, b.ms); this.coolWhy.set(t.keyId, { why: b.why, until: Date.now() + b.ms }); }
           else if (e.status === 429) this.cool(t.provider, (t.keyId || '-') + (t.via ? '' : '|' + t.model), /quota|per day|daily/i.test(e.message) ? 15 * 60000 : 60000);   // one model out of quota does not silence the key's other models
           else if (e.status === 401 || e.status === 403) this.cool(t.provider, t.keyId || '-', t.via ? 60000 : 10 * 60000);
@@ -343,6 +373,7 @@ export class ModelDoor {
   }
   async callOpenAI(t, opts, signal, leftMs = Infinity) {
     const body = { model: t.model, messages: opts.messages, stream: !!opts.onDelta };
+    if (body.stream && PROVIDERS[t.provider]?.streamUsage) body.stream_options = { include_usage: true };   // the token count, for the spend record
     if (opts.temperature != null) body.temperature = opts.temperature;
     if (opts.maxTokens) body.max_tokens = opts.maxTokens;
     if (opts.json && !t.via && t.provider !== 'router') body.response_format = { type: 'json_object' };
@@ -501,7 +532,7 @@ export class ModelDoor {
   }
   record(o) {
     try {
-      const cost = this.estimate(o.provider, o.model, o.usage);
+      const cost = this.estimate(o.provider, o.model, o.usage, o.keyId, !!o.ok);
       this.s.run('INSERT INTO calls (at, agent_id, purpose, provider, model, ok, ms, input_tokens, output_tokens, cost_minor, currency, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', now(), o.agentId || null, o.purpose || 'chat', o.provider, o.model, o.ok ? 1 : 0, o.ms || 0, o.usage?.input || 0, o.usage?.output || 0, cost, this.settings.get('currency'), o.error || null);
     } catch (e) { this.log('record failed', e.message); }
   }
@@ -562,18 +593,57 @@ export class ModelDoor {
     try { for (const r of this.s.all('SELECT provider, model, ok, at, error FROM calls WHERE id IN (SELECT MAX(id) FROM calls GROUP BY provider)')) out[r.provider] = { at: r.at, ok: !!r.ok, model: r.model, error: r.error ? short(firstSentence(r.error)) : null }; } catch (e) { this.log('last calls read failed', e.message); }
     return out;
   }
-  /** True when this model costs money by our price list (free ids and unknown models count as free). */
-  priceOf(model) { const p = CATALOG.prices.find(x => String(model || '').toLowerCase().includes(x.match)); return p && (p.in > 0 || p.out > 0) ? p : null; }
-  estimate(provider, model, usage) {
-    if (!usage || provider === 'router' || provider === 'ollama' || provider === 'llama' || String(provider).startsWith('lan:')) return 0;
-    const p = CATALOG.prices.find(x => String(model || '').toLowerCase().includes(x.match)); if (!p) return 0;
-    const usd = (usage.input || 0) / 1e6 * p.in + (usage.output || 0) / 1e6 * p.out;
+  /** The list price of this model (USD per million tokens), or null when the list has none. */
+  priceOf(model) { return CATALOG.prices.find(x => String(model || '').toLowerCase().includes(x.match)) || null; }
+  /** 'free' | 'paid' | null (not known) for one key: the owner's mark first, then what the provider reported, then its tier. */
+  keyTier(provider, keyId) {
+    const k = keyId ? this.keysFor(provider).find(x => x.id === keyId) : null;
+    if (k?.meta?.tier === 'free' || k?.meta?.tier === 'paid') return k.meta.tier;
+    if (keyId && this.reportedFree.has(keyId)) return 'free';
+    return (PROVIDERS[provider]?.tier || 'paid') === 'paid' ? 'paid' : null;   // free-signup and custom: the same key can be billed or not
+  }
+  /** What a call cost in minor units of the owner's currency, as far as the desk can know it:
+   *  0 for a free route (Free API, local, LAN), a model the provider lists as free, a key on a free tier, or a failed call;
+   *  a list-price estimate for a paid route; null when the desk cannot know whether the call was charged. */
+  estimate(provider, model, usage, keyId = null, ok = true) {
+    if (!ok || provider === 'router' || this.isLocal(provider)) return 0;
+    if (isFreeOpenRouter(model) || (this.priceOf(model) && !this.priceOf(model).in && !this.priceOf(model).out)) return 0;
+    const tier = provider === 'openrouter' ? 'paid' : this.keyTier(provider, keyId);   // OpenRouter bills every model that is not free
+    if (tier === 'free') return 0;
+    if (tier !== 'paid' || !usage || !this.priceOf(model)) return null;
+    return this.atList(provider, model, usage);
+  }
+  /** The list price of a call, for the spend limit: a model the list does not name counts at the highest price on it.
+   *  exact: not rounded, so many small calls are summed first and none is rounded away. */
+  atList(provider, model, usage, exact = false) {
+    const p = this.priceOf(model) || CATALOG.prices.reduce((a, x) => (x.in + x.out > a.in + a.out ? x : a));
+    const usd = (usage?.input || 0) / 1e6 * p.in + (usage?.output || 0) / 1e6 * p.out;
     const rate = CATALOG.usdRates[this.settings.get('currency')] || 1;
-    return Math.round(usd * rate * 100);
+    return exact ? usd * rate * 100 : Math.round(usd * rate * 100);
+  }
+  /** The calls since then whose cost is not known, at their list price (minor units). */
+  unknownAtList(sinceIso) {
+    let rows = []; try { rows = this.s.all('SELECT provider, model, input_tokens AS input, output_tokens AS output FROM calls WHERE cost_minor IS NULL AND at >= ?', sinceIso); } catch (e) { this.log('spend read failed', e.message); }
+    return Math.ceil(rows.reduce((a, r) => a + this.atList(r.provider, r.model, r, true), 0));   // rounded up: the limit stays safe
+  }
+  /** Today's or this month's limit reached: the owner's guard (approvals and known costs), and the model calls alone with
+   *  every unknown cost counted at its list price, so "not known" can never carry spend past a limit. */
+  overLimit() {
+    const g = this.spendGuard?.(); if (g) return g;
+    const zone = this.settings.get('timeZone'); const day = dayStart(Date.now(), zone), month = dayStart(Date.now(), zone, true);
+    const spent = (d) => (this.s.get('SELECT COALESCE(SUM(cost_minor), 0) AS t FROM calls WHERE at >= ?', d.toISOString())?.t || 0) + this.unknownAtList(d.toISOString());
+    const lim = (k) => { const v = this.settings.get(k); return v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v); };
+    const perDay = lim('spend.perDay'), perMonth = lim('spend.perMonth');
+    if (perDay != null && spent(day) >= perDay) return 'daily spend limit';
+    if (perMonth != null && spent(month) >= perMonth) return 'monthly spend limit';
+    return null;
   }
   usage() {
-    const day = new Date(); day.setHours(0, 0, 0, 0);
-    return { today: this.s.all('SELECT provider, model, COUNT(*) AS calls, SUM(ok) AS ok, SUM(input_tokens) AS input, SUM(output_tokens) AS output, SUM(cost_minor) AS cost FROM calls WHERE at >= ? GROUP BY provider, model ORDER BY calls DESC', day.toISOString()), recent: this.s.all('SELECT * FROM calls ORDER BY id DESC LIMIT 50') };
+    const day = dayStart(Date.now(), this.settings.get('timeZone'));   // today in the owner's zone
+    // cost: the known costs only; unknown: calls whose cost is not known; atList: those calls at the list price (counted in the limit)
+    const today = this.s.all('SELECT provider, model, COUNT(*) AS calls, SUM(ok) AS ok, SUM(input_tokens) AS input, SUM(output_tokens) AS output, COALESCE(SUM(cost_minor), 0) AS cost, SUM(CASE WHEN cost_minor IS NULL THEN 1 ELSE 0 END) AS unknown, SUM(CASE WHEN cost_minor IS NULL THEN input_tokens ELSE 0 END) AS unknownInput, SUM(CASE WHEN cost_minor IS NULL THEN output_tokens ELSE 0 END) AS unknownOutput FROM calls WHERE at >= ? GROUP BY provider, model ORDER BY calls DESC', day.toISOString())
+      .map(({ unknownInput, unknownOutput, ...r }) => ({ ...r, atList: r.unknown ? Math.ceil(this.atList(r.provider, r.model, { input: unknownInput, output: unknownOutput }, true)) : 0 }));
+    return { today, recent: this.s.all('SELECT * FROM calls ORDER BY id DESC LIMIT 50') };
   }
   async http(url, init = {}, timeoutMs = 30000) {
     const ac = new AbortController(); const t = setTimeout(() => ac.abort('timeout'), timeoutMs);
@@ -599,7 +669,7 @@ export class ModelDoor {
       learned: () => this.learnedView(), lastCalls: () => this.lastCalls(),
       /** The assistant message to send back before the tool results, with everything the provider needs kept (Gemini's signature). */
       toolMessage: (r) => toolMessage(r),
-      keys: { list: () => this.listKeys(), add: (p, v, l, m) => this.addKey(p, v, l, m), toggle: (id, on) => this.toggleKey(id, on), remove: (id) => this.removeKey(id) },
+      keys: { list: () => this.listKeys(), add: (p, v, l, m) => this.addKey(p, v, l, m), toggle: (id, on) => this.toggleKey(id, on), remove: (id) => this.removeKey(id), tier: (id, t) => this.setKeyTier(id, t) },
       routerModels: () => this.routerModels(), ollamaModels: () => this.ollamaModels(), usage: () => this.usage(), get online() { return undefined; },
     });
   }
@@ -677,7 +747,9 @@ async function httpError(r) {
   const msg = typeof err?.message === 'string' ? err.message : typeof j?.error === 'string' ? j.error : txt;
   const header = Number(r.headers?.get?.('retry-after')) || 0;
   const named = Number(err?.retry_after) || header || retryAfterMs(msg) / 1000 || null;
-  return Object.assign(new Error(`HTTP ${r.status} ${firstSentence(msg)}`), { status: r.status, hostCode: typeof err?.code === 'string' ? err.code : null, retryAfter: named });
+  // Google names the free-tier quota in its 429 body (generate_content_free_tier_requests, ...-FreeTier): the key is on the free tier
+  const freeTier = r.status === 429 && /free_tier_|FreeTier/.test(txt);
+  return Object.assign(new Error(`HTTP ${r.status} ${firstSentence(msg)}`), { status: r.status, hostCode: typeof err?.code === 'string' ? err.code : null, retryAfter: named, freeTier });
 }
 function short(t) { return String(t || '').replace(/\s+/g, ' ').slice(0, 160); }
 function safeJson(x) { try { return x ? JSON.parse(x) : {}; } catch { return {}; } }

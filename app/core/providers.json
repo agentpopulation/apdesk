@@ -1,5 +1,5 @@
 {
- "note": "Keyed providers the model door knows. OpenAI-compatible unless api says otherwise. Prices are USD per million tokens, rough, for the spend estimate only; 0 means unknown or free.",
+ "note": "Keyed providers the model door knows. OpenAI-compatible unless api says otherwise. Prices are USD per million tokens, rough, for the spend estimate only; in and out both 0 means the provider lists the model as free. tier: paid means every call is billed; free-signup means the same key may be on a free tier or billed, so the door records the cost as not known unless the owner marks the key or the provider says it is free tier. A model not on the price list counts against the spend limit at the highest price here.",
  "providers": {
   "openai": {
    "name": "OpenAI",
@@ -8,7 +8,8 @@
    "env": "OPENAI_API_KEY",
    "defaultModel": "gpt-4.1-mini",
    "signup": "https://platform.openai.com/api-keys",
-   "tier": "paid"
+   "tier": "paid",
+   "streamUsage": true
   },
   "anthropic": {
    "name": "Anthropic",
@@ -42,6 +43,7 @@
    "defaultModel": "llama-3.3-70b-versatile",
    "signup": "https://console.groq.com/keys",
    "tier": "free-signup",
+   "streamUsage": true,
    "freeNote": "Free tier: about 30 requests a minute per model."
   },
   "gemini": {
@@ -57,6 +59,7 @@
     "gemini-3.1-flash-lite"
    ],
    "tier": "free-signup",
+   "streamUsage": true,
    "freeNote": "Free tier from Google AI Studio. Google may use free-tier prompts to improve its models."
   },
   "mistral": {
@@ -76,7 +79,8 @@
    "env": "DEEPSEEK_API_KEY",
    "defaultModel": "deepseek-chat",
    "signup": "https://platform.deepseek.com/api_keys",
-   "tier": "paid"
+   "tier": "paid",
+   "streamUsage": true
   },
   "together": {
    "name": "Together",
@@ -85,7 +89,8 @@
    "env": "TOGETHER_API_KEY",
    "defaultModel": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
    "signup": "https://api.together.ai/settings/api-keys",
-   "tier": "paid"
+   "tier": "paid",
+   "streamUsage": true
   },
   "fireworks": {
    "name": "Fireworks",
@@ -94,7 +99,8 @@
    "env": "FIREWORKS_API_KEY",
    "defaultModel": "accounts/fireworks/models/llama-v3p3-70b-instruct",
    "signup": "https://fireworks.ai/account/api-keys",
-   "tier": "paid"
+   "tier": "paid",
+   "streamUsage": true
   },
   "cerebras": {
    "name": "Cerebras",
@@ -104,6 +110,7 @@
    "defaultModel": "llama-3.3-70b",
    "signup": "https://cloud.cerebras.ai/",
    "tier": "free-signup",
+   "streamUsage": true,
    "freeNote": "Free tier with daily token limits."
   },
   "xai": {
@@ -113,7 +120,8 @@
    "env": "XAI_API_KEY",
    "defaultModel": "grok-3-mini",
    "signup": "https://console.x.ai/",
-   "tier": "paid"
+   "tier": "paid",
+   "streamUsage": true
   },
   "nvidia": {
    "name": "NVIDIA NIM",

@@ -17,6 +17,12 @@ function short(text, n = 70) { const s = String(text ?? '').replace(/\s+/g, ' ')
 
 export async function activate(ctx) {
   const agentName = (id) => ctx.agents.get(id)?.name || 'Coordinator';
+  /** Who did a job: its agent when it has one, otherwise the module that started it (from the job's kind), else the desk. */
+  function byOf(job) {
+    const a = job.agentId ? ctx.agents.get(job.agentId) : null; if (a?.name) return a.name;
+    const m = ctx.modules.list().find(x => x.id === String(job.kind || '').split('.')[0]);
+    return m ? (m.menu?.[0]?.label || m.name || 'The desk') : 'The desk';
+  }
 
   /** create({ title, prompt, agentId, chatId }) -> the stored job (it keeps running when the browser closes) */
   async function create({ title, prompt, agentId, chatId } = {}) {
@@ -41,7 +47,7 @@ export async function activate(ctx) {
       },
     });
   }
-  function list({ limit = 100 } = {}) { return ctx.jobs.list({ limit }); }
+  function list({ limit = 100 } = {}) { return ctx.jobs.list({ limit }).map(j => ({ ...j, by: byOf(j) })); }
 
   const wrap = (fn) => async (req, res, a) => { try { ctx.json(res, await fn(a)); } catch (e) { ctx.json(res, { error: e.message }, e.status || (e.code === 'halted' ? 503 : 500)); } };
   const owner = (o) => { if (!o) throw bad('Only the owner at this desk can start tasks.', 403); };
@@ -68,7 +74,7 @@ export async function activate(ctx) {
     name: 'task_list', description: 'List background tasks: running, waiting for the owner, and recently finished.', parameters: { type: 'object', properties: {} },
     async run() {
       const jobs = list({ limit: 40 });
-      const pick = (f) => jobs.filter(f).slice(0, 10).map(j => ({ title: j.title, by: agentName(j.agentId), status: j.status, progress: Math.round((j.progress || 0) * 100) + '%', detail: j.detail || '' }));
+      const pick = (f) => jobs.filter(f).slice(0, 10).map(j => ({ title: j.title, by: j.by, status: j.status, progress: Math.round((j.progress || 0) * 100) + '%', detail: j.detail || '' }));
       return { running: pick(j => j.status === 'running'), waiting: pick(j => j.status === 'waiting'), finished: pick(j => DONE.includes(j.status)), approvalsWaiting: (ctx.approval.listPending?.() || []).length };
     },
   });

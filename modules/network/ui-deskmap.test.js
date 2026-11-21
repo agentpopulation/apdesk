@@ -38,7 +38,31 @@ test('dependencies: counts per agent and provider, the table has the same number
   assert.equal(m.providers.find(p => p.provider === 'router').down, false);
   assert.deepEqual(m.agents.filter(a => a.affected).map(a => a.id).sort(), ['a', 'b']);
   assert.equal(m.agents.find(a => a.id === 'c'), undefined, 'an agent with no calls is not drawn');
-  assert.deepEqual(m.table.map(r => [r.agent, r.provider, r.calls]), [['Scout', 'GEMINI', 3], ['Clerk', 'GEMINI', 1], ['Clerk', 'ROUTER', 1]]);
+  assert.deepEqual(m.table.map(r => [r.agent, r.provider, r.calls]), [['Scout', 'GEMINI', 3], ['Clerk', 'GEMINI', 1], ['Clerk', 'ROUTER', 1], ['The desk (Other)', 'ROUTER', 1]]);
+});
+
+test('dependencies: calls no agent made go to one node, The desk, split by purpose, so the picture adds up to the call log', () => {
+  const log = [
+    ...calls,
+    { agent_id: null, provider: 'router', ok: 1, purpose: 'council' }, { agent_id: null, provider: 'router', ok: 1, purpose: 'council' },
+    { agent_id: null, provider: 'gemini', ok: 1, purpose: 'draft' }, { agent_id: 'gone', provider: 'router', ok: 1, purpose: 'small' },
+  ];
+  const m = dependencyModel({ agents, calls: log, health });
+  const sum = (xs) => xs.reduce((s, x) => s + x.calls, 0);
+  assert.equal(m.edges.reduce((s, e) => s + e.count, 0), log.length, 'every call is on a line');
+  assert.equal(sum(m.agents), log.length); assert.equal(sum(m.providers), log.length); assert.equal(sum(m.table), log.length);
+  const desk = m.agents.find(a => a.name === 'The desk'); assert.equal(desk.calls, 5); assert.equal(m.agents.at(-1), desk, 'drawn after the agents');
+  assert.deepEqual(m.table.filter(r => r.agent.startsWith('The desk')).map(r => [r.agent, r.provider, r.calls]),
+    [['The desk (Council)', 'router', 2], ['The desk (Other)', 'router', 1], ['The desk (Small jobs)', 'router', 1], ['The desk (Drafts)', 'gemini', 1]]);
+  assert.equal(desk.affected, true, 'it called a provider whose last check failed');
+});
+
+test('dependencies: every purpose under The desk is written the same way, first letter capital', () => {
+  const log = ['chat', 'council', 'research', 'draft', 'small', 'bench-find', null].map(purpose => ({ agent_id: null, provider: 'router', ok: 1, purpose }));
+  const words = dependencyModel({ calls: log }).table.map(r => r.agent.replace(/^The desk \((.*)\)$/, '$1'));
+  assert.equal(words.length, log.length);
+  for (const w of words) assert.equal(w[0], w[0].toUpperCase(), w);
+  assert.ok(words.includes('Chat') && words.includes('Council') && words.includes('Other'));
 });
 
 test('dependencies: no provider health row means not checked, never down', () => {
@@ -60,7 +84,7 @@ test('layout: agents left, providers right, line width grows with calls and stay
 test('selection: a provider marks itself and its callers; a domain marks the agents that went there; nothing selected marks nothing', () => {
   const m = dependencyModel({ agents, calls, health, visits: [{ agentId: 'c', host: 'example.com' }] });
   const p = related(m, { kind: 'provider', key: 'router' });
-  assert.deepEqual([...p.providers], ['router']); assert.deepEqual([...p.agents].sort(), ['b']);
+  assert.deepEqual([...p.providers], ['router']); assert.deepEqual([...p.agents].sort(), ['(desk)', 'b'], 'the desk node is marked too: it called the router');
   const d = related(m, { kind: 'domain', key: 'Example.com' });
   assert.deepEqual([...d.agents], ['c']);
   const n = related(m, null); assert.equal(n.providers.size + n.agents.size, 0);
@@ -88,7 +112,7 @@ test('drawing: the SVG has one node per agent, a line per edge, a failed provide
   assert.equal(all(drawAgentMap(doc, states, { width: 640 })).filter(n => n.attrs['data-agent']).length, 4);
   const m = dependencyModel({ agents, calls, health });
   const svg = drawDeps(doc, m, { width: 600 });
-  assert.equal(all(svg).filter(n => n.tag === 'line').length, 3);
+  assert.equal(all(svg).filter(n => n.tag === 'line').length, 4, 'one more: the desk to the router');
   assert.ok(all(svg).some(n => n.text.includes('check failed')));
   let picked; const svg2 = drawDeps(doc, m, { width: 600, sel: { kind: 'provider', key: 'router' }, onSelect: (x) => { picked = x; } });
   const gem = all(svg2).find(n => n.attrs['data-provider'] === 'gemini'); assert.equal(Number(gem.attrs.opacity), 0.3);

@@ -12,7 +12,7 @@ import { interfaces, arpTable, tcpOpen, subnetTargets, pool, isPrivate, inOwnSub
 import { lookupDns, lookupRdap, lookupHeaders, lookupTls, lookupRobots, lookupCompany, normalizeDomain } from './lookup.js';
 import { localConnection, publicAddress, signalWords, PUBLIC_IP_SOURCES } from './conn.js';
 import { agentStates, dependencyModel } from './ui-deskmap.js';
-import { statusStrip, diffAddresses, diffDns, issuesFrom, apiHealthFrom, severityRank } from './health.js';
+import { statusStrip, diffAddresses, diffDns, issuesFrom, apiHealthFrom, apiEndpointsFrom, routerHealth, severityRank } from './health.js';
 import { siteUrl, clampEvery, checkOnce, nextCheckAt, transition, textHash, diffSummary, keepText, robotsAllows, UA as WATCH_UA, DEFAULT_SLOW_MS, DEFAULT_CHANGE_MIN, MIN_EVERY_MIN } from './watch.js';
 import { knock, systemResolves, verdict, WELL_KNOWN, PUBLIC_RESOLVER } from './diagnose.js';
 import { listening } from './ports.js';
@@ -447,13 +447,13 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
   // ================= O. API connection health: ping each known provider endpoint on a cadence (default off), store each
   // check, and read status, last latency, last checked and the 24h error rate back from storage. Reachability only
   // (no key is sent); the provider board in section F still holds the speed of real model calls.
-  const PROVIDERS = (() => { try { return JSON.parse(fs.readFileSync(path.join(ctx.root, 'app', 'core', 'providers.json'), 'utf8')).providers || {}; } catch { return {}; } })();
+  const CATALOG = (() => { try { return JSON.parse(fs.readFileSync(path.join(ctx.root, 'app', 'core', 'providers.json'), 'utf8')); } catch { return {}; } })();
+  const PROVIDERS = CATALOG.providers || {};
   const API_EVERY = { off: 0, '60s': 60_000, '5m': 5 * 60_000, '15m': 15 * 60_000 };
   async function apiEndpoints() {
     const act = await ctx.model.active().catch(() => []);
-    const seen = new Set(); const list = [];
-    for (const a of act) { const def = PROVIDERS[a.provider]; if (!def?.baseUrl || seen.has(a.provider)) continue; seen.add(a.provider); list.push({ provider: a.provider, label: a.label || def.name || a.provider, url: def.baseUrl.replace(/\/$/, '') + '/models' }); }
-    return list;
+    const upstreams = (() => { try { return ctx.model.freeRouter().upstreams || []; } catch { return []; } })();
+    return apiEndpointsFrom({ active: act, providers: PROVIDERS, upstreams, routerName: CATALOG.freeRouter?.shortName || 'Free API' });
   }
   async function pingApis({ trigger = 'schedule' } = {}) {
     needNet();
@@ -480,13 +480,14 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
     const agents = ctx.agents.list();
     const jobs = [...ctx.jobs.list({ status: 'running', limit: 100 }), ...ctx.jobs.list({ status: 'waiting', limit: 100 }), ...ctx.jobs.list({ status: 'failed', limit: 100 })];
     const since = new Date(clock() - DAY).toISOString();
-    let calls = []; try { calls = ctx.db.all('SELECT agent_id, provider, ok FROM calls WHERE at >= ? ORDER BY id DESC LIMIT 20000', since); } catch {}
+    let calls = []; try { calls = ctx.db.all('SELECT agent_id, purpose, provider, ok FROM calls WHERE at >= ? ORDER BY id DESC LIMIT 20000', since); } catch {}
     const byName = new Map(agents.map(a => [a.name, a.id]));
     const visits = ctx.db.all('SELECT host, who FROM m_network_visits WHERE at >= ? ORDER BY id DESC LIMIT 5000', since)
       .map(v => ({ host: v.host, agentId: byName.get(String(v.who || '').split(' · ')[0]) })).filter(v => v.agentId);
     // The last check on record for each provider, however old: a failure stays marked until a later check passes.
     const last = ctx.db.all('SELECT provider, label, url, ok, status, ms, at FROM m_network_api WHERE id IN (SELECT MAX(id) FROM m_network_api GROUP BY provider)').map(r => ({ ...r, ok: !!r.ok }));
     const health = apiHealthFrom(last, clock()).map(p => ({ provider: p.provider, status: p.status }));
+    const router = routerHealth(health); if (router) health.push({ provider: 'router', status: router });   // the Free API is checked host by host
     return { at: nowIso(), states: agentStates({ agents, jobs, now: clock() }), deps: dependencyModel({ agents, calls, health, visits, label: (p) => ctx.model.label(p, null) || p }) };
   }
 
