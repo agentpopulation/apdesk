@@ -12,7 +12,8 @@ What one space holds, no other space can see. What the house holds, every space 
 | piece | where in the code |
 |---|---|
 | the loopback HTTP server, its port, the Host and cross-site checks | `app/server.js` |
-| browser pairing (the cookie, the six-digit code) and the session token | `app/server.js` |
+| browser pairing (the cookie, the six-digit code) and the windows' tokens | `app/server.js` |
+| the people of this PC: names and looks, PIN hashes, wrong tries and waits, the keeper | `app/core/people.js`, in `data/desk.sqlite` |
 | Panic: one stop stops every space; Resume resumes every space | `app/core/panic.js` (one `Panic`; each space sees it through `panic.scope()`) |
 | Online and Offline, and the offline guard on `globalThis.fetch` | `app/core/offline.js`, `settings.online` (see "Kept by the house") |
 | downloads and the local model engine (llama-server and its model) | `app/core/downloads.js`, `modules/models/local-engine.js`, made in `downloads-routes.js` |
@@ -56,13 +57,73 @@ A space other than the main one reads these settings from the house and cannot w
 
 - `online`: one switch for the whole desk.
 
+## People, PINs and windows
+
+The house keeps the people of this PC in `data/desk.sqlite` (`app/core/people.js`): each person's name, emoji and colour,
+the PIN hash and salt, the wrong tries and the wait, who the keeper is, and a version.
+
+- **Person 1** is made from the existing desk at the first start after this change, with no PIN. Person 1 is the
+  **keeper of this PC**, and their space is the data folder exactly as it was (the main space).
+- **A new person** gets an empty space in `data/people/<id>/work/` when the keeper adds them. Every person's space opens
+  when the desk starts, so their jobs, schedules and Bench run while someone else is at the desk.
+- **One person and no PIN** ("open"): the desk behaves as before. The page gets its token, a read without a token
+  answers from person 1's space, and a change needs the token.
+- **Otherwise** a window gets a token only by entering (person + PIN). A request without a token, or with one that is not
+  live, gets nothing but who is here, entering, and Panic.
+
+| route | who | what |
+|---|---|---|
+| `GET /api/people` | any paired browser | names, emoji, colour, keeper, whether a PIN is set, and a count of what waits for each person (never titles); `you` |
+| `POST /api/people/enter` `{ id, pin }` | any paired browser | a token for this window, and a notice: wrong tries since the last entry, who reset the PIN and when |
+| `POST /api/people/leave` | the window | the token stops working and its event stream ends |
+| `POST /api/people/switch` `{ id, pin }` | the window | a token for the other person; the old token stops working |
+| `GET /api/people/me` | the window | the person and their theme |
+| `POST /api/people/me/pin` `{ current, pin }` | the window | set or change one's own PIN (the old one is asked) |
+| `POST /api/people/me/look` `{ name, emoji, colour, theme }` | the window | only these four keys; a body with any other key is refused and nothing changes |
+| `POST /api/people` `{ name, emoji, colour, pin }` | the keeper (with a PIN set) | add a person |
+| `POST /api/people/:id/remove` `{ pin }` | the keeper, with the keeper's PIN | the person's windows end and their space closes; the folder is not deleted, the answer says where it is |
+| `POST /api/people/:id/reset-pin` `{ pin, newPin }` | the keeper, with the keeper's PIN | the person is told who reset it and when, on their next entry |
+
+Every core route and every module route answers from the space of the token's person. Each window's event stream (the
+token goes in the address, `/api/events?session=`) carries only that person's events. Panic stops everyone; any person
+who has entered may Resume. The router endpoint for other programs is served from the keeper's space. The paired-browser
+cookie means only "this browser may show the chooser".
+
+**The PIN.** scrypt (N=2^15, r=8, p=1), a 16-byte salt, compared with `timingSafeEqual`; 4 to 12 digits. After 5 wrong
+tries in a row a wait of 30 seconds, doubling up to 15 minutes, kept on disk so a restart does not reset it. The wait
+only ever refuses a *wrong* PIN: the right PIN is checked and enters even while a wait runs, and a wrong try sent while
+the wait is already running does not push it out further. So one person cannot lock another out — `POST /api/people/enter`
+takes no token, so anyone could send wrong PINs for anyone, but the person who knows their PIN is never kept out by it.
+Tries for one person are checked one after another. Each wrong try that was checked goes in that person's activity log.
+Forgot the keeper's PIN: `node setup/reset-pin.mjs` at the PC, with the desk stopped, clears it and writes that to the
+keeper's activity log.
+
+**The PIN encrypts nothing.** It keeps people at this desk apart. Anyone who can open the files on this PC can read every
+person's chats and keys, and code that runs on this PC as the same user can too — the Files guard below is a convenience
+for the people sharing one login, not a wall against another OS user. For real separation, use a separate Windows account
+for each person and disk encryption. The Files module keeps the whole data folder closed in every space except that
+person's own workspace, and also keeps the keeper's backups folder (which lives outside the data folder) closed to
+everyone but the keeper; the keeper is told this plainly when they add a person.
+
+**The keeper's gates.** Only the keeper may install updates (every `/api/update` change), switch modules on or off,
+switch the desk Online or Offline, start the local engine and model downloads (`/api/local-engine`, `/api/downloads`
+pause, resume and cancel, the Models module's Ollama download and delete), add or remove people and reset PINs, show the
+six-digit code that pairs another browser (`/api/security/pair-code`, which admits new browsers to the whole PC), and
+switch paid OpenRouter models on (`/api/settings/paid-models`; the OpenRouter key is read from the PC's environment and
+shared by every space, so a non-keeper must not be able to spend it — spend limits stay each person's own). Anyone else
+gets 403: "Only the keeper of this PC can do that." Which modules are on is the house's choice for everyone: a switch
+holds for every person's space, and a space other than the main one reads it from the house.
+
 ## The folder layout
 
-Today (this version): one space, the main one, in the data folder exactly as before. Nothing moves.
+This version: person 1's space is the data folder exactly as before. Nothing moves.
 
 ```
-data/                      the main space (and, for now, what the house keeps: paired browsers, update and online settings, downloads)
+data/                      person 1's space (and, for now, what the house keeps: paired browsers, update and online settings, downloads)
   apd.sqlite  workspace/  profiles/  bin/
+  desk.sqlite              the people of this PC
+  people/<id>/work/        another person's space
+  people/<id>/backups/     that person's backups
 backups/
 ```
 
@@ -80,18 +141,17 @@ backups/<id>/
 
 ## In this version
 
-- The desk opens one space, the main one, from the data folder (`APD_DATA` or `<install>/data`).
-- All routes serve the main space. Module routes run inside the space that registered them.
-- A second space can be opened only by a test (`desk.openTestSpace`, refused outside `node --test`). No route, setting or
-  tool reaches it. `test/spaces.test.js` opens two spaces in one process and shows that chats, memory, leads, jobs, ratings,
+- The desk opens person 1's space, the main one, from the data folder (`APD_DATA` or `<install>/data`), and one space for
+  every other person in `data/people/<id>/work/`.
+- Routes serve the space of the window's person. Module routes run inside the space that registered them.
+- A space that belongs to no one can be opened only by a test (`desk.openTestSpace`, refused outside `node --test`). No
+  route, setting or tool reaches it. `test/spaces.test.js` opens two spaces in one process and shows that chats, memory, leads, jobs, ratings,
   website rules, data use, keys, approvals and events stay in their space, and that Panic and Offline hold for both.
 - Keys read from the environment (`OPENROUTER_API_KEY` ...) belong to the PC, so every space sees them.
 
 ## What later parts add
 
-- `desk.sqlite` and the people table: names, PIN hashes (scrypt), tries kept on disk, the keeper of the PC.
-- One session token per window, bound to a person and a space; the events stream of a window carries only its space.
 - Moving an existing data folder into `data/people/<id>/work/`, with a journal and a safety copy.
-- The person switcher and chooser, and the keeper's gates (updates, modules, Online, the local engine, people, PIN resets).
+- The person switcher and chooser on screen (the routes are above).
 - Incognito: a space on an in-memory database with a scratch folder.
 - Backup per person and a whole-PC backup; Work and Personal sharing `keys.sqlite`.

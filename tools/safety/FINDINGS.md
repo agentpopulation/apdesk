@@ -7,6 +7,15 @@ Each script in `tools/safety/` attacks one door with a throwaway `testDesk` (fak
 accepted limit described under "Carried over / accepted" below. The findings tables are kept as the record of what each
 probe was written to catch; every finding in them is closed except that one.
 
+`21_people.js` (21 Nov 2026, IST): several people on one PC. A non-keeper installing an update, switching a module or
+going Offline; one person's token reading the other's chats, keys and events; 40 PIN guesses at once (no wrong PIN gets a
+token, the right one still enters); a rival flooding wrong PINs to lock the keeper out (the keeper's own PIN still
+enters); a non-keeper asking for the house pairing code; a non-keeper switching paid OpenRouter on (the PC's shared key);
+a non-keeper reading the keeper's backups outside the data folder through Files; the looks route with security, spend and
+other keys. All `HELD`; the keeper's own token is the control. Fixes (21 Nov 2026): `people.js · check()` honours the
+right PIN during a wait; `server.js · KEEPER_ONLY` adds `pair-code` and `paid-models`; `settings-routes.js · spend`
+no longer flips paid; `explorer.js · isBlocked` shields the keeper's backups (`env.houseBackups`).
+
 The probes were written in two passes on 13 Nov 2026. The second pass (modules, and a re-check of the first-pass fixes)
 comes first; the first pass is kept below it.
 

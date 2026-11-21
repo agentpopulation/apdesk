@@ -22,7 +22,7 @@ export async function activate(ctx) {
   // A folder outside the workspace is open only when the owner approved it through this module (kv) AND it is still
   // in the door's remembered list (Settings). Either one alone is not enough.
   const grants = () => { const mine = ctx.kv.get('grants', []); const door = ctx.settings.get('files.allowedFolders') || []; return mine.filter((g) => door.includes(g)); };
-  const env = explorerEnv({ workspace: ctx.workspace, dataDir: ctx.dataDir, db: ctx.db, agents: () => ctx.agents.list(), grants });
+  const env = explorerEnv({ workspace: ctx.workspace, dataDir: ctx.dataDir, deskDir: ctx.deskDataDir, houseBackups: ctx.houseBackupsDir, db: ctx.db, agents: () => ctx.agents.list(), grants });
   const kb = new Knowledge({ db: ctx.db, dir: knowledgeDir, workspace: ctx.workspace });
   kb.reindex().catch((e) => ctx.log('knowledge index', e.message));
   const changed = (data) => ctx.events.emit('files', data);

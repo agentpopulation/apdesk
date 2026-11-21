@@ -81,9 +81,11 @@ export function joinInside(rootAbs, rel, P = nodePath) {
   return { root, abs, parts };
 }
 
-/** True for anything inside the data folder that is not the workspace: apd.sqlite, profiles, bin. */
+/** True for anything inside the data folder that is not the workspace: apd.sqlite, profiles, bin. With several people
+ *  (env.deskDir, the desk's whole data folder), also every other person's space and the house's own files, and the
+ *  keeper's backups folder (env.houseBackups), which lives outside the data folder. */
 export function isBlocked(env, abs, P = nodePath) {
-  return isInside(env.dataDir, abs, P) && !isInside(env.workspace, abs, P);
+  return (isInside(env.dataDir, abs, P) || (!!env.deskDir && isInside(env.deskDir, abs, P)) || (!!env.houseBackups && isInside(env.houseBackups, abs, P))) && !isInside(env.workspace, abs, P);
 }
 
 /** Is an absolute path inside one of the folders the owner opened? */

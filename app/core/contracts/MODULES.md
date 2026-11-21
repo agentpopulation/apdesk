@@ -75,6 +75,8 @@ export async function activate(ctx) {
 | `ctx.activity(title, detail?)` | one line in the owner's activity log, in plain words |
 | `ctx.requestRestart(reason)` | stop cleanly and start again (the launcher restarts the desk). For the Backup module after a restore; call only from a route where `owner` is true. In tests it only sets `desk.restartRequested`. |
 | `ctx.dataDir`, `ctx.backupsDir`, `ctx.root` | the data folder, the backups folder (outside data), the install folder |
+| `ctx.deskDataDir` | the desk's whole data folder, which holds every person's space (`PEOPLE.md`); for keeping it closed, never for reading |
+| `ctx.houseBackupsDir` | in another person's space, the keeper's backups folder (outside the data folder), so Files keeps it closed too; `null` in the keeper's own space |
 | `ctx.fetch(url, init)` | `fetch` that respects online/offline (throws `offline` when the desk is offline) and is aborted by Panic |
 
 ### Jobs

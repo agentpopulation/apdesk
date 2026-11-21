@@ -42,7 +42,7 @@ export class Modules {
   wantOn(id) {
     const m = this.manifests.get(id); if (!m) return false;
     if (m.kind === 'parked') return false;
-    const r = this.core.storage.get('SELECT on_ FROM modules WHERE id = ?', id);
+    const r = this.core.moduleChoice ? this.core.moduleChoice(id) : this.core.storage.get('SELECT on_ FROM modules WHERE id = ?', id);
     if (m.kind === 'core') return true;
     return r ? !!r.on_ : !!m.defaultOn;
   }
@@ -127,6 +127,8 @@ export class Modules {
       readBody: (req, limit) => readRaw(req, limit),
       db: core.storage.scope(id, { privileged: PRIVILEGED_DB.has(id) && !core.modulesDir }), kv: core.storage.kvScope('m:' + id),
       workspace: core.storage.workspace, workspacePath: (...parts) => core.storage.workspacePath(...parts), dataDir: core.storage.dataDir, backupsDir: core.storage.backupsDir, root: core.root,
+      deskDataDir: core.houseDataDir || core.storage.dataDir,   // the desk's whole data folder: every person's space is inside it
+      houseBackupsDir: core.houseBackupsDir || null,            // the keeper's backups folder (outside the data folder); shielded from another person's Files
       model: core.model.forModule(), approval: core.approval.forModule(), jobs: core.jobs.forModule(),
       panic: { get signal() { return core.panic.signal; }, get halted() { return core.panic.halted; }, onStop: (fn) => core.panic.onStop(fn), child: (s) => core.panic.child(s) },
       events: { emit: (type, data) => { if (RESERVED_EVENTS.has(String(type))) throw Object.assign(new Error(`Only the core emits '${type}' events.`), { code: 'reserved_event' }); return core.events.emit(type, data); }, on: (fn) => core.events.on((type, data) => self.inSpace(() => fn(type, data))) },

@@ -12,8 +12,9 @@ import { ServiceKeys } from './service-keys.js';
 import { inSpace, boundToSpace } from './space-context.js';
 
 /** Opens the space in dataDir. main: the desk's main space (the one the house's settings come from). houseSettings: the
- *  main space's Settings, for any other space. The house sets core.port, core.offlineAllows and core.restart. */
-export function openSpace({ dataDir, backupsDir, panic: housePanic, main = true, houseSettings = null, env = process.env, log = () => {}, root, app, modulesDir = null, onlyModules = null, host, version }) {
+ *  main space's Settings, for any other space. houseStorage: the main space's Storage, whose module switches hold for
+ *  every space. The house sets core.port, core.offlineAllows and core.restart. */
+export function openSpace({ dataDir, backupsDir, panic: housePanic, main = true, houseSettings = null, houseStorage = null, env = process.env, log = () => {}, root, app, modulesDir = null, onlyModules = null, host, version }) {
   const spaceKey = Object.freeze({ main: !!main });
   const run = (fn) => inSpace(spaceKey, fn);
   const storage = openStorage(dataDir, backupsDir);
@@ -29,6 +30,8 @@ export function openSpace({ dataDir, backupsDir, panic: housePanic, main = true,
   // the doors as the house and the other doors see them: a call made from outside this space still runs inside it
   const doors = { approval: boundToSpace(spaceKey, approval), model: boundToSpace(spaceKey, model), jobs: boundToSpace(spaceKey, jobs) };
   const core = { root, app, modulesDir, onlyModules, port: null, host, storage, settings, panic, events, agents, ...doors, services, log, version, spaceKey };
+  // which modules are on is the house's choice for every space; the house's data folder holds every person's space
+  if (!main && houseStorage) { core.moduleChoice = (id) => houseStorage.get('SELECT on_ FROM modules WHERE id = ?', id); core.houseDataDir = houseStorage.dataDir; core.houseBackupsDir = houseStorage.backupsDir; }
   const modules = new Modules(core);
   core.modules = modules;
   approval.spendModuleOn = () => modules.isOn('payments');

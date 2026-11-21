@@ -194,6 +194,8 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - A denied or stopped Get on the APIs page ends its download as stopped, so the Tracker and Home never call it Done.
 - The Models usage list shows "not known" with the tokens for a call whose cost cannot be known, every key has a Free tier / Paid / Not sure choice, and the Payments page names the list-price amount counted toward your daily limit so a limit is never passed unseen.
 - Council seats backed by a hired advisor record their model calls under that advisor, so the Network Desk view and Tasks credit them; bare seats and the chair stay under the desk.
+- People and PINs are built underneath (the second step toward several people sharing one PC): a house store for who is on this PC, a PIN for each person, a session per window, and keeper-only rights for updates, module switches, going Online or Offline, and adding people. Nothing on screen changes yet; the chooser and switcher come next. A desk with one person and no PIN works exactly as before.
+- The PIN wait only ever turns a wrong PIN away: the right PIN enters even during a wait, so one person cannot lock another out. The pairing code and the paid-models switch are the keeper's alone, each person's spend limits stay their own, and one person's file browser cannot reach another's data or the keeper's backups.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

@@ -73,14 +73,16 @@ export function settingsRoutes(core, sessionOk) {
       const v = body?.window;   // 15 | 60 | 'today' | 0
       sendJson(res, approval.setAutoApprove(v === 'today' ? 'today' : Number(v) || 0, SETTINGS_TOKEN));
     },
+    // Spend limits are each person's own. Switching paid OpenRouter on spends the PC's shared key, so it has its own
+    // keeper-gated route (paid-models) and is not flipped here.
     'POST /api/settings/spend': (req, res, { body }) => {
       if (!sessionOk(req)) return sendJson(res, { error: 'Spend limits change only in Settings on this desk.' }, 403);
       for (const k of ['perItem', 'perDay', 'perMonth']) if (body?.[k] != null && Number(body[k]) >= 0) settings.set('spend.' + k, Math.round(Number(body[k])));
-      if (typeof body?.openrouterPaid === 'boolean') setPaid('openrouter', body.openrouterPaid);
       approval.activity({ action: 'spend.limits', title: 'Spend limits changed', how: 'owner' });
       sendJson(res, approval.state());
     },
     // The paid switch beside the keys (Models) and in Settings › Payments and spend: one setting, one guarded route.
+    // Only the keeper may switch it on: the OpenRouter key is the PC's (from the environment), shared by every space.
     'POST /api/settings/paid-models': (req, res, { body }) => {
       if (!sessionOk(req)) return sendJson(res, { error: 'Paid models are switched on or off only from the desk window.' }, 403);
       if (body?.provider !== 'openrouter' || typeof body?.on !== 'boolean') return sendJson(res, { error: 'Only OpenRouter has a paid switch: { provider: "openrouter", on: true|false }.' }, 400);

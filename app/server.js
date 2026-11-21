@@ -11,6 +11,7 @@ import { settingsRoutes, publicSettings } from './core/settings-routes.js';
 import { openSpace } from './core/space.js';
 import { otherSpace } from './core/space-context.js';
 import { Updater } from './core/update.js';
+import { People } from './core/people.js';
 
 const APP = path.dirname(fileURLToPath(import.meta.url));     // <install>/app: the shell and the doors
 const ROOT = path.dirname(APP);                               // <install>: app, modules, vendor, node_modules, setup, data, backups
@@ -37,6 +38,11 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
   const { storage, settings, events, agents, approval, model, jobs, services, modules } = core;
   logZone = settings.get('timeZone') || null;
   const spaces = new Set([space]);
+  // The people of this PC (contracts/PEOPLE.md), kept by the house in data/desk.sqlite. Person 1, the keeper, is this
+  // data folder as it is; every other person has a space of their own in data/people/<id>/work/.
+  const people = new People({ dataDir });
+  const keeper = people.ensureFirst(settings.get('ownerName'));
+  const personSpaces = new Map([[keeper.id, space]]);   // person id -> their space
   // Offline holds in this process: outside calls are refused here, whatever a module or a browser page asks for
   // Each space may call its own local model servers (its Ollama, its LAN model nodes): its own allow list
   const allowsIn = (c) => (url) => { try { const k = hostKey(url); return !!k && offlineAllowList({ settings: c.settings, port: () => core.port }).has(k); } catch { return false; } };
@@ -47,8 +53,29 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
   // Signed updates (contracts/UPDATES.md): one for the whole desk, checked and installed from the owner's window (settings-routes.js).
   core.updater = new Updater(core).startDaily();
 
-  const session = crypto.randomBytes(24).toString('hex');     // carried by the shell page only
-  const sessionOk = (req) => req.headers['x-apd-session'] === session;
+  // ---- Windows. One token per window, bound to one person and so to that person's space. A desk with one person and
+  // no PIN is "open": its page gets the keeper's token as before, and a read without a token answers from that space.
+  const windows = new Map();       // token -> { token, personId, streams }
+  const openStreams = new Set();   // event streams opened with no token while the desk was open
+  const issue = (personId) => { const token = crypto.randomBytes(24).toString('hex'); windows.set(token, { token, personId, streams: new Set() }); return token; };
+  /** End one event stream: its space stops writing to it first. */
+  const endStream = ({ res, events: ev }) => { for (const c of [...ev.clients]) if (c.res === res) { clearInterval(c.ping); ev.clients.delete(c); } try { res.end(); } catch {} };
+  const endWindow = (token) => { const w = windows.get(token); if (!w) return; windows.delete(token); for (const st of w.streams) endStream(st); };
+  const endPerson = (personId) => { for (const [token, w] of [...windows]) if (w.personId === personId) endWindow(token); };
+  const isOpen = () => people.count() === 1 && !people.keeper()?.hasPin;
+  /** After a change that may end "open": a stream with no token no longer belongs to anyone. */
+  const closedNow = () => { if (isOpen()) return; for (const st of [...openStreams]) endStream(st); openStreams.clear(); };
+  let session = issue(keeper.id);     // the keeper's window token; the shell page carries it while the desk is open
+  const pageToken = () => { if (!isOpen()) return ''; if (!windows.has(session)) session = issue(keeper.id); return session; };
+  const reqWindow = new WeakMap();
+  const windowOf = (req) => { if (reqWindow.has(req)) return reqWindow.get(req); const t = req.headers['x-apd-session']; return (typeof t === 'string' && windows.get(t)) || null; };
+  const spaceOfWindow = (w) => (w ? personSpaces.get(w.personId) || null : null);
+  /** Any person who has entered (house routes: Panic's Resume, pairing). */
+  const sessionOk = (req) => !!windowOf(req);
+  /** The token of a person whose space is sp (that space's routes). */
+  const sessionFor = (sp) => (req) => { const w = windowOf(req); return !!w && spaceOfWindow(w) === sp; };
+  const isKeeper = (req) => { const w = windowOf(req); return !!w && !!people.get(w.personId)?.keeper; };
+  const KEEPER_NO = 'Only the keeper of this PC can do that.';
 
   // ---- Paired browsers. The desk hands its page (and so its session) only to a browser it knows. The first browser
   // to open a fresh desk is remembered by a cookie; any other browser must type the code shown in the desk's own
@@ -63,18 +90,22 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
   const pairPage = (note) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AP Desk</title><style>body{margin:0;height:100vh;display:grid;place-items:center;background:#f1f2f4;color:#16171a;font:15px -apple-system,"Segoe UI",system-ui,sans-serif}form{background:#fff;border:1px solid #e1e3e8;border-radius:16px;padding:26px;max-width:420px;display:flex;flex-direction:column;gap:12px}h1{font-size:20px;margin:0}p{margin:0;color:#5d626e}input{font:inherit;font-size:22px;letter-spacing:.2em;padding:10px 14px;border:1px solid #e1e3e8;border-radius:10px;text-align:center}button{font:inherit;background:#0a5fd6;color:#fff;border:0;border-radius:10px;padding:10px;cursor:pointer}.n{color:#c8261c}</style></head><body><form method="post" action="/pair"><h1>Open the desk in this browser</h1><p>This browser has not opened your desk before. Type the six-digit code shown in the desk's own window (the one start.bat opened), or under Show code in Settings › Security in a browser that already opens the desk.</p>${note ? `<p class="n">${note}</p>` : ''}<input name="code" inputmode="numeric" autocomplete="off" maxlength="7" autofocus aria-label="Code"><button>Open the desk</button><p>Panic still works without the code: stop.bat, or the Panic button in a browser you already use.</p></form></body></html>`;
   const allowedHosts = () => new Set([`127.0.0.1:${core.port}`, `localhost:${core.port}`, `[::1]:${core.port}`]);
 
-  const state = () => ({
+  const stateOf = ({ settings, approval, modules, agents, jobs }) => ({
     app: 'Agent Population Desk', version: core.version, settings: publicSettings(settings), security: approval.state(), panic: panic.state(),
     modules: modules.list(), agents: agents.list(), jobs: jobs.summary(), pendingApprovals: approval.listPending(), tools: [...modules.tools.values()].map(t => ({ name: t.name, module: t.module, description: t.description })),
   });
-
-  // Home's Finished tile: only work the owner asked for. A quiet job (the desk's own upkeep) is marked in its input record.
-  const ownerDone = () => storage.get("SELECT COUNT(*) AS c FROM jobs WHERE status = 'done' AND COALESCE(CASE WHEN json_valid(input) THEN json_extract(input, '$.quiet') END, 0) != 1").c;
+  const state = () => stateOf(core);
   // The code that pairs another browser, for the owner's own window only (Settings › Security, Show code): the paired
   // browser's session, and a browser's own same-origin fetch. Another program, a module's server code, a frame or a
   // page on another site never gets it. The global checks before this already need the session and a paired browser.
   const pageFetch = (req) => req.headers['sec-fetch-site'] === 'same-origin' && req.headers['sec-fetch-mode'] === 'cors' && req.headers['sec-fetch-dest'] === 'empty';
-  const routes = {
+  // The routes of one space, answered from its own core (c) for the token of its person (sessionOk). The house's own
+  // routes among them (houseRoute below) are answered once, from the keeper's space, for everyone.
+  const routesOf = (c, sessionOk) => {
+  const { storage, settings, events, agents, approval, model, jobs, services, modules } = c;
+  // Home's Finished tile: only work the owner asked for. A quiet job (the desk's own upkeep) is marked in its input record.
+  const ownerDone = () => storage.get("SELECT COUNT(*) AS c FROM jobs WHERE status = 'done' AND COALESCE(CASE WHEN json_valid(input) THEN json_extract(input, '$.quiet') END, 0) != 1").c;
+  return {
     'POST /api/security/pair-code': (req, res) => {
       if (!sessionOk(req) || !browserOk(req) || !pageFetch(req)) return sendJson(res, { error: 'The code is shown only in Settings › Security in a browser that already opens this desk.' }, 403);
       if (!pairing) return sendJson(res, { error: 'This desk does not ask for a code: pairing is off.' }, 409);
@@ -82,7 +113,7 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
       res.setHeader('cache-control', 'no-store');
       sendJson(res, { code: pairCode, address: `http://${host}:${core.port}`, seconds: 60 });
     },
-    'GET /api/state': (req, res) => sendJson(res, state()),
+    'GET /api/state': (req, res) => sendJson(res, stateOf(c)),
     'GET /api/events': (req, res) => events.handle(req, res),
     'GET /api/panic': (req, res) => sendJson(res, panic.state()),
     'POST /api/panic': async (req, res, { body }) => { const hooks = await panic.stopAll(body?.reason || 'Panic'); sendJson(res, { ...panic.state(), stopped: { hooks: hooks.length, jobs: jobs.summary() } }); },
@@ -91,7 +122,9 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
     'POST /api/modules/:id/:onoff': async (req, res, { params }) => {
       if (!sessionOk(req)) return sendJson(res, { error: 'Modules are switched in the Module Store on this desk.' }, 403);
       if (!['on', 'off'].includes(params.onoff)) return sendJson(res, { error: 'on or off' }, 400);
-      sendJson(res, await modules.set(params.id, params.onoff === 'on'));
+      const r = await modules.set(params.id, params.onoff === 'on');    // the keeper's space answers; the switch holds for every person
+      for (const sp of personSpaces.values()) if (sp !== space) { try { await sp.core.modules.set(params.id, params.onoff === 'on'); } catch (e) { log('modules', params.id, e.message); } }
+      sendJson(res, r);
     },
     'GET /api/agents': (req, res) => sendJson(res, { agents: agents.list() }),
     'POST /api/agents': (req, res, { body }) => { if (!body?.name) return sendJson(res, { error: 'An agent needs a name.' }, 400); sendJson(res, agents.create(body)); },
@@ -129,20 +162,39 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
     'POST /api/keys/services/:id': (req, res, { params, body }) => { if (!sessionOk(req)) return sendJson(res, { error: 'Keys are added at this desk.' }, 403); if (typeof body?.enabled === 'boolean' && !body.value) services.toggle(params.id, body.enabled); else services.set(params.id, body?.value); sendJson(res, { services: services.list() }); },
     'DELETE /api/keys/services/:id': (req, res, { params }) => { if (!sessionOk(req)) return sendJson(res, { error: 'Keys are removed at this desk.' }, 403); services.remove(params.id); sendJson(res, { services: services.list() }); },
     'GET /api/home': (req, res) => sendJson(res, { jobs: { running: jobs.list({ status: 'running', limit: 10 }), waiting: jobs.list({ status: 'waiting', limit: 10 }), done: jobs.list({ status: 'done', limit: 8 }), summary: { ...jobs.summary(), done: ownerDone() } }, approvals: approval.listPending(), agents: agents.list().length, recent: modules.api('chat')?.recent?.(6) || [] }),
-    ...settingsRoutes(core, sessionOk),
-    ...(await import('./core/downloads-routes.js')).downloadRoutes(core, sessionOk),
+    ...settingsRoutes(c, sessionOk),
   };
-  const compiled = Object.entries(routes).map(([k, handler]) => { const [method, p] = k.split(' '); return { method, parts: p.split('/'), handler }; });
-  const matchCore = (method, pathname) => {
+  };
+  // Shared by everyone: pairing, Panic, the module switches, updates, downloads and the local engine, the router for
+  // other programs (served from the keeper's space), and the people routes.
+  const houseRoute = (k) => /^\w+ \/(router\/|api\/(update(\/|$)|panic(\/|$)|security\/pair-code$|modules\/:id\/:onoff$))/.test(k);
+  const compile = (routes) => Object.entries(routes).map(([k, handler]) => { const [method, p] = k.split(' '); return { key: k, method, parts: p.split('/'), handler }; });
+  const matchIn = (compiled, method, pathname) => {
     const parts = pathname.replace(/\/$/, '').split('/');
     for (const r of compiled) {
       if (r.method !== method || r.parts.length !== parts.length) continue;
       const params = {}; let ok = true;
       for (let i = 0; i < parts.length; i++) { if (r.parts[i].startsWith(':')) params[r.parts[i].slice(1)] = decodeURIComponent(parts[i]); else if (r.parts[i] !== parts[i]) { ok = false; break; } }
-      if (ok) return { handler: r.handler, params };
+      if (ok) return { key: r.key, handler: r.handler, params };
     }
     return null;
   };
+  const houseRoutes = compile({
+    ...Object.fromEntries(Object.entries(routesOf(core, sessionOk)).filter(([k]) => houseRoute(k))),
+    ...(await import('./core/downloads-routes.js')).downloadRoutes(core, sessionOk),
+    ...peopleRoutes(),
+  });
+  const spaceTables = new WeakMap();
+  const tableOf = (sp) => { let t = spaceTables.get(sp); if (!t) spaceTables.set(sp, t = compile(Object.fromEntries(Object.entries(routesOf(sp.core, sessionFor(sp))).filter(([k]) => !houseRoute(k))))); return t; };
+  // The keeper's gates (contracts/PEOPLE.md): updates, module switches, Online and Offline, the local engine and model
+  // downloads, people and their PINs. Anyone else is told so in one sentence.
+  const KEEPER_ONLY = new Set(['POST /api/update/check', 'POST /api/update/install', 'POST /api/update/daily', 'POST /api/update/channel', 'POST /api/update/background', 'POST /api/modules/:id/:onoff',
+    'POST /api/downloads/:id/pause', 'POST /api/downloads/:id/resume', 'POST /api/downloads/:id/cancel', 'POST /api/local-engine/get', 'POST /api/local-engine/choose', 'POST /api/local-engine/stop',
+    'POST /api/local-engine/remove', 'POST /api/local-engine/switch', 'POST /api/local-engine/keep-loaded', 'POST /api/people', 'POST /api/people/:id/remove', 'POST /api/people/:id/reset-pin',
+    'POST /api/m/models/ollama/pull', 'POST /api/m/models/ollama/delete',
+    // the pairing code admits new browsers to the whole PC; paid OpenRouter spends the PC's shared key (both house-level)
+    'POST /api/security/pair-code', 'POST /api/settings/paid-models']);
+  const keeperOnly = (key, body) => KEEPER_ONLY.has(key) || (key === 'POST /api/settings' && !!body && typeof body === 'object' && Object.hasOwn(body, 'online'));
 
   const serveFile = (res, file, extraHeaders = {}) => {
     fs.stat(file, (err, st) => {
@@ -167,11 +219,17 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
       if (!originOk || (site && !['same-origin', 'none'].includes(site))) return sendJson(res, { error: 'Cross-site requests are refused.' }, 403);
     }
     const p = url.pathname;
+    // The window this request comes from: its token (an event stream, which cannot send a header, names it in the
+    // address). The space that answers is that window's person's; with no token, the keeper's while the desk is open.
+    const token = req.headers['x-apd-session'] || (p === '/api/events' ? url.searchParams.get('session') : null);
+    const win = (typeof token === 'string' && windows.get(token)) || null;
+    reqWindow.set(req, win);
+    const sp = win ? spaceOfWindow(win) : isOpen() ? space : null;
     try {
       // Every request that changes something must come from the desk's own page (it carries the session).
       // Stopping is the exception: Panic is open to anything on this PC. The router endpoint is for other local
-      // programs and reaches only the free router, never a paid key.
-      if (p.startsWith('/api/') && method !== 'GET' && method !== 'HEAD' && p !== '/api/panic' && !sessionOk(req)) return sendJson(res, { error: 'This desk takes changes only from its own window.' }, 403);
+      // programs and reaches only the free router, never a paid key. Entering is how a window gets its token.
+      if (p.startsWith('/api/') && method !== 'GET' && method !== 'HEAD' && p !== '/api/panic' && p !== '/api/people/enter' && !sessionOk(req)) return sendJson(res, { error: 'This desk takes changes only from its own window.' }, 403);
       // Pairing: a browser that is not paired gets nothing but Panic and the pairing page.
       if (pairing && p === '/pair' && method === 'POST') {
         const raw = (await readRaw(req, 4096)).toString('utf8'); let code = '';
@@ -185,16 +243,20 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
         res.writeHead(303, { location: '/' }); return res.end();
       }
       if (pairing && (p.startsWith('/api/') || p.startsWith('/modules/')) && !browserOk(req) && p !== '/api/panic') return sendJson(res, { error: 'Open the desk in its own window first.', code: 'not_paired' }, 401);
+      // A paired browser with no person entered may see who is here, enter, and stop everything. Nothing else.
+      if (p.startsWith('/api/') && !sp && p !== '/api/panic' && !(p === '/api/people' && method === 'GET') && !(p === '/api/people/enter' && method === 'POST')) return sendJson(res, { error: 'Choose who you are first.', code: 'no_person' }, 401);
+      const target = p.startsWith('/router/') ? space : sp;   // the router for other programs is served from the keeper's space
       // Screen lock (Accounts and Lock module): while the desk is locked nothing answers except what is needed to
       // show the lock, unlock it, and stop everything.
-      if ((p.startsWith('/api/') || p.startsWith('/router/')) && modules.api('accounts')?.isLocked?.() === true) {
+      if ((p.startsWith('/api/') || p.startsWith('/router/')) && target?.core.modules.api('accounts')?.isLocked?.() === true) {
         const open = p === '/api/state' || p === '/api/events' || p === '/api/panic' || /^\/api\/m\/accounts\/(state|unlock|lock)$/.test(p);
         if (!open) return sendJson(res, { error: 'The desk is locked.', code: 'locked' }, 423);
       }
       if (p.startsWith('/api/') || p.startsWith('/router/')) {
         const query = Object.fromEntries(url.searchParams);
-        const hit = p.startsWith('/api/m/') ? modules.match(method, p) : null;
-        const coreHit = hit ? null : matchCore(method, p);
+        const houseHit = matchIn(houseRoutes, method, p);
+        const hit = !houseHit && p.startsWith('/api/m/') ? target.core.modules.match(method, p) : null;
+        const coreHit = hit ? null : houseHit || matchIn(tableOf(target), method, p);
         if (!hit && !coreHit) return sendJson(res, { error: p.startsWith('/api/m/') ? 'That module is off or has no such route.' : 'Not found' }, 404);
         let body;
         const ct = String(req.headers['content-type'] || '');
@@ -202,8 +264,11 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
           const raw = await readRaw(req);
           if (raw.length) { try { body = JSON.parse(raw.toString('utf8')); } catch { return sendJson(res, { error: 'Bad JSON' }, 400); } }
         }
-        const arg = { query, params: (hit || coreHit).params, body, owner: sessionOk(req) };
+        if (keeperOnly(hit ? method + ' ' + p.replace(/\/$/, '') : coreHit.key, body) && !isKeeper(req)) return sendJson(res, { error: KEEPER_NO, code: 'not_keeper' }, 403);
+        const arg = { query, params: (hit || coreHit).params, body, owner: houseHit ? sessionOk(req) : sessionFor(target)(req) };
         if (hit) await hit.route.handler(req, res, arg); else await coreHit.handler(req, res, arg);
+        // a window's event stream ends when its token does (leave, switch, removal); one opened with no token, when the desk stops being open
+        if (p === '/api/events' && res.headersSent && !res.writableEnded) { const set = win ? win.streams : openStreams; const st = { res, events: target.core.events }; set.add(st); res.on('close', () => set.delete(st)); }
         if (!res.writableEnded && !res.headersSent) sendJson(res, { ok: true });
         return;
       }
@@ -212,7 +277,7 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
           if (knownBrowsers().length === 0) rememberBrowser(res);        // the first browser on a fresh desk is the owner's
           else { res.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-store', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'" }); return res.end(pairPage('')); }
         }
-        const html = fs.readFileSync(path.join(APP, 'ui', 'index.html'), 'utf8').replace('__APD_SESSION__', session).replace('__APD_VERSION__', core.version);
+        const html = fs.readFileSync(path.join(APP, 'ui', 'index.html'), 'utf8').replace('__APD_SESSION__', pageToken()).replace('__APD_VERSION__', core.version);
         res.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-store', 'content-security-policy': "default-src 'self'; img-src 'self' data: blob: https: http:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; media-src 'self' blob: data:; frame-src 'self' blob:; frame-ancestors 'none'", 'x-content-type-options': 'nosniff' });
         return res.end(html);
       }
@@ -239,25 +304,121 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
   });
 
   /** Tests only (node --test): a second space on another data folder, in this process. No route, setting or tool reaches it. */
-  const openTestSpace = async ({ dataDir: dir } = {}) => {
-    if (!process.env.NODE_TEST_CONTEXT) throw new Error('A second space is for node --test only in this version.');
-    const other = openSpace({ dataDir: dir, backupsDir: path.join(dir, '..', path.basename(dir) + '-backups'), panic, main: false, houseSettings: settings, env, log, root: ROOT, app: APP, modulesDir, onlyModules, host, version });
+  /** A space other than the keeper's, on its own data folder, in this process. */
+  const openOther = (dir, backups) => {
+    const other = openSpace({ dataDir: dir, backupsDir: backups, panic, main: false, houseSettings: settings, houseStorage: storage, env, log, root: ROOT, app: APP, modulesDir, onlyModules, host, version });
     Object.defineProperty(other.core, 'port', { get: () => core.port, enumerable: true });
     other.core.offlineAllows = allowsIn(other.core);
     other.core.restart = (reason) => core.restart(reason);
     other.core.model.localEngine = core.localEngine;
     spaces.add(other);
-    await other.start();
     const close = other.close;
     other.close = async () => { if (!spaces.delete(other)) return; await close(); };
     return other;
   };
+  /** Tests only (node --test): a second space on another data folder, in this process. No route, setting or tool reaches it. */
+  const openTestSpace = async ({ dataDir: dir } = {}) => {
+    if (!process.env.NODE_TEST_CONTEXT) throw new Error('A second space is for node --test only in this version.');
+    const other = openOther(dir, path.join(dir, '..', path.basename(dir) + '-backups'));
+    await other.start();
+    return other;
+  };
+  // Every person's space opens when the desk starts, so their jobs, schedules and Bench run while someone else is at the desk.
+  const openPerson = (id) => { const dir = people.folderOf(id); const sp = openOther(dir, path.join(path.dirname(dir), 'backups')); personSpaces.set(id, sp); return sp; };
+  for (const p of people.list()) if (p.id !== keeper.id) openPerson(p.id);
+
+  // ---- The people routes (house). Who is here and entering need no token; the rest are the window's own person's.
+  function peopleRoutes() {
+    const me = (req) => windowOf(req);
+    const noteIn = (id, title, action = 'people.pin') => { try { personSpaces.get(id)?.core.approval.activity({ action, title, how: 'desk' }); } catch {} };
+    /** A PIN check that failed: a wait, or a wrong PIN that goes in that person's activity log. */
+    const refused = (res, id, r) => {
+      if (r.waiting) return sendJson(res, { error: `Too many wrong tries. Wait ${r.waitSeconds} seconds, then try again.`, waitSeconds: r.waitSeconds }, 429);
+      noteIn(id, 'A wrong PIN was typed for you at the desk', 'people.pin.wrong');
+      return sendJson(res, { error: 'That PIN is not right.', waitSeconds: r.waitSeconds }, 403);
+    };
+    const keeperPinOk = async (req, res, pin) => {
+      const k = people.keeper();
+      if (!k.hasPin) { sendJson(res, { error: 'Set your own PIN first, so no one else can enter as the keeper.' }, 409); return false; }
+      const r = await people.verify(k.id, pin); if (r.ok) return true;
+      refused(res, k.id, r); return false;
+    };
+    const entered = (res, id, token) => sendJson(res, { token, person: people.get(id), notice: people.takeNotice(id) });
+    return {
+      'GET /api/people': (req, res) => sendJson(res, { people: people.list().map(p => ({ ...p, waiting: personSpaces.get(p.id)?.core.approval.listPending().length || 0 })), you: me(req)?.personId || null }),
+      'GET /api/people/me': (req, res) => { const w = me(req); if (!w) return sendJson(res, { error: 'Choose who you are first.', code: 'no_person' }, 401); sendJson(res, { person: people.get(w.personId), theme: spaceOfWindow(w).core.settings.get('theme') }); },
+      'POST /api/people/enter': async (req, res, { body }) => {
+        const id = String(body?.id || ''); if (!people.get(id)) return sendJson(res, { error: 'No such person on this desk.' }, 404);
+        const r = await people.verify(id, body?.pin); if (!r.ok) return refused(res, id, r);
+        entered(res, id, issue(id));
+      },
+      'POST /api/people/leave': (req, res) => { endWindow(me(req).token); sendJson(res, { ok: true }); },
+      'POST /api/people/switch': async (req, res, { body }) => {
+        const id = String(body?.id || ''); if (!people.get(id)) return sendJson(res, { error: 'No such person on this desk.' }, 404);
+        const r = await people.verify(id, body?.pin); if (!r.ok) return refused(res, id, r);
+        const was = me(req).token; const token = issue(id); endWindow(was);
+        entered(res, id, token);
+      },
+      'POST /api/people/me/pin': async (req, res, { body }) => {
+        const w = me(req); const p = people.get(w.personId);
+        if (p.hasPin) { const r = await people.verify(p.id, body?.current); if (!r.ok) return refused(res, p.id, r); }
+        await people.setPin(p.id, body?.pin);
+        noteIn(p.id, p.hasPin ? 'Your PIN was changed' : 'Your PIN was set'); closedNow();
+        sendJson(res, { person: people.get(p.id) });
+      },
+      // A person's own looks: name, emoji, colour and theme. Every other key is refused, and then nothing changes.
+      'POST /api/people/me/look': (req, res, { body }) => {
+        const w = me(req); const keys = body && typeof body === 'object' && !Array.isArray(body) ? Object.keys(body) : null;
+        if (!keys || !keys.length || keys.some(k => !['name', 'emoji', 'colour', 'theme'].includes(k))) return sendJson(res, { error: 'Only a name, an emoji, a colour and a theme change here.' }, 400);
+        if ('theme' in body && !['light', 'dark'].includes(body.theme)) return sendJson(res, { error: 'Only a light or a dark theme.' }, 400);
+        const { theme, ...look } = body; const c = spaceOfWindow(w).core;
+        const person = Object.keys(look).length ? people.setLook(w.personId, look) : people.get(w.personId);
+        if (theme) { c.settings.set('theme', theme); c.events.emit('settings', { theme }); }
+        sendJson(res, { person, theme: c.settings.get('theme') });
+      },
+      'POST /api/people': async (req, res, { body }) => {
+        if (!people.keeper().hasPin) return sendJson(res, { error: 'Set your own PIN first, so no one else can enter as the keeper.' }, 409);
+        const person = await people.add({ name: body?.name, emoji: body?.emoji, colour: body?.colour, pin: body?.pin });
+        await openPerson(person.id).start(); closedNow();
+        approval.activity({ action: 'people.add', title: `${person.name} was added to this desk`, how: 'keeper' });
+        // The honest limit of the PIN, said plainly when a person is added: it keeps people apart, it does not protect
+        // their files from another OS user or from code run here. Real separation is a separate login and disk encryption.
+        sendJson(res, { person, folder: people.folderOf(person.id), note: `${person.name} gets their own chats, keys and space, kept apart by their PIN. The PIN encrypts nothing: anyone who can sign in to this PC as this user, or run a program here, can still read every person's files. For real separation give each person their own Windows account and turn on disk encryption.` });
+      },
+      // Removing a person detaches them: their windows end, their space closes, their folder stays where it is.
+      'POST /api/people/:id/remove': async (req, res, { params, body }) => {
+        const p = people.get(params.id); if (!p) return sendJson(res, { error: 'No such person on this desk.' }, 404);
+        if (p.keeper) return sendJson(res, { error: 'The keeper of this PC stays.' }, 409);
+        if (!(await keeperPinOk(req, res, body?.pin))) return;
+        endPerson(p.id); const sp = personSpaces.get(p.id); personSpaces.delete(p.id);
+        try { await sp?.close(); } finally { endPerson(p.id); }
+        const { folder } = people.remove(p.id);
+        approval.activity({ action: 'people.remove', title: `${p.name} was taken off this desk`, how: 'keeper', detail: 'The folder stays: ' + folder });
+        sendJson(res, { ok: true, folder, message: `${p.name} is no longer on this desk. Their folder was not deleted. It is here: ${folder}` });
+      },
+      'POST /api/people/:id/reset-pin': async (req, res, { params, body }) => {
+        const p = people.get(params.id); if (!p) return sendJson(res, { error: 'No such person on this desk.' }, 404);
+        if (!(await keeperPinOk(req, res, body?.pin))) return;
+        const by = people.get(me(req).personId);
+        await people.resetPin(p.id, body?.newPin, by.id);
+        if (p.id !== by.id) endPerson(p.id);
+        noteIn(p.id, `Your PIN was reset by ${by.name}`, 'people.pin.reset');
+        approval.activity({ action: 'people.pin.reset', title: `The PIN of ${p.name} was reset`, how: 'keeper' });
+        sendJson(res, { person: people.get(p.id) });
+      },
+    };
+  }
 
   core.restart = (reason) => { log('restart requested:', reason); events.emit('toast', { text: 'The desk is restarting.' }); desk.restartRequested = reason || true; if (desk.onRestart) setTimeout(() => desk.onRestart(reason), 300); };
   const desk = {
-    core, server, session, modules, state, restartRequested: null, onRestart: null, pairCode: pairing ? pairCode : null, openTestSpace,
+    core, server, modules, state, restartRequested: null, onRestart: null, pairCode: pairing ? pairCode : null, openTestSpace, people,
+    /** The keeper's window token (the page carries it while the desk is open). */
+    get session() { return session; },
+    /** A person's space, or null. For the desk and its tests; no route or module reaches it. */
+    spaceOf: (id) => personSpaces.get(id) || null,
     async start() {
       await space.start();
+      for (const sp of personSpaces.values()) if (sp !== space) await sp.start();
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
       core.port = server.address().port;
       log(`AP Desk ${core.version} on http://${host}:${core.port}  data: ${dataDir}`);
@@ -274,6 +435,7 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
       await new Promise((r) => { server.close(() => r()); server.closeAllConnections?.(); });
       try { fs.rmSync(path.join(dataDir, 'desk.pid'), { force: true }); } catch {}
       for (const s of all) s.core.storage.close();
+      people.close();
     },
     url: () => `http://${host}:${core.port}`,
   };
