@@ -2,6 +2,7 @@
 // privateHost: the same rule as modules/browser/guard.js.
 import net from 'node:net';
 import dns from 'node:dns';
+import { siteRuleSync, siteRuleAsk } from '../network/rules.js';
 
 export function privateHost(host) {
   host = String(host || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
@@ -26,8 +27,9 @@ export function privateHost(host) {
 
 const err = (code, message) => Object.assign(new Error(message), { code });
 
-/** Text-only check. Throws { code: 'bad_url' | 'private' | 'desk' } or returns the URL. */
-export function checkUrl(raw, { deskPort = null } = {}) {
+/** Text-only check. Throws { code: 'bad_url' | 'private' | 'desk' | 'rule_never' | 'rule_ask' | 'rule_denied' } or returns the URL. */
+export function checkUrl(raw, opts = {}) {
+  const { deskPort = null } = opts;
   let u; try { u = new URL(String(raw)); } catch { throw err('bad_url', 'That is not a web address.'); }
   if (!/^https?:$/.test(u.protocol)) throw err('bad_url', 'Only http and https pages can be read.');
   if (u.username || u.password) throw err('bad_url', 'Addresses with a user name or password in them are not read.');
@@ -35,6 +37,7 @@ export function checkUrl(raw, { deskPort = null } = {}) {
   const port = u.port || (u.protocol === 'https:' ? '443' : '80');
   if (deskPort && String(port) === String(deskPort) && privateHost(host)) throw err('desk', 'Agents cannot read the desk itself.');
   if (privateHost(host)) throw err('private', 'Pages on this computer or the local network are not read by agents.');
+  siteRuleSync(host, { who: opts.who, asking: opts.asking });   // the owner's website rules (Network page): never, or ask first
   return u;
 }
 
@@ -42,8 +45,9 @@ export function checkUrl(raw, { deskPort = null } = {}) {
  * The same, plus a DNS look-up: a name that resolves to this PC or the home network is refused.
  * A failed look-up passes (a proxy may resolve public names; then the fetch cannot reach the LAN either).
  */
-export async function checkUrlDeep(raw, { deskPort = null, lookup = dns.promises.lookup } = {}) {
-  const u = checkUrl(raw, { deskPort });
+export async function checkUrlDeep(raw, { deskPort = null, lookup = dns.promises.lookup, who = null } = {}) {
+  const u = checkUrl(raw, { deskPort, who, asking: true });
+  await siteRuleAsk(u.hostname, u.href, { who });                // an "ask first" site asks the owner once per job or turn
   const host = u.hostname.replace(/^\[|\]$/g, '');
   if (net.isIP(host)) return u;
   let addrs = null;

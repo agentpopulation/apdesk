@@ -77,3 +77,10 @@ export async function pool(items, n, fn) {
   await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (i < items.length) { const k = i++; out[k] = await fn(items[k], k); } }));
   return out;
 }
+
+/** Is this IPv4 address inside one of this PC's own private subnets (by each adapter's own netmask)? */
+const ip2n = (ip) => ip.split('.').reduce((n, x) => n * 256 + Number(x), 0);
+export function inOwnSubnet(ip, ifaces = interfaces()) {
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(String(ip))) return false;
+  return ifaces.some(i => i.family === 'IPv4' && i.private && i.netmask && ((ip2n(ip) & ip2n(i.netmask)) >>> 0) === ((ip2n(i.address) & ip2n(i.netmask)) >>> 0));
+}

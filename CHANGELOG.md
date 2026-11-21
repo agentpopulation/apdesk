@@ -102,6 +102,9 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - A lead search now says plainly what it searched for and for whom.
 - Models: "Get a local model" fetches llama.cpp and a model that fits this PC in the background, checks both, and runs them on this PC only. It works Offline, and Remove frees the space.
 - A downloads service with pause, resume and cancel. Every download asks first, Panic pauses it, and it goes on after a restart.
+- Network now has its own page in the menu: connection and public address, speed and latency over time, websites to watch, where the agents went, "Is it me or them?", AI provider speed, devices, your domain, what listens here, domain lookups and desk data use.
+- Website rules: sites agents may never open, and sites they open only after asking you, enforced in search reads, research and the agent's browser while the Network module is on.
+- In the Network module nothing calls an outside service by itself; schedules are off by default, wait while Offline and stop with Panic.
 - A free host that has not started answering within 25 seconds is skipped (it was 60), so more of them get a try inside one chat turn.
 - A new desk opens the chat with two buttons, "Say hello" and a highlighted "Select model / Add API"; the role's suggestions appear once the first reply has finished, and a small "Select model / Add API" link stays beside the model name.
 - The side panel never sends an empty request: "Turn into a task" offers to run the chat's last ask again in the background, and a message that is only a prefix is refused.
@@ -110,6 +113,9 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - Briefs, schedules, calendar dates, lead values and spend amounts follow your own zone, locale and currency; nothing falls back to India any more.
 
 ### Known weak points
+- Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.
+- In the agent's browser, a page that redirects to an address on this PC or the home network is not stopped by the address guard yet.
+- Phone notices for watched websites use ntfy only, not Telegram.
 - The local model engine was run for real on Linux only (a 1 GB model answered through the desk on 21 Nov 2026). Windows and macOS builds are chosen by rule and have not been run.
 - The Windows installer, the background mode, the start page and the update step have been tested on Linux and by static checks only; none has run on Windows yet.
 - Bench mode's later stages (customers, funding, market report) have not been run with a real model, and its early findings are of mixed quality.

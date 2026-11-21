@@ -10,7 +10,7 @@ try {
   await t.call('/api/modules/network/on', { method: 'POST' });
   const st = (await t.call('/api/state')).json;
   check('on: settings section network and tools appear', st.modules.find(m => m.id === 'network').settings[0]?.id === 'network' && st.tools.some(x => x.name === 'network_test'), '');
-  const c = (await t.call('/api/m/network/connection')).json;
+  const c = (await t.call('/api/m/network/connection?check=1')).json;
   check('connection rows', c.rows.some(r => r.name === 'Internet' && r.ok), c.rows.map(r => `${r.name}: ${r.ok ? 'ok' : 'no'}`).join('; '));
   const sp = await job('/api/m/network/speed');
   const o = sp.output || {};

@@ -2,6 +2,7 @@
 // privateHost: which hosts are this PC or the home network. Sensitive field rules: which form fields the agent never fills.
 import net from 'node:net';
 import dns from 'node:dns';
+import { siteRuleSync, siteRuleAsk } from '../network/rules.js';
 
 export function privateHost(host) {
   host = String(host || '').toLowerCase().replace(/^\[|\]$/g, '');
@@ -28,7 +29,7 @@ export function privateHost(host) {
  * allowHosts: hosts the owner allowed (for example a LAN printer page). The desk's own port is refused
  * on every loopback name even when loopback is allowed, so an agent can never drive the desk itself.
  */
-export function checkUrl(url, { allowHosts = [], deskPort = null } = {}) {
+export function checkUrl(url, { allowHosts = [], deskPort = null, who = null, asking = false } = {}) {
   let u; try { u = new URL(String(url)); } catch { return 'That is not a web address.'; }
   if (u.href === 'about:blank') return null;
   if (!['http:', 'https:'].includes(u.protocol)) return `The agent's browser only opens web pages (http or https), not ${u.protocol.replace(':', '')} addresses.`;
@@ -37,13 +38,15 @@ export function checkUrl(url, { allowHosts = [], deskPort = null } = {}) {
   const loop = host === 'localhost' || host.endsWith('.localhost') || host === '::1' || /^127\./.test(host) || host === '0.0.0.0';
   if (loop && deskPort && String(port) === String(deskPort)) return 'The agent cannot open the desk itself.';
   if (privateHost(host) && !allowHosts.map(h => String(h).toLowerCase()).includes(host)) return `${host} is on this PC or your home network. The agent may open it only if you allow that address on the Computer tab.`;
+  try { siteRuleSync(host, { who, asking }); } catch (e) { return e.message; }   // the owner's website rules (Network page)
   return null;
 }
 
 /** The same check, plus a DNS look-up so a public name that points at this PC is refused too. Look-up errors pass (the proxy or the browser resolves). */
 export async function checkUrlDeep(url, opts = {}) {
-  const first = checkUrl(url, opts); if (first) return first;
+  const first = checkUrl(url, { ...opts, asking: true }); if (first) return first;
   let u; try { u = new URL(String(url)); } catch { return null; }
+  if (u.href !== 'about:blank') { try { await siteRuleAsk(u.hostname, u.href, { who: opts.who }); } catch (e) { return e.message; } }   // "ask first": once per task
   if (u.href === 'about:blank' || net.isIP(u.hostname.replace(/^\[|\]$/g, ''))) return null;
   if ((opts.allowHosts || []).includes(u.hostname.toLowerCase())) return null;
   try {

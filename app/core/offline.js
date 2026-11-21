@@ -21,8 +21,33 @@ function install() {
     }
     // an allowed local address must not hand the call on to an outside one while Offline
     for (const d of desks) { let off = false; try { off = d.isOffline(); } catch {} if (off && !(init && init.redirect)) { init = { ...(init || {}), redirect: 'error' }; break; } }
-    return real.call(this, input, init);
+    return byteSinks.size ? real.call(this, input, init).then((res) => counted(url, init, res)) : real.call(this, input, init);
   };
+}
+
+// Data use: what the desk itself sends and receives, per host. The Network module registers a sink; nothing else changes.
+const byteSinks = new Set();
+/** fn(host, sentBytes, receivedBytes) for every outbound call. Returns a function that removes it. */
+export function onOutboundBytes(fn) { byteSinks.add(fn); return () => byteSinks.delete(fn); }
+function bodySize(b) {
+  if (b == null) return 0;
+  if (typeof b === 'string') return Buffer.byteLength(b);
+  if (b instanceof ArrayBuffer || ArrayBuffer.isView(b)) return b.byteLength;
+  if (b instanceof URLSearchParams) return Buffer.byteLength(String(b));
+  if (typeof Blob !== 'undefined' && b instanceof Blob) return b.size;
+  return 0;                                   // a stream or form: not counted
+}
+function counted(url, init, res) {
+  const host = url.hostname.toLowerCase();
+  const sent = bodySize(init && init.body) + url.href.length;
+  let told = false;
+  const tell = (received) => { if (told) return; told = true; for (const fn of byteSinks) { try { fn(host, sent, received); } catch {} } };
+  if (!res.body || [101, 103, 204, 205, 304].includes(res.status)) { tell(0); return res; }
+  let n = 0;
+  const body = res.body.pipeThrough(new TransformStream({ transform(chunk, c) { n += chunk.byteLength; c.enqueue(chunk); }, flush() { tell(n); }, cancel() { tell(n); } }));
+  const out = new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
+  for (const k of ['url', 'redirected', 'type']) Object.defineProperty(out, k, { value: res[k] });
+  return out;
 }
 
 /** Register a desk: { isOffline(), allows(URL), onRefused?(URL) }. Returns a function that removes it. */

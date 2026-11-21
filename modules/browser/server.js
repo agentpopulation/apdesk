@@ -9,7 +9,7 @@ export async function activate(ctx) {
   let deskPort = Number(process.env.APD_PORT) || 3960;
   const allowHosts = () => ctx.kv.get('allowHosts', []);
   const offline = () => ctx.settings.get('online') === false;   // read at every check, never cached
-  const guardOpts = () => ({ allowHosts: allowHosts(), deskPort, offline: offline() });
+  const guardOpts = () => ({ allowHosts: allowHosts(), deskPort, offline: offline(), onVisit: (v) => ctx.modules.api('network')?.logVisit?.(v) });
   const refuseOffline = (url) => { if (offline() && (!url || leavesThisPc(/^[a-z]+:/i.test(url) ? url : 'https://' + url))) throw Object.assign(new Error(OFFLINE_LINE), { code: 'offline' }); };
   const emit = (st) => ctx.events.emit('browser', { agentId: st.agentId, mode: st.mode, url: st.url, steps: st.steps.slice(-1), frames: st.frames, goal: st.goal, jobId: st.jobId, open: st.open, offline: st.offline });
   const computer = (agentId) => {

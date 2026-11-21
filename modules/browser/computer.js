@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { launchChoice } from './launch.js';
 import { checkUrl, checkUrlDeep, leavesThisPc, OFFLINE_LINE } from './guard.js';
+import { resolverRules } from '../network/rules.js';
 
 const require = createRequire(import.meta.url);
 function playwright() {
@@ -22,6 +23,8 @@ export class Computer {
     this.approveNav = null;        // async (url) => true | false, set by the loop
   }
   get open() { return !!this.context; }
+  /** The guard's options for this computer: who is driving decides whether the owner's website rules apply. */
+  guard() { return { ...this.guardOpts(), who: { agentId: this.agentId, jobId: this.jobId, owner: this.driving === 'owner' } }; }
   async start() {
     if (this.context) return this;
     const choice = launchChoice({ platform: this.platform, agentId: this.agentId, dataDir: this.dataDir, headed: this.headed });
@@ -31,7 +34,8 @@ export class Computer {
     if (this._starting) return this._starting;
     if (this._closing) await this._closing;
     this._starting = (async () => {
-    const ctx = await chromium.launchPersistentContext(choice.userDataDir, choice.options);
+    const never = resolverRules();   // "never" sites do not resolve in this browser, so a redirect cannot reach them either
+    const ctx = await chromium.launchPersistentContext(choice.userDataDir, never ? { ...choice.options, args: [...(choice.options.args || []), never] } : choice.options);
     this.context = ctx;
     this.browserName = choice.browser;
     // only forget this context if it is still the current one (an old one closing must not orphan a new one)
@@ -40,7 +44,7 @@ export class Computer {
     await ctx.route('**/*', (route) => this.onRoute(route).catch(() => route.abort('blockedbyclient').catch(() => {})));
     // WebSockets do not pass through route(): same rules for them
     if (typeof ctx.routeWebSocket === 'function') await ctx.routeWebSocket(/.*/, (ws) => {
-      const opts = this.guardOpts(); const url = ws.url().replace(/^ws/, 'http');
+      const opts = this.guard(); const url = ws.url().replace(/^ws/, 'http');
       if (opts.offline && leavesThisPc(url)) { this.noteOffline(url); return ws.close({ code: 1008, reason: 'offline' }); }
       if (checkUrl(url, opts)) return ws.close({ code: 1008, reason: 'refused' });
       ws.connectToServer();
@@ -58,13 +62,17 @@ export class Computer {
   async onRoute(route) {
     const req = route.request(); const url = req.url();
     if (/^(data|blob):/.test(url)) return route.continue();
-    const opts = this.guardOpts();   // read at every request, so switching Offline mid-task takes effect on the next one
+    const opts = this.guard();   // read at every request, so switching Offline mid-task takes effect on the next one
     if (opts.offline && leavesThisPc(url)) { this.noteOffline(url); return route.abort('internetdisconnected'); }
     const main = req.isNavigationRequest() && req.frame() === this.page?.mainFrame();
     const why = main ? await checkUrlDeep(url, opts) : checkUrl(url, opts);
-    if (why) { if (main) this.blocked.push({ url, why }); return route.abort('blockedbyclient'); }
-    if (main && this.driving === 'agent' && this.approveNav) { const ok = await this.approveNav(url); if (!ok) { this.blocked.push({ url, why: 'You did not allow this site.' }); return route.abort('blockedbyclient'); } }
+    if (why) { if (main) { this.blocked.push({ url, why }); this.visit(opts, url, why); } return route.abort('blockedbyclient'); }
+    if (main && this.driving === 'agent' && this.approveNav) { const ok = await this.approveNav(url); if (!ok) { this.blocked.push({ url, why: 'You did not allow this site.' }); this.visit(opts, url, 'You did not allow this site.'); return route.abort('blockedbyclient'); } }
+    if (main) this.visit(opts, url, null);
     return route.continue();
+  }
+  /** One line in the Network module's log of where the agents went (agent driving only). */
+  visit(opts, url, why) { if (this.driving === 'agent') { try { opts.onVisit?.({ url, via: 'browser', who: opts.who, blocked: why }); } catch {} }
   }
   /** One plain step per burst of blocked requests (a page asks for many files at once). */
   noteOffline(url) {
@@ -93,7 +101,7 @@ export class Computer {
   viewport() { return this.page?.viewportSize() || { width: 1280, height: 800 }; }
   async goto(url) {
     if (this.guardOpts().offline && leavesThisPc(url)) { this.noteOffline(url); throw Object.assign(new Error(OFFLINE_LINE), { code: 'refused', offline: true }); }
-    const why = await checkUrlDeep(url, this.guardOpts()); if (why) throw Object.assign(new Error(why), { code: 'refused' });
+    const why = await checkUrlDeep(url, this.guard()); if (why) throw Object.assign(new Error(why), { code: 'refused' });
     const before = this.blocked.length;
     try { await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 }); }
     catch (e) { if (this.blocked.length > before) throw Object.assign(new Error(this.blocked.at(-1).why), { code: 'refused' }); throw e; }
@@ -102,7 +110,7 @@ export class Computer {
   /** After any action: if a redirect landed somewhere private, leave it. */
   async afterMove() {
     await this.page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => {});
-    const u = this.page.url(); const why = u === 'about:blank' ? null : checkUrl(u, this.guardOpts());
+    const u = this.page.url(); const why = u === 'about:blank' ? null : checkUrl(u, this.guard());
     if (why) { await this.page.goto('about:blank').catch(() => {}); throw Object.assign(new Error(why), { code: 'refused' }); }
     this.snap();
   }

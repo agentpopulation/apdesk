@@ -1,15 +1,31 @@
 {
   "id": "network",
   "number": 27,
-  "name": "Network and OSINT",
-  "description": "Connection, speed test, model test and devices on your network; plus public lookups for a domain (DNS, registration, headers, certificate).",
+  "name": "Network",
+  "description": "Your connection, speed and latency over time, websites you watch, where the agents went, website rules for the agents, devices on your own network, your domain, and public lookups for a domain.",
   "kind": "switch-on",
   "defaultOn": false,
-  "menu": [],
-  "pages": [],
-  "settings": [{ "id": "network", "label": "Network" }],
+  "menu": [
+    {
+      "id": "network",
+      "label": "Network",
+      "order": 115
+    }
+  ],
+  "pages": [
+    "network"
+  ],
+  "settings": [
+    {
+      "id": "network",
+      "label": "Network"
+    }
+  ],
   "agentTabs": [],
-  "tools": ["network_test", "domain_lookup"],
+  "tools": [
+    "network_test",
+    "domain_lookup"
+  ],
   "requires": [],
   "npm": {},
   "attribution": [],
