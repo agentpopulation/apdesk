@@ -36,6 +36,24 @@ export function settingsRoutes(core, sessionOk) {
       approval.activity({ action: 'update.daily', title: body.on ? 'Check for updates once a day: on' : 'Check for updates once a day: off', how: 'owner' });
       sendJson(res, updater().state());
     },
+    'POST /api/update/channel': (req, res, { body }) => {
+      if (!sessionOk(req)) return sendJson(res, { error: 'This changes only in Settings on this desk.' }, 403);
+      if (!['stable', 'preview'].includes(body?.channel)) return sendJson(res, { error: '{ channel: "stable" | "preview" }' }, 400);
+      if (updater().channel !== body.channel) {
+        settings.set('update.channel', body.channel); updater().remember(null); updater().dropBackground();
+        approval.activity({ action: 'update.channel', title: body.channel === 'preview' ? 'Updates: stable and preview versions' : 'Updates: stable versions only', how: 'owner' });
+      }
+      sendJson(res, updater().state());
+    },
+    // The owner's switch is his yes for update downloads only (contracts/UPDATES.md). Installing still asks every time.
+    'POST /api/update/background': async (req, res, { body }) => {
+      if (!sessionOk(req)) return sendJson(res, { error: 'This changes only in Settings on this desk.' }, 403);
+      if (typeof body?.on !== 'boolean') return sendJson(res, { error: '{ on: true | false }' }, 400);
+      settings.set('update.background', body.on);
+      approval.activity({ action: 'update.background', title: body.on ? 'Download updates in the background: on' : 'Download updates in the background: off', how: 'owner' });
+      if (body.on) { try { updater().background(); } catch (e) { core.log('update', e.message); } } else updater().dropBackground();
+      sendJson(res, updater().state());
+    },
     'GET /api/settings': (req, res) => sendJson(res, publicSettings(settings)),
     'POST /api/settings': (req, res, { body }) => {
       const changed = {};

@@ -271,15 +271,16 @@ test('Offline and Panic: no check leaves the desk, no install starts', async () 
   } finally { await d.close(); await s.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('the daily check: off by default; when on, one quiet check while Online and not halted', async () => {
+test('the daily check: on unless the owner switches it off; one quiet check while Online and not halted', async () => {
   const s = await standIn(); const k = makeKeys(); const root = fakeInstall();
   const zip = releaseZip('0.1.1'); s.publish(release('0.1.1', zip, k), zip);
   const d = await deskFor(root, s, [k]);
   try {
-    assert.equal((await d.call('/api/update')).json.daily, false);
+    assert.equal((await d.call('/api/update')).json.daily, true, 'on by default');
+    assert.equal((await d.call('/api/update/daily', { body: { on: false }, session: false })).status, 403);
+    assert.equal((await d.call('/api/settings', { body: { 'update.daily': false } })).json.changed['update.daily'], undefined, 'the plain settings route cannot switch it');
+    assert.equal((await d.call('/api/update/daily', { body: { on: false } })).json.daily, false);
     await d.core.updater.tick(); assert.equal(s.hits.length, 0, 'off: no check');
-    assert.equal((await d.call('/api/update/daily', { body: { on: true }, session: false })).status, 403);
-    assert.equal((await d.call('/api/settings', { body: { 'update.daily': true } })).json.changed['update.daily'], undefined, 'the plain settings route cannot switch it');
     assert.equal((await d.call('/api/update/daily', { body: { on: true } })).json.daily, true);
     d.core.settings.set('online', false); await d.core.updater.tick(); assert.equal(s.hits.length, 0, 'never while Offline');
     d.core.settings.set('online', true); await d.core.panic.stopAll('test'); await d.core.updater.tick(); assert.equal(s.hits.length, 0, 'never while halted');

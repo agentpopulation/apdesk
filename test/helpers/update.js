@@ -30,29 +30,39 @@ export function releaseZip(version, { extra = [], marker = 'new' } = {}) {
 }
 
 /** The manifest and its signature for one zip. */
-export function release(version, zip, key, { minFrom = '0.1.0', date = '2026-11-21T10:00:00.000Z', size, sha, kind = 'windows-zip', product = 'apdesk', name = 'agent-population-desk.zip' } = {}) {
-  const manifest = { product, version, date, key: key.id, notes: ['Updates are signed now.', 'Smaller fixes.'], minFrom, files: [{ name, kind, size: size ?? zip.length, sha256: sha ?? crypto.createHash('sha256').update(zip).digest('hex') }] };
+export function release(version, zip, key, { minFrom = '0.1.0', date = '2026-11-21T10:00:00.000Z', size, sha, kind = 'windows-zip', product = 'apdesk', name = 'agent-population-desk.zip', channel, notes = ['Updates are signed now.', 'Smaller fixes.'] } = {}) {
+  const manifest = { product, version, date, key: key.id, ...(channel ? { channel } : {}), notes, minFrom, files: [{ name, kind, size: size ?? zip.length, sha256: sha ?? crypto.createHash('sha256').update(zip).digest('hex') }] };
   const bytes = Buffer.from(JSON.stringify(manifest, null, 1));
   return { manifest, bytes, sig: sign(bytes, key) };
 }
 
-/** A loopback stand-in for GitHub: latest/download redirects like GitHub does; the zip is served under its tag. */
+/** A loopback stand-in for GitHub: latest/download redirects like GitHub does; the zip is served under its tag.
+ *  publishTag() adds a release under its own tag (a pre-release too) and lists it in releases.atom, newest first;
+ *  latest/download stays the latest full release. slowMs: zips are sent in small pieces this far apart. */
 export async function standIn() {
-  const s = { files: new Map(), hits: [], tagOf: null };
-  s.server = http.createServer((req, res) => {
+  const s = { files: new Map(), tags: new Map(), hits: [], tagOf: null, slowMs: 0 };
+  s.server = http.createServer(async (req, res) => {
     s.hits.push({ url: req.url, ua: req.headers['user-agent'], cookie: req.headers.cookie || null, auth: req.headers.authorization || null });
+    if (req.url === '/agentpopulation/apdesk/releases.atom') {
+      const entries = [...s.tags.keys()].reverse().map(t => `<entry><id>tag:github.com,2008:Repository/1/${t}</id><link rel="alternate" type="text/html" href="https://github.com/agentpopulation/apdesk/releases/tag/${t}"/><title>${t}</title></entry>`).join('');
+      res.writeHead(200, { 'content-type': 'application/atom+xml' }); return res.end(`<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom">${entries}</feed>`);
+    }
     const m = /^\/agentpopulation\/apdesk\/releases\/(?:latest\/download|download\/(v[\d.]+))\/([\w.-]+)$/.exec(req.url);
     if (m && !m[1]) { res.writeHead(302, { location: `/assets/${m[2]}` }); return res.end(); }
     const name = m ? m[2] : (/^\/assets\/([\w.-]+)$/.exec(req.url) || [])[1];
-    const body = name && s.files.get(name);
+    const body = name && ((m?.[1] && s.tags.get(m[1])?.get(name)) || s.files.get(name));
     if (!body) { res.writeHead(404); return res.end('Not Found'); }
-    res.writeHead(200, { 'content-type': 'application/octet-stream' }); res.end(body);
+    res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': body.length });
+    if (!s.slowMs || !name.endsWith('.zip')) return res.end(body);
+    for (let i = 0; i < body.length && !res.destroyed; i += 4096) { res.write(body.subarray(i, i + 4096)); await new Promise(r => setTimeout(r, s.slowMs)); }
+    res.end();
   });
   await new Promise(r => s.server.listen(0, '127.0.0.1', r));
   s.host = `127.0.0.1:${s.server.address().port}`;
   s.repo = `http://${s.host}/agentpopulation/apdesk`;
   s.publish = (r, zip, name = 'agent-population-desk.zip') => { s.files.set('apdesk-update.json', r.bytes); s.files.set('apdesk-update.json.sig', Buffer.from(r.sig + '\n')); if (zip) s.files.set(name, zip); };
-  s.close = () => new Promise(r => s.server.close(r));
+  s.publishTag = (tag, r, zip, name = 'agent-population-desk.zip') => { const t = new Map([['apdesk-update.json', r.bytes], ['apdesk-update.json.sig', Buffer.from(r.sig + '\n')]]); if (zip) t.set(name, zip); s.tags.delete(tag); s.tags.set(tag, t); };
+  s.close = () => { s.server.closeAllConnections?.(); return new Promise(r => s.server.close(r)); };
   return s;
 }
 

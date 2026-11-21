@@ -131,6 +131,11 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - The network operator (ASN) behind your public address and your domains is tracked and flagged when it changes.
 - A single network issues list gathers certificate expiry, DNS failures, high latency and packet loss, each with a severity, and any of them can be muted.
 - The Connection view gains an active-connection detail with the adapter, signal, gateway, subnet, DNS servers and MTU, and names the fields this PC does not report.
+- Updates are checked once a day while the desk is Online (switch it off in Settings, Backup, Updates). Nothing is checked while Offline, after Panic, or in a build that has no update key. The last check is kept and shown after a restart.
+- Updates now have two channels: Stable (the default) and Preview, which also gets test versions. A release names its channel inside its signature, so a test version cannot be passed off as stable. The desk never offers a version lower than or equal to the one you have.
+- The Updates card shows what changed in a new version before you press Update now, as plain text.
+- A new switch, Download updates in the background (off by default): a new version is downloaded and checked ahead of time and shows in Downloads, where you can pause it; Panic pauses it. Installing still asks you every time.
+- Release signing takes the notes from a text file (--notes) and the channel (--channel stable or preview).
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

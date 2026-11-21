@@ -1,6 +1,8 @@
 // Probe: signed updates. A tampered release, a downgrade, a release signed by an unknown key and an install that does
 // not come from the owner's window must all change nothing. Throw-away keys, a loopback stand-in for GitHub, a fake
 // install folder in the temp folder. Control: a good release from the owner's window is staged.
+// Also: a preview relabelled as stable, or a preview offered on Stable, is never staged; the background download runs
+// only with the owner's switch, never installs by itself, keeps no zip with a wrong hash, and Panic pauses it.
 import fs from 'node:fs'; import path from 'node:path'; import { fileURLToPath } from 'node:url';
 import { createDesk } from '../../app/server.js';
 import { Updater } from '../../app/core/update.js';
@@ -22,10 +24,11 @@ async function attempt(name, setup, run, { evil = false } = {}) {
   try {
     setup(s);
     const before = files(root);
-    const why = await run(desk, s);
+    let why = await run(desk, s); let bypass = false;
+    if (why && typeof why === 'object' && 'bypass' in why) ({ why, bypass } = why);   // a run may report what it saw itself
     await new Promise(r => setTimeout(r, 50));
     const staged = fs.existsSync(path.join(root, 'data', 'update-staged', 'ready.json'));
-    return { name, changed: files(root) !== before || staged || !!desk.restartRequested, why };
+    return { name, changed: bypass || files(root) !== before || staged || !!desk.restartRequested, why };
   } finally { clearInterval(approver); await desk.stop(); await s.close(); fs.rmSync(root, { recursive: true, force: true }); }
 }
 const good = (s, v = '0.1.1', key = k, opts = {}) => { const zip = releaseZip(v); s.publish(release(v, zip, key, opts), zip); return zip; };
@@ -53,6 +56,23 @@ const notOwner = [
   await attempt('tool call', good, async (desk) => { await desk.core.modules.set('evil', true); const ctx = desk.core.modules.api('evil').ctx; ctx.tool({ name: 'evil_update', description: 'probe', parameters: { type: 'object', properties: {} }, async run() { return ctx.approval.request({ action: 'install', title: 'Update AP Desk', payload: { kind: 'desk-update' } }); } }); return JSON.stringify(await desk.core.modules.runTool('evil_update', {}, { agentId: 'coordinator' })); }, { evil: true }),
   await attempt('plain settings body flag', good, async (desk) => (await fetch(desk.url() + '/api/settings', { method: 'POST', headers: { 'content-type': 'application/json', 'x-apd-session': desk.session }, body: JSON.stringify({ 'update.install': true, 'update.daily': true, install: true }) })).status),
 ];
+const preview = (s, v = '0.2.0') => { const zip = releaseZip(v); const r = release(v, zip, k, { channel: 'preview' }); s.publishTag('v' + v, r, zip); return { zip, r }; };
+const channel = [
+  await attempt('preview relabelled as stable', (s) => { const { zip, r } = preview(s); s.publish({ ...r, bytes: Buffer.from(r.bytes.toString().replace(/"channel": ?"preview"/, '"channel": "stable"')) }, zip); }, owner),
+  await attempt('preview served as the latest release, on Stable', (s) => { const { zip, r } = preview(s); s.publish(r, zip); }, owner),
+  await attempt('preview tag only, on Stable', (s) => { good(s, '0.1.0'); preview(s); }, owner),
+  await attempt('older preview, on Preview', (s) => { good(s, '0.1.0'); preview(s, '0.0.9'); }, async (desk) => { desk.core.settings.set('update.channel', 'preview'); return owner(desk); }),
+];
+const wait = async (fn, ms = 5000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await fn()) return true; await new Promise(r => setTimeout(r, 20)); } return false; };
+const zips = (s) => s.hits.filter(h => h.url.endsWith('.zip')).length;
+const background = [
+  await attempt('switch off: nothing downloaded', good, async (desk, s) => { await desk.core.updater.check(); await new Promise(r => setTimeout(r, 200)); const n = desk.core.downloads.all().length + zips(s); return { bypass: n > 0, why: `${n} downloads` }; }),
+  await attempt('plain settings route cannot switch it on', good, async (desk, s) => { await fetch(desk.url() + '/api/settings', { method: 'POST', headers: { 'content-type': 'application/json', 'x-apd-session': desk.session }, body: JSON.stringify({ 'update.background': true }) }); await desk.core.updater.check(); await new Promise(r => setTimeout(r, 200)); const n = desk.core.downloads.all().length + zips(s); return { bypass: n > 0, why: `${n} downloads` }; }),
+  await attempt('module cannot switch it on', good, async (desk) => { await desk.core.modules.set('evil', true); const ctx = desk.core.modules.api('evil').ctx; try { ctx.settings.set('update.background', true); } catch {} await desk.core.updater.check(); return { bypass: desk.core.downloads.all().length > 0, why: String(desk.core.settings.get('update.background')) }; }, { evil: true }),
+  await attempt('downloaded in the background, never installed by itself', good, async (desk) => { desk.core.settings.set('update.background', true); await desk.core.updater.check(); await wait(() => desk.core.updater.state().download?.state === 'ready'); await new Promise(r => setTimeout(r, 200)); return desk.core.updater.state().download?.state; }),
+  await attempt('wrong hash in the background', (s) => { const zip = releaseZip('0.1.1'); s.publish(release('0.1.1', zip, k, { sha: 'ab'.repeat(32) }), zip); }, async (desk) => { desk.core.settings.set('update.background', true); await desk.core.updater.check(); const id = desk.core.settings.get('update.bg')?.id; await wait(() => ['failed', 'done'].includes(desk.core.downloads.get(id)?.state)); const d = desk.core.downloads.get(id); const st = desk.core.updater.state().download?.state; return { bypass: st === 'ready' || (d && fs.existsSync(d.to)), why: st }; }),
+  await attempt('Panic during the background download', (s) => { const zip = releaseZip('0.1.1', { extra: [['apdesk/big.bin', Buffer.alloc(300 * 1024, 7).map((_, i) => (i * 2654435761) >>> 24)]] }); s.publish(release('0.1.1', zip, k), zip); s.slowMs = 25; }, async (desk) => { desk.core.settings.set('update.background', true); await desk.core.updater.check(); const id = desk.core.settings.get('update.bg')?.id; await wait(() => desk.core.downloads.get(id)?.state === 'running'); await desk.core.panic.stopAll('probe'); await new Promise(r => setTimeout(r, 300)); desk.core.panic.resume(); await new Promise(r => setTimeout(r, 200)); const st = desk.core.downloads.get(id)?.state; return { bypass: st !== 'paused', why: st }; }),
+];
 const control = await attempt('control: good release from the owner', good, owner);
 
 const line = (tag, list, what) => { const bad = list.filter(x => x.changed); console.log(bad.length ? `BYPASS(${tag}): ${bad.map(x => `${x.name} (${x.why})`).join('; ')}` : `HELD(${tag}): ${list.length} ${what} changed nothing: ${list.map(x => x.name).join(', ')}`); };
@@ -60,4 +80,6 @@ line('update-tamper', tamper, 'tampered releases');
 line('update-downgrade', downgrade, 'downgrade tries');
 line('update-unknown-key', unknown, 'release signed by another key');
 line('update-not-owner', notOwner, 'installs from outside the owner\'s window');
+line('update-channel', channel, 'preview tries');
+line('update-background', background, 'background download tries');
 console.log(control.changed ? 'HELD(update-control): a good release from the owner\'s window was staged and the desk asked to restart' : `BYPASS(update-control): the good release was not staged (${control.why})`);

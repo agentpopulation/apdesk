@@ -69,3 +69,35 @@ test('sign-release: signs the zip in dist, checks itself against the listed keys
     assert.match(node('sign-release.mjs', ['--repo', repo, '--version', '0.1.1', '--key', keyFile, '--note', 'x']).stderr, /does not list this key/);
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
+
+test('sign-release: --notes reads a plain text file, --channel is signed in (stable by default), and too much or odd input is refused', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'apd-sign-'));
+  try {
+    const keyFile = path.join(tmp, 'release.key');
+    const k = node('make-update-keys.mjs', [keyFile, '--id', 'k1']); assert.equal(k.status, 0, k.stderr);
+    const entry = JSON.parse(/\{[\s\S]*?\}/.exec(k.stdout)[0]);
+    const repo = path.join(tmp, 'repo'); fs.mkdirSync(path.join(repo, 'app', 'core'), { recursive: true }); fs.mkdirSync(path.join(repo, 'dist'));
+    fs.writeFileSync(path.join(repo, 'package.json'), JSON.stringify({ version: '0.2.0' }));
+    fs.writeFileSync(path.join(repo, 'app', 'core', 'update-keys.json'), JSON.stringify({ keys: [entry] }));
+    fs.writeFileSync(path.join(repo, 'dist', 'agent-population-desk.zip'), releaseZip('0.2.0', { extra: [['apdesk/app/core/update-keys.json', JSON.stringify({ keys: [entry] })]] }));
+    const notes = path.join(tmp, 'notes.txt');
+    const sign = (...extra) => node('sign-release.mjs', ['--repo', repo, '--version', '0.2.0', '--key', keyFile, ...extra]);
+    const read = () => { const b = fs.readFileSync(path.join(repo, 'dist', 'apdesk-update.json')); assert.equal(verifyManifest(b, fs.readFileSync(path.join(repo, 'dist', 'apdesk-update.json.sig'), 'utf8'), [entry]).ok, true); return { raw: JSON.parse(b), m: readManifest(b) }; };
+
+    fs.writeFileSync(notes, 'Faster start.\r\n\r\n  <b>Not markup</b>  \nOne more.\n');
+    let r = sign('--notes', notes); assert.equal(r.status, 0, r.stderr);
+    let { raw, m } = read();
+    assert.equal(raw.channel, 'stable'); assert.deepEqual(m.notes, ['Faster start.', '<b>Not markup</b>', 'One more.']);
+    assert.doesNotMatch(r.stdout, /pre-release/);
+    r = sign('--notes', notes, '--channel', 'preview'); assert.equal(r.status, 0, r.stderr);
+    ({ raw, m } = read()); assert.equal(raw.channel, 'preview'); assert.equal(m.channel, 'preview');
+    assert.match(r.stdout, /Set as a pre-release/);
+
+    assert.match(sign('--notes', notes, '--channel', 'nightly').stderr, /stable or preview/);
+    fs.writeFileSync(notes, 'x'.repeat(301)); assert.match(sign('--notes', notes).stderr, /at most 300 characters/);
+    fs.writeFileSync(notes, Array.from({ length: 31 }, (_, i) => `line ${i}`).join('\n')); assert.match(sign('--notes', notes).stderr, /At most 30 notes/);
+    fs.writeFileSync(notes, 'bell\u0007'); assert.match(sign('--notes', notes).stderr, /control characters/);
+    assert.match(sign('--notes', path.join(tmp, 'missing.txt')).stderr, /could not be read/);
+    fs.writeFileSync(notes, '\n\n'); assert.match(sign('--notes', notes).stderr, /Give the release notes/);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});

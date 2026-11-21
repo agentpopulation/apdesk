@@ -144,8 +144,9 @@ function activitySection(el, ui) {
 }
 
 // The Updates card: signed releases from GitHub (contracts/UPDATES.md). The desk does every check; this only shows it.
-async function updatesSection(el, ui) {
-  const { h, api, card, line, btn, toast, fmt, empty, sw } = ui;
+// Release notes are plain text: each line goes in as a text node, never as markup.
+export async function updatesSection(el, ui) {
+  const { h, api, card, line, btn, toast, fmt, empty, sw, seg } = ui;
   const box = card({ 'data-updates': '' }, h('h3', null, 'Updates'), empty('Loading…'));
   el.append(box);
   const say = (text, kind) => h('div', { class: 'card', 'data-kind': kind, style: { borderColor: kind === 'warn' ? 'var(--warn)' : kind === 'ok' ? 'var(--ok)' : 'var(--line)', margin: '8px 0' } }, text);
@@ -164,14 +165,20 @@ async function updatesSection(el, ui) {
         h('div', null, h('b', null, st.line), st.checkedAt && !busy && st.canCheck ? h('span', { class: 'd' }, `Checked ${fmt.when(st.checkedAt)}`) : null)),
       check || install ? h('div', { class: 'row', style: { gap: '8px', flexWrap: 'wrap', margin: '2px 0 10px' } }, ...[check, install].filter(Boolean)) : null,
       st.note ? say(`Not installed: ${st.note}`, 'warn') : null,
-      st.release && st.canInstall ? h('div', { 'data-update-notes': '' }, h('b', null, `What is new in ${st.release.version}`), notes(st.release.notes),
+      st.download && st.setUp && st.layout !== 'git' ? h('p', { class: 'sub', 'data-update-download': st.download.state }, st.download.line) : null,
+      st.release && st.canInstall ? h('div', { 'data-update-notes': '' }, h('b', null, `What is new in ${st.release.version}${st.release.channel === 'preview' ? ' (preview)' : ''}`), notes(st.release.notes),
         h('p', { class: 'sub', style: { marginTop: '6px' } }, 'Update now makes a backup of your data first, then puts the new version in place and restarts the desk. Your data, backups and keys stay as they are.')) : null,
       st.backup ? h('p', { class: 'sub' }, `Backup made first: ${st.backup}`) : null,
-      st.setUp && st.layout !== 'git' ? line('Check once a day', 'One quiet check a day while the desk is on and Online. Nothing about you is sent.', sw(st.daily, 'Check once a day', async (on) => { paint(await api('update/daily', { body: { on } })); })) : null].filter(Boolean));
+      st.setUp && st.layout !== 'git' ? line('Check once a day', 'One quiet check a day while the desk is on and Online. Nothing about you is sent.', sw(st.daily, 'Check once a day', async (on) => { paint(await api('update/daily', { body: { on } })); })) : null,
+      st.setUp && st.layout !== 'git' ? line('Download updates in the background', 'When a new version is found, download it and check it, so it is ready. It shows in Downloads. Installing still asks you.', sw(st.background, 'Download updates in the background', async (on) => { paint(await api('update/background', { body: { on } })); })) : null,
+      st.setUp && st.layout !== 'git' && seg ? line('Versions', 'Stable is for everyday use. Preview also gets test versions before they are stable.', seg(['Stable', 'Preview'], st.channel === 'preview' ? 1 : 0, async (_, i) => { try { paint(await api('update/channel', { body: { channel: i ? 'preview' : 'stable' } })); } catch (er) { toast(er.message, 'err'); } })) : null].filter(Boolean));
     if (st.busy === 'restarting' && !waiting) { waiting = true; const n = h('p', { class: 'sub' }, 'The desk is restarting; this page reloads by itself.'); box.append(n); waitForRestart(ui, n); }
   };
   try { paint(await api('update')); } catch (e) { box.replaceChildren(h('h3', null, 'Updates'), empty(e.message)); return; }
   ui.on('update', (st) => { if (st?.installed) paint(st); });
+  // the background download moves in the downloads service; the card asks again when it changes state
+  let lastDl = null;
+  ui.on('downloads', async (e) => { const d = e?.download; if (d?.kind !== 'desk-update' || d.state === lastDl) return; lastDl = d.state; try { paint(await api('update')); } catch {} });
 }
 
 async function aboutSection(el, ui) {
