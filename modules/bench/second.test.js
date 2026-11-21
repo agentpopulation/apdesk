@@ -301,3 +301,20 @@ test('already a customer: a lead the Sales customers list has is marked so (the 
     assert.ok(titles.includes('Lyra Foods: new'), titles.join(' | '));
   } finally { await t.close(); }
 });
+
+test('weekly note: answer ratings come from Chat\'s own store; Bench keeps its own for its items', async () => {
+  const { t, clock } = await benchDesk({ modules: ['bench', 'chat'] });
+  try {
+    const chat = t.core.modules.api('chat');
+    const { messageId } = chat.postMessage('everyone', { text: 'An answer about payroll.' });
+    const r = await t.call('/api/m/chat/ratings', { body: { messageId, thumb: 'down', reasons: ['too long'] } });
+    assert.equal(r.status, 200, r.text);
+    job(t, 'job_c1', 'Find payroll leads');
+    await t.call('/api/m/bench/ratings', { body: { targetType: 'job', targetId: 'job_c1', thumb: 'up' } });
+    clock.t = Date.now() + 1000;   // Chat stamps ratings with the real time; Bench's clock is a stand-in
+    const w = (await t.call('/api/m/bench/weekly')).json;
+    assert.deepEqual(w.poor.map((x) => [x.targetType, x.title, x.reasons[0]]), [['answer', 'An answer in chat', 'too long']]);
+    assert.deepEqual(w.good.map((x) => x.title), ['Find payroll leads']);
+    assert.equal(w.rated, 2);
+  } finally { await t.close(); }
+});

@@ -533,7 +533,13 @@ export async function activate(ctx) {
   }
 
   // ---------------- the weekly note "What I learned": suggestions from the last 7 days of ratings; nothing changes by itself
-  const weekly = () => weeklyNote(ctx.db.all('SELECT * FROM m_bench_ratings').map(ratingOut), { now: nowMs(), titleOf: (r) => titleOf(r) || (r.targetType === 'answer' ? 'An answer in chat' : '') });
+  // answer ratings live in Chat when Chat offers them; Bench's own store keeps the ratings of jobs and Bench items
+  const allRatings = (since) => {
+    const chat = ctx.modules.api('chat');
+    if (typeof chat?.ratingsSince !== 'function') return ctx.db.all('SELECT * FROM m_bench_ratings').map(ratingOut);
+    return [...ctx.db.all("SELECT * FROM m_bench_ratings WHERE target_type != 'answer'").map(ratingOut), ...(chat.ratingsSince(since) || [])];
+  };
+  const weekly = () => weeklyNote(allRatings(iso(nowMs() - 8 * 24 * 3600000)), { now: nowMs(), titleOf: (r) => titleOf(r) || (r.targetType === 'answer' ? 'An answer in chat' : '') });
 
   // ---------------- the note
   const lastEnded = () => sessionOut(ctx.db.get("SELECT * FROM m_bench_sessions WHERE state != 'running' ORDER BY ended DESC LIMIT 1"));
@@ -731,7 +737,8 @@ export async function activate(ctx) {
   beat();
   const beatTimer = setInterval(() => { try { beat(); } catch (e) { ctx.log('heartbeat', e.message); } }, BEAT_MS); beatTimer.unref?.();
   const timer = setInterval(() => { tick().catch((e) => ctx.log('tick', e.message)); }, 60000); timer.unref?.();
-  ctx.expose({ tick, ownerSeen, current, session: getSession, items, note: (id) => { const s = id ? getSession(id) : lastEnded(); return s ? noteFor(s) : null; }, view, gate, setGate, rating: getRating, setRating, steps: stepsFor, returnPanel, usage: usagePanel, beat, heartbeats, gaps, todo: (id) => todoFor(id ? getSession(id) : current()), finds, rules: rulesView, scanRules, weekly, awake: awakeView, idle: async () => { for (const r of [...live.values()]) await r.done; if (ticking) await ticking; } });
+  ctx.expose({ tick, ownerSeen, current, session: getSession, items, note: (id) => { const s = id ? getSession(id) : lastEnded(); return s ? noteFor(s) : null; }, view, gate, setGate, rating: getRating, setRating,
+    answerRatings: () => ctx.db.all("SELECT * FROM m_bench_ratings WHERE target_type = 'answer' ORDER BY rated_at").map(ratingOut), steps: stepsFor, returnPanel, usage: usagePanel, beat, heartbeats, gaps, todo: (id) => todoFor(id ? getSession(id) : current()), finds, rules: rulesView, scanRules, weekly, awake: awakeView, idle: async () => { for (const r of [...live.values()]) await r.done; if (ticking) await ticking; } });
   return { async deactivate() {
     off = true; clearInterval(timer); clearInterval(beatTimer); awake.release(); offPanic?.(); offEvents?.();
     if (!shuttingDown) kv.set('beatOff', true);   // switched off, not a desk that stopped: the silence that follows is no gap

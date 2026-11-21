@@ -480,12 +480,13 @@ function localModelBox() {
   const cb = h('input', { type: 'checkbox', id: 'onb-local', disabled: true, 'aria-describedby': 'onb-local-d' });
   const what = h('span', { class: 'd', id: 'onb-local-d' }, 'Checking what fits this PC…');
   const choose = h('button', { type: 'button', class: 'link', hidden: true, 'aria-expanded': 'false' }, 'Choose another');
+  const note = h('span', { class: 'd', 'data-apd': 'local-model-note', hidden: true });
   const list = h('div', { class: 'choices', hidden: true, role: 'radiogroup', 'aria-label': 'Local model' });
   const box = h('div', { class: 'localbox', 'data-apd': 'local-model' },
     h('label', { class: 'tick' }, cb, h('span', null, h('b', null, 'Download a local model in the background'), what,
-      h('span', { class: 'd' }, 'It runs on this PC and works without the internet.'))), h('div', { class: 'row', style: { paddingLeft: '22px' } }, choose), list);
+      h('span', { class: 'd' }, 'It runs on this PC and works without the internet.'), note)), h('div', { class: 'row', style: { paddingLeft: '22px' } }, choose), list);
   const pick = { id: null, ok: false };
-  const off = (why) => { cb.checked = false; cb.disabled = true; pick.ok = false; what.textContent = why; choose.hidden = true; list.hidden = true; box.classList.add('off'); };
+  const off = (why) => { note.hidden = true; cb.checked = false; cb.disabled = true; pick.ok = false; what.textContent = why; choose.hidden = true; list.hidden = true; box.classList.add('off'); };
   const show = (plan) => {
     if (state.settings.online === false) return off('Not now: the desk is Offline. Switch it online first, then get it on the Models page.');
     if (state.panic.halted) return off('Not now: everything is stopped. Press Resume first.');
@@ -494,6 +495,7 @@ function localModelBox() {
     pick.id = plan.model.id; pick.ok = true; box.classList.remove('off');
     if (cb.disabled) { cb.disabled = false; cb.checked = true; }
     what.textContent = `${plan.model.name}${plan.engineBytes ? ' and its engine' : ''}, ${plan.totalText}`;
+    note.textContent = plan.note || ''; note.hidden = !plan.note;
     const others = (plan.choices || []).filter(c => c.fits);
     choose.hidden = others.length < 2;
     list.replaceChildren(...(plan.choices || []).map(c => h('label', { class: 'tick' }, h('input', { type: 'radio', name: 'onb-model', value: c.id, checked: c.id === pick.id, disabled: !c.fits, onchange: () => choice(c.id) }),

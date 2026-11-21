@@ -5,6 +5,7 @@ import { testDesk } from '../../test/helpers/desk.js';
 import { standIn } from '../network/standin.js';
 import { setRules, clearRules } from '../network/rules.js';
 import { hook } from './hook.js';
+import { testHooks as searchHooks } from '../search/server.js';
 
 const filler = '<p>This page lists the people taking part in the meeting this year. It is kept up to date by the organisers of the event.</p>';
 const page = (body, extra = '') => `<!doctype html><html><head><title>Who is coming</title>${extra}</head><body><h1>Who is coming</h1>${filler}${body}</body></html>`;
@@ -19,11 +20,11 @@ async function on(pages) {
     if (p.redirect) { res.writeHead(301, { location: p.redirect }); res.end(); return; }
     res.writeHead(p.status || 200, { 'content-type': p.type || 'text/html; charset=utf-8' }); res.end(p.body ?? p);
   });
-  hook.fetch = site.fetch; hook.lookup = async () => [{ address: '93.184.216.34', family: 4 }]; hook.pauseMs = 0;
+  hook.fetch = site.fetch; hook.lookup = async () => [{ address: '93.184.216.34', family: 4 }]; hook.pauseMs = 0; searchHooks.fetch = hook.fetch; searchHooks.lookup = hook.lookup;
   const t = await testDesk({ modules: ['search', 'sales', 'tables'] });
   t.core.settings.set('timeZone', 'Asia/Kolkata');
   assert.equal((await t.call('/api/modules/tables/on', { method: 'POST' })).status, 200);
-  const close = async () => { await t.close(); await site.close(); hook.fetch = null; hook.lookup = null; hook.pauseMs = null; clearRules(); };
+  const close = async () => { await t.close(); await site.close(); hook.fetch = null; hook.lookup = null; hook.pauseMs = null; searchHooks.fetch = null; searchHooks.lookup = null; clearRules(); };
   return { t, site, close };
 }
 const add = async (t, url, { pick = 0, columns, pageLimit } = {}) => {
@@ -232,6 +233,7 @@ test('tables: a pause between pages of one site, and Panic stops a refresh with 
   try {
     const times = []; const inner = hook.fetch;
     hook.fetch = (u, i) => { if (!String(u).includes('robots')) times.push(Date.now()); return inner(u, i); };
+    searchHooks.fetch = hook.fetch;
     hook.pauseMs = 300;
     const { source } = await add(t, 'https://ev.example/list');
     assert.equal(source.rows, 3);
@@ -285,5 +287,25 @@ test('tables: new columns confirmed for the same people do not count them as new
     assert.match(ok.note, /0 new, 0 changed, 0 no longer on the list/);
     const del = (await t.call(`/api/m/tables/sources/${source.id}`, { method: 'DELETE' })).json;
     assert.equal(del.rows, 3); assert.equal(del.gone, 0);
+  } finally { await close(); }
+});
+
+test('tables: a page read through Search\'s readHtml keeps robots.txt on every hop and the same-site rule', async () => {
+  const { readHtml } = await import('./read.js');
+  const { t, site, close } = await on({ 'ev.example/robots.txt': { body: 'User-agent: *\nDisallow: /private\n', type: 'text/plain' }, 'ev.example/list': page(table(HEADS, ROWS)),
+    'ev.example/hop': { redirect: '/private/list' }, 'ev.example/private/list': page(table(HEADS, ROWS)), 'ev.example/away': { redirect: 'https://other.example/list' }, 'other.example/list': page(table(HEADS, ROWS)) });
+  try {
+    const real = t.core.modules.api('search'); const asked = [];
+    const search = { ...real, readHtml: (u, o) => { asked.push(u); return real.readHtml(u, o); } };
+    const opts = () => ({ search, robots: new Map(), site: 'ev.example' });
+    const p = await readHtml(hook.fetch, 'https://ev.example/list', opts());
+    assert.match(p.html, /<td>Asha N<\/td>/); assert.equal(p.title, 'Who is coming');
+    assert.deepEqual(asked, ['https://ev.example/list'], 'the page is read through Search');
+    await assert.rejects(readHtml(hook.fetch, 'https://ev.example/hop', opts()), (e) => e.code === 'robots');
+    assert.ok(!site.seen.some(s => s.path === '/private/list'), 'the page robots.txt forbids is not asked for');
+    await assert.rejects(readHtml(hook.fetch, 'https://ev.example/away', opts()), (e) => e.code === 'offsite');
+    assert.ok(!site.seen.some(s => s.host === 'other.example'), 'nothing is sent to another site');
+    t.core.settings.set('online', false);
+    await assert.rejects(readHtml(hook.fetch, 'https://ev.example/list', opts()), (e) => e.code === 'offline', 'Search says Offline');
   } finally { await close(); }
 });

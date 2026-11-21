@@ -31,7 +31,7 @@ test('chain merges, dedups and falls through on a challenge', async () => {
   assert.equal(new Set(r.results.map((x) => normUrl(x.url))).size, r.results.length);
 });
 test('reader refuses local and LAN addresses', () => {
-  for (const u of ['http://localhost:3960/', 'http://127.0.0.1/', 'http://192.168.1.5/', 'http://10.0.0.1/', 'http://[::1]/', 'file:///etc/passwd']) assert.throws(() => publicUrl(u));
+  for (const u of ['http://localhost:3445/', 'http://127.0.0.1/', 'http://192.168.1.5/', 'http://10.0.0.1/', 'http://[::1]/', 'file:///etc/passwd']) assert.throws(() => publicUrl(u));
   assert.equal(publicUrl('https://example.com/x').hostname, 'example.com');
 });
 test('Readability extracts the article and drops scripts', () => {
@@ -45,7 +45,7 @@ test('guard refuses every private form, credentials, other schemes and the desk'
     'http://[::1]/', 'http://[::]/', 'http://[::ffff:127.0.0.1]:11434/', 'http://[::ffff:7f00:1]/', 'http://[0:0:0:0:0:ffff:127.0.0.1]/', 'http://[::ffff:192.168.0.1]/', 'http://[fc00::1]/', 'http://[fd12::1]/', 'http://[fe80::1]/',
     'http://router.local/', 'http://printer.lan/', 'http://x.internal/', 'ftp://example.com/', 'file:///etc/passwd', 'http://user:pw@example.com/', 'http://2130706433/', 'http://0x7f000001/'];
   for (const u of bad) assert.throws(() => checkUrl(u), undefined, u);
-  assert.throws(() => checkUrl('http://127.0.0.1:3960/api', { deskPort: 3960 }), (e) => e.code === 'desk');
+  assert.throws(() => checkUrl('http://127.0.0.1:3445/api', { deskPort: 3445 }), (e) => e.code === 'desk');
   assert.equal(checkUrl('https://example.com/x').hostname, 'example.com');
   const lookup = async (h) => (h === 'mypc' ? [{ address: '127.0.0.1', family: 4 }] : h === 'nas.example' ? [{ address: '93.184.216.34', family: 4 }, { address: '192.168.1.20', family: 4 }] : h === 'v6.example' ? [{ address: '::ffff:10.0.0.5', family: 6 }] : [{ address: '93.184.216.34', family: 4 }]);
   for (const h of ['mypc', 'nas.example', 'v6.example']) await assert.rejects(checkUrlDeep(`http://${h}/`, { lookup }), (e) => e.code === 'private', h);
@@ -120,4 +120,55 @@ test('search: retried once after a fast curable failure (reset, 5xx, short 429),
   const twice = async (u) => { if (String(u).includes('wikipedia.org')) reset(); return new Response('', { status: 404 }); };
   const f = await runChain(env0(twice), 'q', { count: 8, only: ['wikipedia'], retryWaitMs: 5 });
   assert.equal(f.attempts[0].note, 'connection reset'); assert.match(f.attempts[0].error, /fetch failed.*read ECONNRESET/);
+});
+
+test('readHtml: the page itself through the same path as read (guard on every hop, rules, Offline, visit log, bot check)', async () => {
+  const { standIn } = await import('../network/standin.js');
+  const { setRules, clearRules } = await import('../network/rules.js');
+  const body = '<!doctype html><html><head><title>List</title></head><body><table><tr><th>Name</th></tr><tr><td>Asha</td></tr></table>' + '<p>Words about the people on this list, kept here for the reader. </p>'.repeat(4) + '</body></html>';
+  const site = await standIn(({ host, path, res }) => {
+    if (path === '/move') { res.writeHead(301, { location: 'https://other.example/list' }); return res.end(); }
+    if (path === '/home') { res.writeHead(302, { location: 'http://127.0.0.1/admin' }); return res.end(); }
+    if (path === '/check') { res.writeHead(200, { 'content-type': 'text/html' }); return res.end('<html><head><title>Just a moment</title></head><body>cf-chl-</body></html>'); }
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(body);
+  });
+  const t = await testDesk({ modules: ['search', 'network'] });
+  const { testHooks } = await import('./server.js');
+  testHooks.fetch = site.fetch; testHooks.lookup = async () => [{ address: '93.184.216.34', family: 4 }];
+  try {
+    await t.core.modules.set('network', true);
+    const search = t.core.modules.api('search');
+    const hops = [];
+    const p = await search.readHtml('https://events.example/move', { hop: (u) => hops.push(u.href), who: { module: 'tables' } });
+    assert.match(p.html, /<td>Asha<\/td>/); assert.equal(p.title, 'List'); assert.equal(p.finalUrl, 'https://other.example/list');
+    assert.deepEqual(hops, ['https://events.example/move', 'https://other.example/list'], 'the caller sees every hop before it is sent');
+    // a hop the caller refuses is refused as itself, and nothing is sent to it
+    const sent = site.seen.length;
+    await assert.rejects(search.readHtml('https://events.example/move', { hop: (u) => { if (u.hostname === 'other.example') throw Object.assign(new Error('another site'), { code: 'offsite' }); } }), (e) => e.code === 'offsite');
+    assert.equal(site.seen.length, sent + 1);
+    await assert.rejects(search.readHtml('https://events.example/home'), (e) => e.code === 'private', 'a redirect to this PC is refused');
+    await assert.rejects(search.readHtml('https://events.example/check'), (e) => e.code === 'blocked', 'a bot check is not read');
+    setRules({ never: ['events.example'] });
+    await assert.rejects(search.readHtml('https://events.example/list'), (e) => /^rule_/.test(e.code));
+    clearRules();
+    t.core.settings.set('online', false);
+    await assert.rejects(search.readHtml('https://events.example/list'), (e) => e.code === 'offline');
+    t.core.settings.set('online', true);
+    const log = t.core.storage.all('SELECT host, result FROM m_network_visits');
+    assert.ok(log.some((v) => v.host === 'events.example'), 'each read is a line in the visit log');
+  } finally { clearRules(); testHooks.fetch = null; testHooks.lookup = null; await t.close(); await site.close(); }
+});
+
+test('readHtml and checkUrl take no stand-ins from a caller: the address guard and the desk\'s own fetch stay in place', async () => {
+  const t = await testDesk({ modules: ['search'] });
+  const { testHooks } = await import('./server.js');
+  const sent = []; testHooks.fetch = async (u) => { sent.push(String(u)); return new Response('<html><head><title>x</title></head><body>' + 'words '.repeat(40) + '</body></html>', { status: 200, headers: { 'content-type': 'text/html' } }); };
+  testHooks.lookup = async () => [{ address: '10.0.0.5', family: 4 }];   // the name really points at the LAN
+  const pub = async () => [{ address: '93.184.216.34', family: 4 }]; const theirs = [];
+  try {
+    const search = t.core.modules.api('search');
+    await assert.rejects(search.readHtml('http://intranet.example/', { lookup: pub, fetch: async (u) => { theirs.push(u); return new Response('x'); } }), (e) => e.code === 'private');
+    assert.deepEqual(theirs, [], 'a caller\'s fetch is never used'); assert.deepEqual(sent, [], 'nothing is sent to a LAN address');
+    await assert.rejects(search.checkUrl('http://intranet.example/', { lookup: pub }), (e) => e.code === 'private', 'a caller\'s look-up cannot make a LAN name pass');
+  } finally { testHooks.fetch = null; testHooks.lookup = null; await t.close(); }
 });

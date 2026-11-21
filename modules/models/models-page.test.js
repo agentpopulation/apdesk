@@ -163,3 +163,28 @@ test('the paid switch: off by default, one setting, changed only from the desk w
     assert.equal((await t.call('/api/settings/paid-models', { body: { provider: 'openai', on: true } })).status, 400);
   } finally { await t.close(); }
 });
+
+test('the small-model note is shown: the engine card and the first-start box both show plan.note as a plain line', async () => {
+  const fs = await import('node:fs');
+  const ui = fs.readFileSync(new URL('./ui.js', import.meta.url), 'utf8');
+  assert.match(ui, /plan\.note \? ui\.h\('p', \{ class: 'sub', 'data-apd': 'engine-note' \}, plan\.note\) : null/);
+  const shell = fs.readFileSync(new URL('../../app/ui/shell.js', import.meta.url), 'utf8');
+  const box = shell.slice(shell.indexOf('function localModelBox()'), shell.indexOf('async function firstStep('));
+  assert.match(box, /note\.textContent = plan\.note \|\| ''; note\.hidden = !plan\.note;/);
+  assert.match(box, /h\('span', \{ class: 'd', 'data-apd': 'local-model-note', hidden: true \}\)/);
+});
+
+test('an Ollama model card says where it comes from: the Ollama registry, or the host named in the model', async () => {
+  const t = await testDesk({ modules: ['models'] });
+  try {
+    const card = async (model) => {
+      const r = await t.call('/api/m/models/ollama/pull', { body: { model } }); assert.equal(r.status, 200, r.text);
+      let c; for (let i = 0; i < 100 && !c; i++) { c = t.core.approval.listPending().find(a => a.action === 'install' && a.payload?.model === model); if (!c) await new Promise(r => setTimeout(r, 30)); }
+      assert.ok(c, 'the owner is asked'); t.core.approval.decide(c.id, 'deny'); return c;
+    };
+    const plain = await card('qwen3:4b');
+    assert.match(plain.detail, /From registry\.ollama\.ai\./); assert.match(plain.detail, /Ollama on this PC/);
+    const hf = await card('hf.co/someone/some-model-GGUF:Q4_K_M');
+    assert.match(hf.detail, /From hf\.co\./); assert.doesNotMatch(hf.detail, /registry\.ollama\.ai/);
+  } finally { await t.close(); }
+});

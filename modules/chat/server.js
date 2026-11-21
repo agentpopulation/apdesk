@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { makeStore, SEED_GROUPS } from './store.js';
 import { makeCoordinator, cardKey, RESEARCH_JOBS, deliverableFor, NOT_NOW } from './coordinator.js';
-import { aboutOf, clipAbout, ABOUT_KEY, ASK_ABOUT, savedLine } from './business.js';
+import { aboutOf, clipAbout, ABOUT_KEY, ASK_ABOUT, ASK_ABOUT_SITE, savedLine, siteAddressOf, siteProposal } from './business.js';
 import { dropFileClaims, previewText, cutAtWord, bareStart, BARE_LINES, NEXT_LINE } from './ui-text.js';
 
 const TEXT_EXT = /\.(txt|md|markdown|csv|tsv|json|js|mjs|ts|py|html?|css|xml|ya?ml|ini|log|sql|sh|bat|ps1|rtf)$/i;
@@ -211,6 +211,25 @@ export async function activate(ctx) {
     const chip = body?.chip === true;
     const waiting = c.settings.awaitBusiness;
     let p;
+    const site = waiting && owner && !chip && !newAsk(text) ? siteAddressOf(text) : null;
+    if (site) {
+      // his answer is his website: the chat keeps waiting, the desk reads the site and proposes three lines; nothing is saved
+      // until he presses "Save these" (or types his own line), which comes back here as his answer
+      const um = store.add(c.id, { role: 'user', text, meta: { aboutSite: true } }); bus.emitMessage(um);
+      const reply = store.add(c.id, { role: 'assistant', agentId: speakerOf(c, body?.agentId), text: '', status: 'streaming', meta: { aboutSite: site } }); bus.emitMessage(reply);
+      // the read is this chat's reply: a second send waits for it, and Stop (or Panic) aborts it
+      const ac = new AbortController(); co.running.set(c.id, { ac, replyId: reply.id });
+      siteProposal(ctx, site, { signal: ac.signal, chatId: c.id }).catch(() => ({ ok: false, text: 'I could not read that site. ' + ASK_ABOUT }))
+        .then((r) => {
+          if (co.running.get(c.id)?.ac === ac) co.running.delete(c.id);
+          // stopped, or the wait was dropped meanwhile: nothing is proposed into a chat that no longer waits
+          const gone = ac.signal.aborted || !store.chat(c.id)?.settings.awaitBusiness;
+          const m = gone ? store.update(reply.id, { text: 'Stopped. Nothing was read or saved.', cards: [], status: 'stopped' })
+            : store.update(reply.id, { text: r.text, cards: r.ok ? r.cards : [NOT_NOW], status: 'done' });
+          bus.emitMessage(m); store.touch(c.id, m.text); emit({ type: 'chats' });
+        });
+      return ctx.json(res, { ok: true, chatId: c.id, replyId: reply.id, asked: true });
+    }
     if (waiting && owner) {
       // the chat waits for what the owner sells: his next message is that answer, unless it is plainly a new ask of its own
       // (a chip he pressed, an ask for leads, drafts or research, or a question)
@@ -226,9 +245,9 @@ export async function activate(ctx) {
       // a suggestion that means the owner's own business, and he has not said what it is: ask first, start nothing
       const um = store.add(c.id, { role: 'user', text, meta: { chip: true } }); bus.emitMessage(um);
       if (c.title === 'New chat') store.rename(c.id, cutAtWord(text, 48));
-      const q = store.add(c.id, { role: 'assistant', agentId: speakerOf(c, body?.agentId), text: ASK_ABOUT, cards: [NOT_NOW], meta: { asksAbout: true } });
+      const q = store.add(c.id, { role: 'assistant', agentId: speakerOf(c, body?.agentId), text: ASK_ABOUT_SITE, cards: [NOT_NOW], meta: { asksAbout: true } });
       store.setSettings(c.id, { awaitBusiness: { text, at: new Date().toISOString() } });
-      bus.emitMessage(q); store.touch(c.id, ASK_ABOUT); emit({ type: 'chats' });
+      bus.emitMessage(q); store.touch(c.id, ASK_ABOUT_SITE); emit({ type: 'chats' });
       return ctx.json(res, { ok: true, chatId: c.id, replyId: q.id, asked: true });
     } else p = co.turn(c.id, text, { speaker: body?.agentId, userMeta: chip ? { chip: true } : {} });
     // the reply that finished the desk's first exchange gets one line under it, once, that points at the suggestions
@@ -301,6 +320,38 @@ export async function activate(ctx) {
     ctx.json(res, { ok: true });
   });
 
+  // ---------- ratings the owner leaves under an answer: Chat's own store, so they work whether Bench is on or not
+  ctx.db.migrate(2, 'CREATE TABLE IF NOT EXISTS m_chat_ratings (message_id TEXT PRIMARY KEY, thumb TEXT, research TEXT, reasons TEXT, comment TEXT, rated_at TEXT NOT NULL)');
+  const RATING_REASONS = ['wrong facts', 'weak sources', 'missed the point', 'too long', 'too short', 'outdated', 'other'];
+  const ratingOut = (r) => !r ? null : ({ targetType: 'answer', targetId: r.message_id, thumb: r.thumb || null, research: r.research || null, reasons: (() => { try { return JSON.parse(r.reasons || '[]'); } catch { return []; } })(), comment: r.comment || '', ratedAt: r.rated_at });
+  const putRating = (id, body, { keep = false, at = new Date().toISOString() } = {}) => {
+    const thumb = ['up', 'down'].includes(body.thumb) ? body.thumb : null;
+    const research = ['good', 'bad'].includes(body.research) ? body.research : null;
+    const reasons = Array.isArray(body.reasons) ? body.reasons.filter((x) => RATING_REASONS.includes(x)).slice(0, 7) : [];
+    const comment = String(body.comment || '').slice(0, 1000);
+    if (thumb === null && research === null && !reasons.length && !comment) { if (!keep) ctx.db.run('DELETE FROM m_chat_ratings WHERE message_id = ?', id); return; }
+    ctx.db.run(`INSERT INTO m_chat_ratings (message_id, thumb, research, reasons, comment, rated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(message_id) DO ${keep ? 'NOTHING' : 'UPDATE SET thumb = excluded.thumb, research = excluded.research, reasons = excluded.reasons, comment = excluded.comment, rated_at = excluded.rated_at'}`,
+      id, thumb, research, JSON.stringify(reasons), comment, at);
+  };
+  /** Answer ratings Bench stored before Chat had its own: copied over once, the first time Bench offers them. */
+  const copyBenchRatings = () => {
+    if (ctx.kv.get('ratings.copied', false)) return;
+    const bench = ctx.modules.api('bench'); if (typeof bench?.answerRatings !== 'function') return;
+    for (const r of bench.answerRatings() || []) if (r?.targetId) putRating(String(r.targetId), r, { keep: true, at: r.ratedAt || new Date().toISOString() });
+    ctx.kv.set('ratings.copied', true);
+  };
+  const getRating = (id) => { copyBenchRatings(); return ratingOut(ctx.db.get('SELECT * FROM m_chat_ratings WHERE message_id = ?', String(id))); };
+  const ratingsSince = (since) => { copyBenchRatings(); return ctx.db.all('SELECT * FROM m_chat_ratings WHERE rated_at >= ? ORDER BY rated_at', String(since || '')).map(ratingOut); };
+  const ownerOnly = (res, owner) => { if (owner) return false; ctx.json(res, { error: 'Only the owner at this desk can rate answers.' }, 403); return true; };
+  ctx.route('POST', '/ratings', (req, res, { body, owner }) => {
+    if (ownerOnly(res, owner)) return;
+    const m = store.message(Number(body?.messageId));
+    if (!m || m.role !== 'assistant') return ctx.json(res, { error: 'That answer is gone.' }, 404);
+    copyBenchRatings(); putRating(String(m.id), body || {});
+    ctx.json(res, { ok: true, rating: getRating(m.id) });
+  });
+  ctx.route('GET', '/ratings/:id', (req, res, { params, owner }) => { if (ownerOnly(res, owner)) return; ctx.json(res, { rating: getRating(params.id) }); });
+
   // ---------- what other modules call (the inter-module API)
   ctx.expose({
     postCard: (chatId, card) => bus.postCard(chatId, card),
@@ -312,6 +363,8 @@ export async function activate(ctx) {
     },
     /** Messages since a time, oldest first, for a look back at how turns went (role, status, the again mark, tool steps). Read-only. */
     messagesSince: (since, limit = 2000) => ctx.db.all('SELECT * FROM m_chat_messages WHERE at >= ? ORDER BY id LIMIT ?', String(since || ''), Math.min(5000, Number(limit) || 2000)).map(r => store.message(r.id)),
+    /** The owner's answer ratings since a time, oldest first (thumb, research, reasons, comment, ratedAt). Read-only. */
+    ratingsSince,
     createChat({ title, members } = {}) { const c = store.create({ title, members }); emit({ type: 'chats' }); return c; },
     // what Home shows under "Pick up where you left off": plain words (a value stored before the preview was cleaned is cleaned here)
     recent(n = 6) { return store.list().filter(c => c.last).slice(0, n).map(c => ({ id: c.id, title: c.title || ctx.agents.get(c.members[0])?.name || 'Chat', last: cutAtWord(previewText(c.last), 140), updated: c.updated })); },

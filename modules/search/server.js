@@ -7,6 +7,10 @@ import { siteRuleAsk, withWho, currentWho, callerModule } from '../network/rules
 const KEYED = ['serper', 'brave', 'tavily', 'exa', 'jina'];
 const SIDE_CAR_GUESSES = ['http://127.0.0.1:8888/', 'http://127.0.0.1:8080/'];   // the usual SearXNG ports (docker and pip)
 
+// For tests only: stand-ins for the network (a fetch to pages on loopback, a name look-up). Only code in this process that
+// imports this file can set them; no route, tool, setting, page or caller of the exposed API can.
+export const testHooks = { fetch: null, lookup: null };
+
 export async function activate(ctx) {
   // Keys come from the core (Models page / Keys and logins, or the environment for this run). Never stored here.
   const secret = (id) => (typeof ctx.serviceKey === 'function' ? ctx.serviceKey(id) : null) || null;
@@ -61,6 +65,33 @@ export async function activate(ctx) {
     return withWho(who, async () => {
       try { const u = checkUrl(url, { deskPort: ctx.port, who, asking: true }); await siteRuleAsk(u.hostname, u.href, { who }); const p = await readOnce(url, opts); visit(url, who, null, p); return p; }
       catch (e) { visit(url, who, e); throw e; }
+    });
+  }
+  /**
+   * readHtml(url, { signal, who, hop }) -> { url, finalUrl, title, html, fetchedAt }: the page itself, for a
+   * caller that needs its markup (Tables). The same path as read: Offline, the owner's website rules, the address guard on
+   * every hop, the size limits, the bot-check refusal and a line in the visit log. hop(url) runs before each request is
+   * sent and may refuse it by throwing. Pages are fetched through the desk's own fetch (test stand-ins: testHooks).
+   */
+  async function readHtml(url, opts = {}) {
+    const who = opts.who || currentWho() || { module: callerModule(new Error().stack) };
+    return withWho(who, async () => {
+      try {
+        refuseOffline();
+        const u = checkUrl(url, { deskPort: ctx.port, who, asking: true }); await siteRuleAsk(u.hostname, u.href, { who });
+        const send = (x, i) => (testHooks.fetch || ctx.fetch)(x, i);
+        let page = null; let refusal = null;
+        const each = async (x, init) => {
+          if (opts.hop) { try { await opts.hop(new URL(String(x))); } catch (e) { refusal = e; throw e; } }
+          const r = await send(x, init); page = r.status === 200 ? r.clone() : null; return r;
+        };
+        const signal = AbortSignal.any([opts.signal, ctx.panic.signal].filter(Boolean));
+        let p;
+        try { p = await readPage(each, url, { signal, deskPort: ctx.port, lookup: testHooks.lookup || undefined }); } catch (e) { throw refusal || e; }
+        if (p.kind !== 'html' || !page) throw Object.assign(new Error('This address is not a web page.'), { code: 'unsupported' });
+        const out = { url: p.url, finalUrl: p.finalUrl, title: p.title, html: await page.text(), fetchedAt: p.fetchedAt };
+        visit(url, who, null, out); return out;
+      } catch (e) { visit(url, who, e); throw e; }
     });
   }
   const visit = (url, who, e, p) => { try { ctx.modules.api('network')?.logVisit?.({ url, via: 'read', who, error: e || null, finalUrl: p?.finalUrl || null }); } catch {} };
@@ -141,6 +172,6 @@ export async function activate(ctx) {
       catch (e) { return { url: args.url, error: e.message }; }
     },
   });
-  ctx.expose({ search, searchDetailed, read, status, failureLine, isOffline: offline, newCache: () => new Map(), checkUrl: (u) => checkUrlDeep(u, { deskPort: ctx.port }) });
+  ctx.expose({ search, searchDetailed, read, readHtml, status, failureLine, isOffline: offline, newCache: () => new Map(), userAgent: UA, checkUrl: (u) => checkUrlDeep(u, { deskPort: ctx.port, lookup: testHooks.lookup || undefined }) });
   return { async deactivate() { searchCache.clear(); readCache.clear(); } };
 }

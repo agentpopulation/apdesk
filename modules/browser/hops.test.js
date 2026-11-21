@@ -73,7 +73,7 @@ test('hops', { skip: noBrowser }, async (t) => {
   await new Promise(r => priv.listen(0, '127.0.0.1', r)); await new Promise(r => pub.listen(0, '127.0.0.1', r));
   PP = priv.address().port; PUB = pub.address().port;
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'apd-hops-'));
-  c = new Computer({ agentId: 'hops', dataDir, guardOpts: () => ({ deskPort: 3960, ...opts }), testNet: { lookup, publicAddr: (a, port) => port === PUB, upstream: null } });
+  c = new Computer({ agentId: 'hops', dataDir, guardOpts: () => ({ deskPort: 3445, ...opts }), testNet: { lookup, publicAddr: (a, port) => port === PUB, upstream: null } });
   const onRefused = c.onHopRefused.bind(c); c.onHopRefused = (r) => { refusals.push(`${r.host}:${r.port}`); onRefused(r); };
   t.after(async () => { clearRules(); await c.close(); for (const u of upgraded) u.destroy(); priv.closeAllConnections(); pub.closeAllConnections(); priv.close(); pub.close(); fs.rmSync(dataDir, { recursive: true, force: true }); });
   await c.start();
@@ -186,14 +186,14 @@ test('behind the proxy this PC already uses: names are passed on, but a name tha
   await new Promise(r => up.listen(0, '127.0.0.1', r));
   const refused = [];
   const lookup = async (h) => { if (h === 'evil.example') return [{ address: '10.0.0.7', family: 4 }]; throw new Error('no local DNS'); };
-  const g = await startHopGuard({ opts: () => ({ deskPort: 3960 }), lookup, onRefuse: (r) => refused.push(r.host), upstream: { host: '127.0.0.1', port: up.address().port, auth: null } });
+  const g = await startHopGuard({ opts: () => ({ deskPort: 3445 }), lookup, onRefuse: (r) => refused.push(r.host), upstream: { host: '127.0.0.1', port: up.address().port, auth: null } });
   const connect = (target) => new Promise((resolve) => { const s = net.connect(g.port, '127.0.0.1', () => s.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n\r\n`)); s.once('data', (b) => { resolve(String(b).split('\r\n')[0]); s.destroy(); }); s.on('error', () => resolve('error')); });
   try {
     assert.equal(await connect('en.wikipedia.org:443'), 'HTTP/1.1 200 Connection Established');
     assert.deepEqual(seen, ['CONNECT en.wikipedia.org:443 HTTP/1.1']);
     assert.equal(await connect('evil.example:443'), 'HTTP/1.1 403 Forbidden');
     assert.equal(await connect('192.168.1.1:80'), 'HTTP/1.1 403 Forbidden');
-    assert.equal(await connect('127.0.0.1:3960'), 'HTTP/1.1 403 Forbidden');
+    assert.equal(await connect('127.0.0.1:3445'), 'HTTP/1.1 403 Forbidden');
     assert.equal(seen.length, 1, 'the refused ones never reached the upstream');
     assert.deepEqual(refused, ['evil.example', '192.168.1.1', '127.0.0.1']);
   } finally { await g.close(); up.close(); }

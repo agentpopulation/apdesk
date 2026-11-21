@@ -45,3 +45,17 @@ test('a JavaScript run asks, runs in its folder, has no keys, and the module swi
     assert.equal((await t.call('/api/m/code/status')).status, 404);
   } finally { delete process.env.APD_TEST_SECRET; await t.close(); }
 });
+
+test('the container image card says it comes from Docker Hub', async () => {
+  const t = await testDesk({ modules: ['code'] });
+  try {
+    await t.call('/api/modules/code/on', { method: 'POST' });
+    const s = await t.call('/api/m/code/image', { body: { language: 'python' } });
+    assert.equal(s.status, 200, s.text);
+    let card;
+    for (let i = 0; i < 100 && !card; i++) { card = t.core.approval.listPending().find(a => a.action === 'install'); if (!card) await new Promise(r => setTimeout(r, 30)); }
+    assert.ok(card, 'the owner is asked');
+    assert.match(card.detail, /From Docker Hub\./);
+    t.core.approval.decide(card.id, 'deny');
+  } finally { await t.close(); }
+});

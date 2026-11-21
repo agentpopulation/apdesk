@@ -204,12 +204,14 @@ export async function activate(ctx) {
     if (!o.ok) return { ok: false, line: OLLAMA_FIX, models: [] };
     return { ok: true, line: `Ollama answers at ${ollamaBase()} with ${o.models.length} model${o.models.length === 1 ? '' : 's'}.`, models: safeFirst(o.models, m => m.name) };
   }
+  // where Ollama fetches a model from: the host named in it (hf.co/...), else Ollama's own registry
+  const modelHost = (model) => /^([a-z0-9-]+(?:\.[a-z0-9-]+)+)\//i.exec(model)?.[1].toLowerCase() || 'registry.ollama.ai';
   async function pull(model, { agentId = null, chatId = null } = {}) {
     model = String(model || '').trim();
     if (!/^[\w.\-/:]+$/.test(model)) throw new Error('That does not look like an Ollama model name, for example qwen3:14b.');
     return ctx.jobs.start({ kind: 'models.pull', title: `Download ${model}`, agentId, chatId, input: { model }, async run(job) {
       job.waiting('Waiting for you to allow the download');
-      const d = await ctx.approval.request({ agentId, chatId, jobId: job.id, action: 'install', title: `Download the local model ${model}`, detail: 'Ollama on this PC', payload: { model }, signal: job.signal });
+      const d = await ctx.approval.request({ agentId, chatId, jobId: job.id, action: 'install', title: `Download the local model ${model}`, detail: 'Downloaded by Ollama on this PC.', from: modelHost(model), payload: { model }, signal: job.signal });
       if (!d.ok) throw new Error(d.reason === 'denied' ? 'You said no to the download.' : `Not downloaded (${d.reason}).`);
       job.resumed('Downloading');
       const r = await ctx.fetch(ollamaBase() + '/api/pull', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, stream: true }), signal: job.signal });

@@ -87,3 +87,10 @@ test('Check the doors: send to a person asks and is cancelled; the route needs t
     assert.equal(typeof t.core.modules.api('safety').wrapUntrusted, 'function');
   } finally { await t.close(); }
 });
+
+test('Settings notes match the door: installs always ask, and the window never covers them', async () => {
+  const { NOTES } = await import('./policy.js');
+  const note = (k) => NOTES.find(([name]) => name === k)?.[1] || '';
+  assert.match(note('Auto-approve window'), /sending to a person, installing anything and spending over a limit/);
+  assert.equal(note('Installing'), 'Always asks, at every level and inside an auto-approve window. The card says what will be installed and where it comes from.');
+});

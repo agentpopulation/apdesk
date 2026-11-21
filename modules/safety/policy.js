@@ -30,8 +30,9 @@ export const RULE_WORDS = {
 /** What the door does beyond the table; shown as read-only notes. */
 export const NOTES = [
   ['Sending to a person', 'Always asks, at every level and inside an auto-approve window.'],
+  ['Installing', 'Always asks, at every level and inside an auto-approve window. The card says what will be installed and where it comes from.'],
   ['Spending over a limit', 'Always asks, whatever the level or the window. While Payments is off, any spend asks, and so does a spend whose amount or currency is not clear.'],
-  ['Auto-approve window', 'While it is open, everything that would ask goes ahead, except sending to a person and spending over a limit.'],
+  ['Auto-approve window', 'While it is open, everything that would ask goes ahead, except that sending to a person, installing anything and spending over a limit still ask.'],
   ['Paid OpenRouter models', 'Off: only free OpenRouter models are used. The owner switches paid ones on beside the spend limits in Settings › Payments and spend.'],
   ['Who can change these', 'Only you, here in Settings. No chat message, page, file or other program can change the level, the window or the limits.'],
 ];

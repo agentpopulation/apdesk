@@ -15,7 +15,7 @@ test('which addresses leave this PC', () => {
 
 test('a page that asks for an outside URL while Offline is blocked at request time; the setting is read at every request', async () => {
   let online = true;
-  const c = new Computer({ agentId: 'operator', dataDir: '/tmp/none', guardOpts: () => ({ allowHosts: ['127.0.0.1'], deskPort: 3960, offline: online === false }) });
+  const c = new Computer({ agentId: 'operator', dataDir: '/tmp/none', guardOpts: () => ({ allowHosts: ['127.0.0.1'], deskPort: 3445, offline: online === false }) });
   const a = stubRoute('https://example.com/app.js'); await c.onRoute(a);
   assert.equal(a.did, 'continue', 'online: the request goes out');
   online = false;                                    // the owner switches Offline in the middle of a task

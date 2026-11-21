@@ -57,8 +57,7 @@ export async function activate(ctx) {
     if (ctx.panic.halted) throw bad('Everything is stopped. Press Resume first.', 503, 'halted');
     if (offline()) throw bad(OFFLINE, 409, 'offline');
     return polite(new URL(url).hostname, signal, () => withWho(who, async () => {
-      try { const p = await readHtml(fetchFn, url, { robots, site, lookup: hook.lookup || undefined, deskPort: ctx.port, signal }); visit(url, who, null, p); return p; }
-      catch (e) { visit(url, who, e); throw e; }
+      return readHtml(fetchFn, url, { robots, site, signal, search: ctx.modules.api('search'), who });
     }));
   }
   /** A failed read in plain words: { state, note }. Stops pass through. */

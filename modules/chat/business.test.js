@@ -45,7 +45,7 @@ test('empty profile + the "my product" chip: no job, the desk asks; the answer i
     let r = await t.call('/api/m/chat/chats/sales-room/send', { body: { text: CHIP, chip: true, needsBusiness: true } });
     assert.equal(r.json.asked, true);
     let s = await settle(t, 'sales-room');
-    assert.equal(s.last.text, ASK_ABOUT); assert.equal(ran.length, 0); assert.equal(prompts.length, 0, 'no model was asked');
+    assert.equal(s.last.text, ASK_ABOUT_SITE); assert.equal(ran.length, 0); assert.equal(prompts.length, 0, 'no model was asked');
     assert.equal(s.chat.settings.awaitBusiness.text, CHIP);
     await t.call('/api/m/chat/chats/sales-room/send', { body: { text: '  ' + ABOUT + '  ' } });
     s = await settle(t, 'sales-room');
@@ -64,11 +64,11 @@ test('empty profile + the same ask typed: the model fills "my product", the desk
   try {
     await t.call('/api/m/chat/chats/sales-room/send', { body: { text: CHIP } });
     let s = await settle(t, 'sales-room');
-    assert.equal(s.last.text, ASK_ABOUT); assert.equal(ran.length, 0); assert.ok(s.chat.settings.awaitBusiness);
+    assert.equal(s.last.text, ASK_ABOUT_SITE); assert.equal(ran.length, 0); assert.ok(s.chat.settings.awaitBusiness);
     await t.call('/api/m/chat/chats/dm-closer/send', { body: { text: 'Find 20 leads: Indian companies that sell payroll software' } });
     s = await settle(t, 'dm-closer');
     assert.equal(ran.length, 1); assert.equal(ran[0].query, 'Indian companies that sell payroll software');
-    assert.notEqual(s.last.text, ASK_ABOUT); assert.ok(!s.chat.settings.awaitBusiness);
+    assert.notEqual(s.last.text, ASK_ABOUT_SITE); assert.ok(!s.chat.settings.awaitBusiness);
     assert.equal(t.core.settings.get('business.about'), '');
   } finally { await t.close(); }
 });
@@ -99,7 +99,7 @@ test('profile set: the chip runs at once, the prompt carries the fact block, and
     t.core.settings.set('business.about', ABOUT);
     await t.call('/api/m/chat/chats/sales-room/send', { body: { text: CHIP, chip: true, needsBusiness: true } });
     const s = await settle(t, 'sales-room');
-    assert.notEqual(s.last.text, ASK_ABOUT); assert.equal(ran.length, 1);
+    assert.notEqual(s.last.text, ASK_ABOUT_SITE); assert.equal(ran.length, 1);
     assert.equal(ran[0].query, 'Companies that would buy this: ' + ABOUT);
     assert.match(prompts[0][0].content, /do not add to it\):\n"""\nPayroll software/);
     assert.doesNotMatch(prompts[0][0].content, /UNTRUSTED CONTENT[^\n]*\n[^\n]*Payroll/, 'his own words are not wrapped as page data');
@@ -140,7 +140,7 @@ test('drafts: an offer of only "my product" is never saved; with no profile the 
     t.core.modules.tools.set('outreach_draft', { module: 'sales', name: 'outreach_draft', description: 'drafts', parameters: { type: 'object', properties: { top: { type: 'integer' }, offer: { type: 'string' } } }, async run(args) { got.push(args); return { ok: true, text: 'drafts' }; } });
     await t.call('/api/m/chat/chats/dm-closer/send', { body: { text: 'Draft outreach to the top five leads' } });
     let s = await settle(t, 'dm-closer');
-    assert.equal(s.last.text, ASK_ABOUT); assert.equal(got.length, 0);
+    assert.equal(s.last.text, ASK_ABOUT_SITE); assert.equal(got.length, 0);
     await t.call('/api/m/chat/chats/dm-closer/send', { body: { text: ABOUT } });
     s = await settle(t, 'dm-closer');
     assert.equal(got.length, 1); assert.equal(got[0].offer, undefined, 'the empty offer is dropped'); assert.equal(got[0].top, 5);
@@ -232,4 +232,83 @@ test('an invented line is dropped even when its quote is real', async () => {
 test('the screen builds the saved text with the same words as the server', async () => {
   const { siteAboutText } = await import('./ui-text.js');
   for (const v of [{ sell: 'Payroll software.', buyers: 'HR heads', tone: 'Plain' }, { sell: 'x', buyers: '', tone: '' }, {}]) assert.equal(siteAboutText(v), aboutFromLines(v));
+});
+
+// ---- end to end in a chat: the owner gives his website address instead of typing (a stand-in site, no network)
+const SITE = { 'https://acme.example/': HOME };
+const siteDesk = async () => {
+  const ran = []; const reads = [];
+  const t = await testDesk({ modules: ['chat', 'agents'], script: (b) => {
+    const sys = String(b.messages[0]?.content || '');
+    if (/You read pages from a business website/.test(sys)) return JSON.stringify({ sell: { line: 'Payroll software for small firms', quote: 'We make payroll software for small firms in India' }, buyers: { line: 'HR heads and finance owners', quote: 'HR heads and finance owners buy it' }, tone: { line: 'Plain, no jargon', quote: 'no jargon, no surprises' } });
+    if (b.messages.at(-1).role === 'tool') return 'The lead search has started.';
+    return (b.tools || []).some(x => x.function.name === 'leads_find') ? { toolCalls: [{ name: 'leads_find', args: { query: 'companies that need my product', count: 20 } }] } : 'no tools';
+  } });
+  t.core.modules.tools.set('leads_find', { module: 'sales', name: 'leads_find', description: 'find leads', parameters: { type: 'object', properties: { query: { type: 'string' }, count: { type: 'integer' } } }, async run(args) { ran.push(args); return { ok: true, jobId: 'job_abcdefgh', text: 'Looking for leads now.' }; } });
+  t.core.modules.tools.set('web_read', { module: 'search', name: 'web_read', description: 'read a page', parameters: { type: 'object', properties: { url: { type: 'string' } } }, async run(args) { reads.push(args.url); const p = SITE[args.url]; return p ? { url: args.url, title: 'Acme', text: p } : { url: args.url, error: 'That page could not be read.' }; } });
+  return { t, ran, reads };
+};
+
+test('website instead of typing: the desk reads the site, proposes three lines, saves only on "Save these", then carries on', async () => {
+  const { t, ran, reads } = await siteDesk();
+  try {
+    await t.call('/api/m/chat/chats/sales-room/send', { body: { text: CHIP, chip: true, needsBusiness: true } });
+    let s = await settle(t, 'sales-room');
+    assert.equal(s.last.text, ASK_ABOUT_SITE, 'the question offers the website way');
+    await t.call('/api/m/chat/chats/sales-room/send', { body: { text: 'acme.example' } });
+    s = await settle(t, 'sales-room');
+    assert.ok(reads.includes('https://acme.example/'), 'read through the reader');
+    assert.equal(s.all.filter(m => m.role === 'user').at(-1).text, 'acme.example', 'his message is kept');
+    const card = s.last.cards.find(c => c.kind === 'business.site');
+    assert.ok(card, 'the three lines are proposed'); assert.match(s.last.text, /Nothing is saved until you do/);
+    assert.equal(card.items.find(i => i.key === 'sell').line, 'Payroll software for small firms');
+    assert.equal(t.core.settings.get('business.about'), '', 'nothing saved yet');
+    assert.ok(s.chat.settings.awaitBusiness, 'still waiting'); assert.equal(ran.length, 0, 'the paused ask has not run');
+    // "Save these" sends the lines he kept (here one edited) as his answer
+    const { siteAboutText } = await import('./ui-text.js');
+    const answer = siteAboutText({ sell: 'Payroll software for small firms', buyers: 'HR heads', tone: 'Plain, no jargon' });
+    await t.call('/api/m/chat/chats/sales-room/send', { body: { text: answer } });
+    s = await settle(t, 'sales-room');
+    assert.equal(t.core.settings.get('business.about'), aboutFromLines({ sell: 'Payroll software for small firms', buyers: 'HR heads', tone: 'Plain, no jargon' }));
+    assert.ok(!s.chat.settings.awaitBusiness); assert.equal(ran.length, 1, 'the paused ask carried on');
+  } finally { await t.close(); }
+});
+
+test('website instead of typing: a site that cannot be read is said so, the plain question is asked again, nothing is saved', async () => {
+  const { t, ran } = await siteDesk();
+  try {
+    await t.call('/api/m/chat/chats/sales-room/send', { body: { text: CHIP, chip: true, needsBusiness: true } }); await settle(t, 'sales-room');
+    await t.call('/api/m/chat/chats/sales-room/send', { body: { text: 'my website is nowhere.example' } });
+    const s = await settle(t, 'sales-room');
+    assert.match(s.last.text, /could not read nowhere\.example/); assert.ok(s.last.text.endsWith(ASK2));
+    assert.ok(!s.last.cards.some(c => c.kind === 'business.site'));
+    assert.ok(s.chat.settings.awaitBusiness, 'still waiting for his answer');
+    assert.equal(t.core.settings.get('business.about', ''), ''); assert.equal(ran.length, 0);
+    // a plain line now is his answer, as before
+    await t.call('/api/m/chat/chats/sales-room/send', { body: { text: 'Payroll software for small firms in Pune' } }); await settle(t, 'sales-room');
+    assert.equal(t.core.settings.get('business.about'), 'Payroll software for small firms in Pune'); assert.equal(ran.length, 1);
+  } finally { await t.close(); }
+});
+
+test('website instead of typing: the read is the chat\'s reply, so a second send waits, Stop stops the read, and nothing lands after', async () => {
+  const { t, ran } = await siteDesk();
+  try {
+    let open; const gate = new Promise(r => { open = r; }); const signals = [];
+    t.core.modules.tools.set('web_read', { module: 'search', name: 'web_read', description: 'read a page', parameters: { type: 'object', properties: { url: { type: 'string' } } }, async run(args, call) { signals.push(call.signal); await gate; return { url: args.url, title: 'Acme', text: HOME }; } });
+    await t.call('/api/m/chat/chats/sales-room/send', { body: { text: CHIP, chip: true, needsBusiness: true } }); await settle(t, 'sales-room');
+    const first = await t.call('/api/m/chat/chats/sales-room/send', { body: { text: 'acme.example' } });
+    assert.equal(first.status, 200);
+    const busy = await t.call('/api/m/chat/chats/sales-room/messages');
+    assert.equal(busy.json.chat.running, true, 'the read shows as a reply still coming');
+    const again = await t.call('/api/m/chat/chats/sales-room/send', { body: { text: 'acme.example' } });
+    assert.equal(again.status, 409, 'a second send waits for the first read');
+    const st = await t.call('/api/m/chat/chats/sales-room/stop', { body: {} });
+    assert.equal(st.json.stopped, true);
+    assert.ok(signals.length === 1 && signals[0].aborted, 'Stop reaches the read');
+    open();
+    const s = await settle(t, 'sales-room');
+    assert.ok(!s.all.some(m => (m.cards || []).some(c => c.kind === 'business.site')), 'no proposal after Stop');
+    assert.equal(s.last.status, 'stopped');
+    assert.ok(!s.chat.settings.awaitBusiness); assert.equal(ran.length, 0);
+  } finally { await t.close(); }
 });

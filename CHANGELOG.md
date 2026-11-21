@@ -167,6 +167,10 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 - A new Doctor page: "Check my desk" checks models, keys, internet, disk, the local engine, updates, the port and your switches, with one plain line and a settings button for each problem. It changes nothing by itself.
 - Four advisor roles you can hire from "Not on your team": AI officer, Product lead, Sales lead and Co-founder.
 - A ready-made "Turnaround review" council: each advisor proposes a 30-day plan from what the desk knows, the Verdict shows where they agree and differ, and each step can be turned into a task. Proposals only.
+- You can give your website address in place of typing what you sell: the desk reads the site, proposes what you sell, who buys it and the tone from the pages, and saves only what you keep. Checked on a stand-in site only so far.
+- Rating an answer under a chat reply now works whether Bench is on or off.
+- Install cards for container images, Ollama models and tool servers say where the install comes from and name the package, and Settings says plainly that installing always asks.
+- The release zip records which module folders it shipped, and the Models page and first start say why a PC with no graphics card is offered the small model.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

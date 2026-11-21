@@ -111,7 +111,7 @@ export async function activate(ctx) {
     const image = IMAGES[lang];
     const job = await ctx.jobs.start({ kind: 'code.image', title: `Get the ${LANG_NAME[lang]} container image`, input: { image }, run: async (j) => {
       j.waiting('Waiting for you');
-      const d = await ctx.approval.request({ action: 'install', title: `Download the ${LANG_NAME[lang]} container image`, detail: `docker pull ${image}`, payload: { command: `docker pull ${image}` }, jobId: j.id, signal: j.signal });
+      const d = await ctx.approval.request({ action: 'install', title: `Download the ${LANG_NAME[lang]} container image`, detail: `docker pull ${image}`, from: 'Docker Hub', payload: { command: `docker pull ${image}` }, jobId: j.id, signal: j.signal });
       j.resumed('Downloading');
       if (!d.ok) return { ok: false, reason: d.reason };
       const r = await runChild({ cmd: 'docker', args: ['pull', image], cwd: ctx.workspace, env: process.env, timeoutMs: 15 * 60_000, signal: j.signal, track, maxOutputBytes: 1_000_000 });

@@ -104,9 +104,7 @@ async function render(el, ui, route) {
   let chats = []; let chat = null; let messages = []; let alive = true;
   const msgEls = new Map();       // message id -> element
   const streaming = new Map();    // message id -> text so far
-  let benchOn = false;            // rating controls appear under an answer only when Bench mode is on (it owns the store)
   const ratingCache = new Map();  // message id -> the owner's rating, so a repaint keeps it
-  try { await api('m/bench/state'); benchOn = true; } catch {}
   let curId = route?.parts?.[0] || null;
   if (!curId) { try { curId = localStorage.getItem('apd-chat') || 'everyone'; } catch { curId = 'everyone'; } }
   // the seconds on a waiting reply tick once a second
@@ -183,13 +181,12 @@ async function render(el, ui, route) {
     if (stick || i < 0) toBottom();
   };
   const RATE_REASONS = [['wrong facts', 'Wrong facts'], ['weak sources', 'Weak sources'], ['missed the point', 'Missed the point'], ['too long', 'Too long'], ['too short', 'Too short'], ['outdated', 'Outdated'], ['other', 'Other']];
-  /** Unobtrusive rating controls under an answer: thumbs, a research verdict, reason chips and a note. Stored by Bench, owner-only. */
+  /** Unobtrusive rating controls under an answer: thumbs, a research verdict, reason chips and a note. Stored by Chat, owner-only. */
   function answerRating(m) {
-    if (benchOn !== true) return null;
     const wrap = h('span', { class: 'rate', style: { display: 'inline-flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' } });
     let r = ratingCache.get(m.id) || { thumb: null, research: null, reasons: [], comment: '' };
     const chip = (label, active, onClick) => btn(label, { kind: active ? 'sm' : 'ghost sm', onClick });
-    const save = async (patch) => { r = { ...r, ...patch }; try { const res = await api('m/bench/ratings', { body: { targetType: 'answer', targetId: String(m.id), thumb: r.thumb, research: r.research, reasons: r.reasons, comment: r.comment } }); r = { thumb: null, research: null, reasons: [], comment: '', ...(res.rating || {}) }; ratingCache.set(m.id, r); paint(); } catch (e) { toast(e.message, 'err'); } };
+    const save = async (patch) => { r = { ...r, ...patch }; try { const res = await api('m/chat/ratings', { body: { messageId: m.id, thumb: r.thumb, research: r.research, reasons: r.reasons, comment: r.comment } }); r = { thumb: null, research: null, reasons: [], comment: '', ...(res.rating || {}) }; ratingCache.set(m.id, r); paint(); } catch (e) { toast(e.message, 'err'); } };
     function paint() {
       const open = r.thumb === 'down' || r.research === 'bad' || (r.reasons && r.reasons.length) || r.comment;
       const kids = [h('span', { class: 'sub', style: { fontSize: '11px' } }, 'Rate'),
@@ -203,7 +200,7 @@ async function render(el, ui, route) {
       wrap.replaceChildren(...kids);
     }
     paint();
-    if (!ratingCache.has(m.id)) { ratingCache.set(m.id, r); api(`m/bench/ratings/answer/${m.id}`).then((res) => { if (res.rating) { r = { thumb: null, research: null, reasons: [], comment: '', ...res.rating }; ratingCache.set(m.id, r); paint(); } }).catch(() => {}); }
+    if (!ratingCache.has(m.id)) { ratingCache.set(m.id, r); api(`m/chat/ratings/${m.id}`).then((res) => { if (res.rating) { r = { thumb: null, research: null, reasons: [], comment: '', ...res.rating }; ratingCache.set(m.id, r); paint(); } }).catch(() => {}); }
     return wrap;
   }
   function msgEl(m) {

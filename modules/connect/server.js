@@ -24,6 +24,39 @@ export function resultText(result) {
   }).filter(Boolean).join('\n');
   return text.length > MAX_RESULT_TEXT ? `${text.slice(0, MAX_RESULT_TEXT)}\n[cut]` : text;
 }
+// installSource: where a package runner fetches from, and the package it names (null for a program already on this PC).
+const REGISTRY = { npx: 'registry.npmjs.org', 'npx.cmd': 'registry.npmjs.org', bunx: 'registry.npmjs.org', pnpm: 'registry.npmjs.org', yarn: 'registry.npmjs.org', uvx: 'pypi.org', pipx: 'pypi.org', docker: 'Docker Hub' };
+const SUBCOMMAND = new Set(['dlx', 'exec', 'run', 'x']);
+const VALUE_FLAGS = new Set(['-e', '--env', '-v', '--volume', '--mount', '--name', '-p', '--publish', '--network', '-w', '--workdir', '-u', '--user', '--env-file', '--entrypoint', '--from', '--spec', '--package', '--python']);
+const NPM = new Set(['npx', 'npx.cmd', 'bunx', 'pnpm', 'yarn']);
+const SOURCE_FLAGS = new Set(['--from', '--spec', '--package']);
+const SHORT_HOSTS = { github: 'github.com', gist: 'gist.github.com', gitlab: 'gitlab.com', bitbucket: 'bitbucket.org' };
+/** The place a package spec itself names (a git or web address, a github: shorthand, a registry host in an image name,
+ *  a folder), or null when it is a plain name the runner looks up in its own registry. */
+function placeOf(spec, runner) {
+  const s = String(spec || '');
+  const url = s.match(/^(?:git\+)?[a-z][a-z0-9+.-]*:\/\//i);
+  if (url && !/^file:/i.test(s)) { try { return new URL(s.replace(/^git\+/i, '')).hostname || null; } catch { return null; } }
+  const scp = s.match(/^[\w.-]+@([\w.-]+):/); if (scp) return scp[1];
+  const short = s.match(/^([a-z]+):/i); if (short && SHORT_HOSTS[short[1].toLowerCase()]) return SHORT_HOSTS[short[1].toLowerCase()];
+  if (/^(?:file:|\.{1,2}[\\/]|[\\/]|[a-z]:[\\/])/i.test(s)) return 'a folder on this PC';
+  if (NPM.has(runner) && /^[^@./\s][^/\s]*\/[^/\s]+$/.test(s)) return 'github.com';   // npm reads user/repo as GitHub
+  if (runner === 'docker') { const first = s.split('/')[0]; if (s.includes('/') && (/[.:]/.test(first) || first === 'localhost')) return first; }
+  return null;
+}
+export function installSource(command, args = []) {
+  const runner = String(command || '').toLowerCase();
+  const registry = REGISTRY[runner]; if (!registry) return null;
+  let pkg = null; let spec = null;
+  for (let i = 0; i < args.length && !pkg; i++) {
+    const a = String(args[i]);
+    if (SOURCE_FLAGS.has(a) || (a === '-p' && NPM.has(runner))) { spec = spec || String(args[i + 1] ?? ''); i++; continue; }
+    if (VALUE_FLAGS.has(a)) { i++; continue; }
+    if (a.startsWith('-') || (i === 0 && SUBCOMMAND.has(a))) continue;
+    pkg = a;
+  }
+  return { from: placeOf(spec || pkg, runner) || registry, pkg };
+}
 export const safeName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'x';
 
 export async function activate(ctx) {
@@ -52,8 +85,8 @@ export async function activate(ctx) {
     let transport; let stderr = '';
     if (srv.kind === 'stdio') {
       if (!approvedStart.has(id)) {
-        const fetches = FETCHERS.has(srv.command.toLowerCase());
-        const d = await ctx.approval.request({ action: fetches ? 'install' : 'shell.run', title: `Start the MCP server ${srv.name}`, detail: fetches ? 'This may download the server package first.' : 'A program on this PC', payload: { command: srv.display }, jobId, signal });
+        const fetches = FETCHERS.has(srv.command.toLowerCase()); const src = fetches ? installSource(srv.command, srv.args) : null;
+        const d = await ctx.approval.request({ action: fetches ? 'install' : 'shell.run', title: `Start the MCP server ${srv.name}`, detail: fetches ? `This may download ${src?.pkg ? 'the package ' + src.pkg : 'the server package'} first.` : 'A program on this PC', from: src?.from, payload: { command: srv.display }, jobId, signal });
         if (!d.ok) throw Object.assign(new Error(d.reason === 'denied' ? 'You did not allow this server to start.' : `Not started (${d.reason}).`), { code: d.reason });
         approvedStart.add(id);
       }

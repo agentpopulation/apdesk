@@ -350,7 +350,7 @@ export class ModelDoor {
     if (t.provider === 'openrouter' && this.settings.get('openrouter.allowPaid') !== true && !isFreeOpenRouter(t.model)) throw Object.assign(new Error('Paid OpenRouter models are switched off. Only free models are used.'), { status: 402 });
     const headers = { 'content-type': 'application/json', ...t.headers };
     if (t.key) headers.authorization = 'Bearer ' + t.key;
-    if (t.provider === 'openrouter') { headers['http-referer'] = 'http://127.0.0.1:3960'; headers['x-title'] = 'AP Desk'; }
+    if (t.provider === 'openrouter') { headers['http-referer'] = 'http://127.0.0.1:3445'; headers['x-title'] = 'AP Desk'; }
     const r = await this.http(t.baseUrl + (t.chatPath ?? '/chat/completions'), { method: 'POST', headers, body: JSON.stringify(body), signal }, Math.max(1, Math.min(opts.timeoutMs || (t.via ? FREE_FIRST_MS : t.local ? LOCAL_FIRST_MS : 180000), leftMs)));
     if (!r.ok) throw await httpError(r);
     let text = ''; let toolCalls = []; let usage = null;

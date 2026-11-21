@@ -344,6 +344,7 @@ export const pages = {
           ui.h('div', { class: 'sub' }, facts),
           eng ? ui.h('div', { class: 'sub' }, eng) : null,
           hwLine ? ui.h('div', { class: 'sub' }, hwLine) : null,
+          plan.note ? ui.h('p', { class: 'sub', 'data-apd': 'engine-note' }, plan.note) : null,
           e.reason ? ui.h('p', { class: e.phase === 'failed' || e.phase === 'off' ? 'mdl-warn' : 'sub', 'data-apd': 'engine-reason' }, e.reason) : null,
           !plan.ok && plan.reason && !here ? ui.h('p', { class: 'mdl-warn' }, plan.reason) : null,
           ...dls,

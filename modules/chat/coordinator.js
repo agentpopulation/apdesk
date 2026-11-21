@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import { wrapUntrusted, detectInjection } from './untrusted.js';
 import { cleanReply, dropFileClaims, stepReason, plainWhy, cutAtWord } from './ui-text.js';
-import { aboutOf, onlyOwnBusiness, ASK_ABOUT } from './business.js';
+import { aboutOf, onlyOwnBusiness, ASK_ABOUT, ASK_ABOUT_SITE } from './business.js';
 import { FACT_TOOLS, PAGE_TOOLS, needsOutsideFacts, verifyTable, pagesFrom, dropPromises, unifyUnits, checkSentence } from './verify.js';
 
 /** Which agent does the work a tool stands for. Module id -> agent id; overridable per tool or module in kv 'handoff'. */
@@ -671,8 +671,8 @@ export function makeCoordinator(ctx, store, bus) {
       if (e.code === 'needs_about' && !signal.aborted) {
         // the ask leans on what the owner sells and he has not said it: one question, written here, and the chat waits for it
         store.setSettings(chatId, { awaitBusiness: { text: userText, at: new Date().toISOString() } });
-        reset(); text = ASK_ABOUT;
-        save({ text: ASK_ABOUT, status: 'done', label: null, cards: [...(store.message(reply.id)?.cards || []), NOT_NOW], meta: { steps, asksAbout: true, wait: null } });
+        reset(); text = ASK_ABOUT_SITE;
+        save({ text: ASK_ABOUT_SITE, status: 'done', label: null, cards: [...(store.message(reply.id)?.cards || []), NOT_NOW], meta: { steps, asksAbout: true, wait: null } });
         return reply;
       }
       const stopped = signal.aborted || e.code === 'aborted' || e.code === 'halted' || e.name === 'AbortError';

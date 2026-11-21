@@ -6,7 +6,7 @@ import { leavesThisPc, OFFLINE_LINE } from './guard.js';
 
 export async function activate(ctx) {
   const computers = new Map();     // agentId -> Computer
-  let deskPort = Number(process.env.APD_PORT) || 3960;
+  let deskPort = Number(process.env.APD_PORT) || 3445;
   const allowHosts = () => ctx.kv.get('allowHosts', []);
   const offline = () => ctx.settings.get('online') === false;   // read at every check, never cached
   const guardOpts = () => ({ allowHosts: allowHosts(), deskPort, offline: offline(), onVisit: (v) => ctx.modules.api('network')?.logVisit?.(v) });

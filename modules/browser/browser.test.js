@@ -38,11 +38,11 @@ test('Linux: Chromium by path, headless, no sandbox', () => {
   assert.equal(c.userDataDir, '/tmp/d/profiles/operator');
 });
 test('addresses: loopback, LAN, the desk and other schemes are refused; allowed hosts pass', () => {
-  for (const u of ['http://127.0.0.1:3960/', 'http://localhost/', 'http://[::1]:80/', 'http://10.1.2.3/', 'http://192.168.0.1/', 'http://172.20.0.1/', 'http://printer.local/', 'file:///C:/x', 'chrome://settings', 'about:config', 'javascript:alert(1)']) assert.ok(checkUrl(u, { deskPort: 3960 }), u);
+  for (const u of ['http://127.0.0.1:3445/', 'http://localhost/', 'http://[::1]:80/', 'http://10.1.2.3/', 'http://192.168.0.1/', 'http://172.20.0.1/', 'http://printer.local/', 'file:///C:/x', 'chrome://settings', 'about:config', 'javascript:alert(1)']) assert.ok(checkUrl(u, { deskPort: 3445 }), u);
   assert.equal(checkUrl('about:blank'), null);
   assert.equal(checkUrl('https://en.wikipedia.org/wiki/Paris'), null);
   assert.equal(checkUrl('http://192.168.1.50/', { allowHosts: ['192.168.1.50'] }), null);
-  assert.match(checkUrl('http://127.0.0.1:3960/', { allowHosts: ['127.0.0.1'], deskPort: 3960 }), /desk itself/);
+  assert.match(checkUrl('http://127.0.0.1:3445/', { allowHosts: ['127.0.0.1'], deskPort: 3445 }), /desk itself/);
   assert.equal(privateHost('172.32.0.1'), false);
   assert.equal(privateHost('::ffff:7f00:1'), true);
 });
@@ -76,4 +76,12 @@ test('module: routes need the owner; status answers; tool registered', async () 
     assert.equal((await t.call('/api/m/browser/operator/input', { body: { type: 'key', key: 'End' } })).status, 409);
     assert.deepEqual((await t.call('/api/m/browser/allow-host', { body: { host: 'http://192.168.1.50/x' } })).json.allowHosts, ['192.168.1.50']);
   } finally { await t.close(); }
+});
+
+test('the old port number is gone: the browser guard and the model referer use 3445', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
+  assert.match(src('./server.js'), /APD_PORT\) \|\| 3445/);
+  assert.doesNotMatch(src('./server.js'), /39[6]0/);
+  assert.match(src('../../app/core/model-door.js'), /'http-referer'\] = 'http:\/\/127\.0\.0\.1:3445'/);
 });
