@@ -1,15 +1,17 @@
 // Chat and Agents pages in a real browser: layout at 1920x1080 and 1366x768 in both themes, the panel folds,
 // a real reply shows the agent and model, ask 6 with the browser closed and reopened, Agents tabs and deep link.
 // node modules/chat/ui-check.mjs [screenshot dir]
+// node modules/chat/ui-check.mjs --panel [--tag=before|after] [screenshot dir]   only the side panel and reply bubble checks (no model needed)
 // Run from the repository root. Model keys come from the environment (GEMINI_API_KEY, OPENROUTER_API_KEY or another
 // provider's key listed in app/core/model-door.js); with none set, the built-in free router answers.
 import os from 'node:os'; import path from 'node:path'; import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { testDesk } from '../../test/helpers/desk.js';
 const { chromium } = createRequire(import.meta.url)('playwright');
-const out = process.argv[2] || path.join(os.tmpdir(), 'apd-chat-ui'); fs.mkdirSync(out, { recursive: true });
+const PANEL = process.argv.includes('--panel'); const TAG = (process.argv.find(a => a.startsWith('--tag=')) || '--tag=after').slice(6);
+const out = process.argv.slice(2).find(a => !a.startsWith('--')) || path.join(os.tmpdir(), 'apd-chat-ui'); fs.mkdirSync(out, { recursive: true });
 const want = ['chat', 'agents', 'models', 'memory', 'browser', 'files'].filter(id => fs.existsSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', id, 'module.json')));
-const t = await testDesk({ real: true, modules: want });
+const t = await testDesk({ real: !PANEL, modules: want });
 t.core.settings.set('provider.gemini.model', process.env.APD_GEMINI_MODEL || 'gemini-3.5-flash-lite');
 t.core.settings.set('onboarded', true);
 const results = []; const check = (name, ok, ev) => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}  ${String(ev || '').replace(/\s+/g, ' ').slice(0, 240)}`); };
@@ -21,6 +23,7 @@ const geo = (p) => p.evaluate(() => {
   const v = r('#view'), rail = r('.rail'), talk = r('.talk'), dr = r('#drawer'), msg = [...document.querySelectorAll('.msg.it')].pop()?.getBoundingClientRect();
   return { scroll: document.documentElement.scrollHeight - innerHeight, rail: rail?.width, talk: talk?.width, drawer: dr?.width, view: v?.width, padL: parseFloat(getComputedStyle(document.querySelector('.talk')).paddingLeft), padR: parseFloat(getComputedStyle(document.querySelector('.talk')).paddingRight), chatOverflow: getComputedStyle(document.querySelector('#chat')).overflowY, msgMax: msg?.width };
 });
+if (PANEL) { try { await runPanel(); } catch (e) { check('panel check ran', false, e.stack); } await browser.close(); await t.close(); console.log('screenshots:', out); process.exit(results.every(Boolean) ? 0 : 1); }
 try {
   let { ctx, p } = await newPage(1920, 1080);
   await p.goto(t.base + '/#/chat/everyone'); await p.waitForSelector('#chat'); await p.waitForTimeout(500);
@@ -129,3 +132,108 @@ try {
 finally { await browser.close(); await t.close(); }
 console.log('screenshots:', out);
 process.exit(results.every(Boolean) ? 0 : 1);
+
+// ---- side panel (folds by itself, pin, icon) and the reply bubble
+async function runPanel() {
+  const LABEL = 'Free API · Meta-Llama-3_3-70B-Instruct (OVHcloud AI Endpoints)';
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const open = async (w, h, theme, hash, { reply = false } = {}) => {
+    const ctx = await browser.newContext({ viewport: { width: w, height: h } }); const p = await ctx.newPage();
+    p.on('pageerror', e => errors.push(e.message));
+    await p.addInitScript((th) => { try { if (!sessionStorage.getItem('apd-init')) { localStorage.setItem('apd-theme', th); sessionStorage.setItem('apd-init', '1'); } } catch {} }, theme);
+    t.core.settings.set('theme', theme); t.core.settings.set('onboarded', true);
+    if (reply) await p.route(/\/chats\/[^/?]+\/messages/, async (route) => {
+      const r = await route.fetch(); const j = await r.json();
+      j.messages = [{ id: 9001, chatId: j.chat?.id, role: 'user', text: 'Hello', cards: [], status: 'done', meta: {}, at: Date.now() - 5000 },
+        { id: 9002, chatId: j.chat?.id, role: 'assistant', agentId: 'coordinator', text: 'Hello! How can I help you today?', cards: [], label: LABEL, status: 'done', meta: {}, at: Date.now() - 4000 }];
+      await route.fulfill({ response: r, json: j });
+    });
+    await p.goto(t.base + '/#/' + hash); await p.waitForSelector('#chat'); await p.waitForTimeout(400);
+    return { ctx, p };
+  };
+  const dw = (p) => p.evaluate(() => document.querySelector('#drawer').getBoundingClientRect().width);
+  const folded = async (p, ms) => { const t0 = Date.now(); await p.waitForFunction(() => document.querySelector('#drawer').getBoundingClientRect().width < 2, null, { timeout: ms }).catch(() => {}); return Date.now() - t0; };
+  const away = async (p, x) => { await p.mouse.move(x, 300); await p.evaluate(() => document.activeElement?.blur()); };
+  const composerClear = (p) => p.evaluate(() => {
+    const vw = innerWidth, vh = innerHeight; const ok = [];
+    for (const el of [document.querySelector('#ask'), [...document.querySelectorAll('#form .btn')].pop()]) {
+      const r = el.getBoundingClientRect(); const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      ok.push(r.left >= -0.5 && r.right <= vw + 0.5 && r.bottom <= vh + 0.5 && r.width > 20 && (top === el || el.contains(top)));
+    }
+    return ok.every(Boolean) && document.documentElement.scrollWidth <= innerWidth + 1;
+  });
+  for (const theme of ['light', 'dark']) {
+    for (const [w, h] of [[1366, 768], [390, 844]]) {
+      const tag = `${w}x${h} ${theme}`; const name = (s) => path.join(out, `chat-panel_${s}_${TAG}_${w}x${h}_${theme}.png`);
+      const { ctx, p } = await open(w, h, theme, 'chat/everyone');
+      if (TAG === 'before') { await p.waitForTimeout(4500); await p.screenshot({ path: name('1-open') }); await ctx.close(); continue; }   // screenshots only, for a before and after
+      if (w > 860) {
+        check(`${tag}: panel is shown when the chat opens`, await dw(p) > 250, `width ${await dw(p)}`);
+        await p.screenshot({ path: name('1-open') });
+        const ms = await folded(p, 6000);
+        check(`${tag}: panel folds by itself after about 3 seconds`, ms > 1500 && ms < 5000 && await dw(p) < 2, `${ms} ms`);
+        await p.waitForTimeout(400);
+        const icon = p.getByRole('button', { name: 'Show the panel' });
+        check(`${tag}: icon named "Show the panel" with that hover text shows when folded`, await icon.isVisible() && await icon.getAttribute('title') === 'Show the panel');
+        check(`${tag}: first fold shows the one-line hint`, await p.getByText('The panel folded away. Press this to open it.').isVisible());
+        check(`${tag}: message box and Send are clear while folded`, await composerClear(p));
+        await p.screenshot({ path: name('2-folded') });
+        await icon.click(); await p.waitForTimeout(450);
+        check(`${tag}: the icon opens the panel`, await dw(p) > 250);
+        check(`${tag}: message box and Send are clear while open`, await composerClear(p));
+        await p.mouse.move(w - 100, 300); await p.waitForTimeout(4500);
+        check(`${tag}: pointer or focus in the panel keeps it open`, await dw(p) > 250);
+        await away(p, 400);
+        check(`${tag}: it folds again 3 seconds after the pointer and focus leave`, await folded(p, 6000) < 5500 && await dw(p) < 2);
+        await p.getByRole('button', { name: 'Panel', exact: true }).click(); await p.waitForTimeout(450);
+        check(`${tag}: the Panel link beside the title still opens it`, await dw(p) > 250);
+        await p.getByRole('button', { name: 'Keep the panel open' }).click();
+        await away(p, 400); await p.waitForTimeout(4500);
+        check(`${tag}: pinned, it does not fold`, await dw(p) > 250);
+        await p.reload(); await p.waitForSelector('#chat'); await p.waitForTimeout(4500);
+        check(`${tag}: pinned, it stays open after a reload`, await dw(p) > 250 && await p.getByRole('button', { name: 'Let the panel fold away' }).count() === 1);
+        await p.screenshot({ path: name('3-pinned') });
+        await p.getByRole('button', { name: 'Let the panel fold away' }).click();
+        await away(p, 400); await folded(p, 6000);
+        const cid = await p.evaluate(() => { try { return localStorage.getItem('apd-chat'); } catch { return null; } }) || 'everyone';
+        await t.core.jobs.start({ kind: 'test', title: 'Panel check task', agentId: 'coordinator', chatId: cid, run: async () => { await wait(1500); return { summary: 'ok' }; } });
+        await p.waitForTimeout(1200);
+        check(`${tag}: a background task of this chat opens the folded panel`, await dw(p) > 250, `width ${await dw(p)}`);
+        await p.screenshot({ path: name('4-news') });
+      } else {
+        check(`${tag}: panel is closed at first and there is no fold icon (today's drawer)`, await dw(p) < 2 && !(await p.locator('.panel-show').isVisible()));
+        await p.getByRole('button', { name: 'Panel', exact: true }).click(); await p.waitForTimeout(450);
+        await p.screenshot({ path: name('1-drawer') });
+        const a = await dw(p); await p.waitForTimeout(4000);
+        check(`${tag}: the Panel link opens the drawer and it stays open`, a > 250 && await dw(p) > 250);
+        await p.evaluate(() => document.querySelector('.hd .mini').click()); await p.waitForTimeout(450);   // the open drawer covers the Panel link at this width, as it did before
+        check(`${tag}: message box and Send are clear`, await composerClear(p));
+        await p.screenshot({ path: name('2-closed') });
+      }
+      await ctx.close();
+    }
+  }
+  // the reply bubble: who line on its own line, then the reply, then one row with the rating and the time
+  for (const theme of ['light', 'dark']) {
+    for (const [w, h] of [[1220, 800], [1366, 768], [390, 844]]) {
+      const tag = `${w}x${h} ${theme}`;
+      const { ctx, p } = await open(w, h, theme, 'chat/everyone', { reply: true });
+      await p.waitForSelector('.msg.it .rate button'); await p.waitForTimeout(500);
+      await p.screenshot({ path: path.join(out, `chat-bubble_${TAG}_${w}x${h}_${theme}.png`) });
+      const g = await p.evaluate(() => {
+        const R = (e) => e.getBoundingClientRect();
+        const b = document.querySelector('.msg.it'); const br = R(b);
+        const who = b.querySelector('.who'), body = b.querySelector('.md'), foot = b.querySelector('.foot'), time = b.querySelector('.foot .time');
+        const lh = parseFloat(getComputedStyle(who).lineHeight) || 16;
+        const [a, m, f] = [who, body, foot].map(R);
+        const kids = [...foot.children].map(R);
+        const inside = [...b.querySelectorAll('.who,.md,.foot,.foot *')].every(e => { const r = R(e); return r.left >= br.left - 1 && r.right <= br.right + 1 && r.bottom <= br.bottom + 1; });
+        const rowOverlap = kids.some((x, i) => kids.some((y, j) => j > i && x.left < y.right - 1 && y.left < x.right - 1 && x.top < y.bottom - 1 && y.top < x.bottom - 1));
+        return { stacked: a.bottom <= m.top + 1 && m.bottom <= f.top + 1, oneLine: a.height < lh * 1.6, whoW: Math.round(a.width), bubbleW: Math.round(br.width), inside, rowOverlap, timeIn: !!time && R(time).right <= br.right + 1, title: who.title };
+      });
+      check(`${tag}: reply bubble: who line on one line and wide, nothing overlaps, nothing outside the bubble`, g.stacked && g.oneLine && g.whoW > 120 && g.inside && !g.rowOverlap && g.timeIn && /OVHcloud/.test(g.title), JSON.stringify(g));
+      await ctx.close();
+    }
+  }
+  check('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+}

@@ -209,6 +209,8 @@ Everything below was built and tested on Linux after the 0.1.0 release. The Wind
 - Version 0.1.1. The public copy is generic: an internal safety-findings file and a design mock-up page are removed, and the real company names in the maintainer-only test scripts are replaced with example firms on example.com-style domains. No keys, tokens, passwords or personal data are in the repository or its history.
 - Settings has a new Page reading card: pages that need a browser to show their text, or are very large, can be read through Firecrawl or Jina Reader if you switch one on. It is used only as a second try after the desk's own read came back empty, with a daily cap you set, and each result says "read through" that service.
 - A reading service is never used to get past a no: not for a never-open or unapproved ask-first site, not where robots.txt disallows the page (checked again after a redirect), not after the site refused or showed a bot check, and not while Offline or after Panic. The card says plainly that the page address is sent to the service and may count against an allowance. Checked once without a key on example.com; not checked with a paid key.
+- In Chat the right panel shows when a chat opens, folds away by itself after 3 seconds, and comes back from a small icon, a pin, or when a background task or a new file appears.
+- A reply now shows who answered on one clean line above the text, with the rating buttons and the time in one row below. On Windows this line had been squeezed into a thin strip over the reply.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

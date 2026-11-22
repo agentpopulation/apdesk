@@ -55,7 +55,23 @@ function css() {
 .chatv .msg.it .card{margin-top:8px}.chatv .msg.it .card table{font-size:13px}
 .chatv .msg .steps{font-size:11.5px;color:var(--dim);margin-top:4px;display:flex;flex-wrap:wrap;gap:4px 10px}
 .chatv .msg.sys{align-self:center;background:none;color:var(--dim);font-size:12px;padding:2px 8px;animation:none}
-.chatv .msg .foot{display:flex;gap:6px;align-items:center;margin-top:4px}
+.chatv .msg .foot{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;margin-top:6px}.chatv .msg .foot .time{margin-left:auto;white-space:nowrap}
+/* the shell's .who is the 30 px round avatar button; inside a bubble it is the line that names who answered */
+.chatv .msg .who{display:block;width:auto;max-width:100%;height:auto;padding:0;border-radius:0;opacity:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:3px}
+.chatv .msg .who .mdl{opacity:.75}
+/* chat side panel */
+.chatv .talk{position:relative}
+.chatv .panel-show{position:absolute;top:8px;right:max(10px,env(safe-area-inset-right,0px));z-index:2;width:30px;height:30px;padding:0;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:var(--dim);background:transparent;border:1px solid transparent}
+.chatv .panel-show:hover,.chatv .panel-show:focus-visible{color:var(--fg);background:var(--bubble)}
+.chatv .panel-show[hidden]{display:none}
+.chatv .panel-show svg,.chatv .panel-pin svg{width:17px;height:17px;display:block}
+.chatv .panel-show .new{position:absolute;top:3px;right:3px;width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px var(--bg,transparent)}
+.chatv .panel-show .new[hidden]{display:none}
+.chatv .panel-tip{position:absolute;top:44px;right:max(10px,env(safe-area-inset-right,0px));z-index:2;max-width:min(260px,calc(100% - 24px));padding:7px 11px;border-radius:10px;background:var(--card);color:var(--fg);border:1px solid var(--line);box-shadow:0 6px 20px rgba(0,0,0,.18);font-size:12.5px}
+.chatv .panel-tip[hidden]{display:none}
+.chatv .panel-pin{position:sticky;top:0;float:right;z-index:1;width:28px;height:28px;padding:0;margin:-6px -6px 0 0;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:var(--dim);background:transparent}
+.chatv .panel-pin:hover,.chatv .panel-pin:focus-visible{color:var(--fg);background:var(--bubble)}.chatv .panel-pin[aria-pressed="true"]{color:var(--accent)}
+@media (max-width:860px){.chatv .panel-show,.chatv .panel-tip,.chatv .panel-pin{display:none}}
 .chatv .msg .act{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .chatv .chat .empty{margin:auto}
 .chatv .drawer .line>div:first-child b,.chatv .drawer .line .d{overflow-wrap:anywhere;word-break:break-word}.chatv .drawer .line>.pill,.chatv .drawer .line>.btn{flex-shrink:0;align-self:flex-start}
@@ -90,16 +106,70 @@ async function render(el, ui, route) {
   const form = h('form', { class: 'compose', id: 'form' }, input, micBtn, sendBtn);
   const under = h('div', { class: 'under' });
   const drawerBody = h('div');
-  const drawer = h('aside', { class: 'drawer', id: 'drawer', 'aria-label': 'Chat panel' }, drawerBody);
+  const SVG = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+  const ICON_PANEL = SVG('<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M14.5 4.5v15"/>');
+  const ICON_PIN = SVG('<path d="M9 4h6l-1 5 3 3v1.5H7V12l3-3z"/><path d="M12 13.5V20"/>');
+  const pinBtn = h('button', { class: 'panel-pin', type: 'button', 'aria-pressed': 'false', html: ICON_PIN });
+  const drawer = h('aside', { class: 'drawer', id: 'drawer', 'aria-label': 'Chat panel' }, h('div', null, pinBtn, drawerBody));
+  const showBtn = h('button', { class: 'panel-show', type: 'button', title: 'Show the panel', 'aria-label': 'Show the panel', hidden: true, html: ICON_PANEL }, h('span', { class: 'new', hidden: true }));
+  const tip = h('div', { class: 'panel-tip', role: 'status', hidden: true }, 'The panel folded away. Press this to open it.');
   const fileIn = h('input', { type: 'file', hidden: true, multiple: true });
-  el.append(rail, h('div', { class: 'talk' }, h('div', { class: 'row hd' }, grp, grpN, panelBtn), chatEl, chips, form, under, fileIn), drawer);
+  el.append(rail, h('div', { class: 'talk' }, h('div', { class: 'row hd' }, grp, grpN, panelBtn), showBtn, tip, chatEl, chips, form, under, fileIn), drawer);
 
-  // On a narrow screen the panel covers the conversation, so it starts closed there and opens only from its button (not remembered).
+  // The panel shows when a chat opens and folds away 3 seconds later, unless it is pinned, the pointer is over it, focus is in it
+  // or one of its pop-ups is open. On a narrow screen it stays a drawer that opens only from its button (nothing folds by itself, nothing is remembered).
   const narrow = () => { try { return matchMedia('(max-width: 860px)').matches; } catch { return false; } };
-  let panelOpen = !narrow(); try { panelOpen = panelOpen && localStorage.getItem('apd-chat-panel') !== 'closed'; } catch {}
-  const setPanel = (open, { keep = true } = {}) => { panelOpen = open; drawer.classList.toggle('open', open); panelBtn.setAttribute('aria-pressed', String(open)); if (keep && !narrow()) { try { localStorage.setItem('apd-chat-panel', open ? 'open' : 'closed'); } catch {} } };
+  const store = {
+    get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+  };
+  const FOLD_MS = 3000;
+  let pinned = store.get('apd-chat-pin') === '1';
+  let panelOpen = !narrow() && (pinned || store.get('apd-chat-panel') !== 'closed');
+  let foldTimer = null; let tipTimer = null; let tipShown = false; let hasNew = false;
+  const newDot = showBtn.querySelector('.new');
+  const inUse = () => drawer.matches(':hover') || drawer.contains(document.activeElement) || !!document.querySelector('#modal:not([hidden])');
+  const paintPanel = () => {
+    drawer.classList.toggle('open', panelOpen); panelBtn.setAttribute('aria-pressed', String(panelOpen));
+    showBtn.hidden = panelOpen || narrow(); if (panelOpen) { hasNew = false; tip.hidden = true; clearTimeout(tipTimer); }
+    newDot.hidden = !hasNew;
+    pinBtn.setAttribute('aria-pressed', String(pinned));
+    const t = pinned ? 'Let the panel fold away' : 'Keep the panel open'; pinBtn.title = t; pinBtn.setAttribute('aria-label', t);
+  };
+  const armFold = () => {
+    clearTimeout(foldTimer); if (narrow() || pinned || !panelOpen) return;
+    foldTimer = setTimeout(() => {
+      if (!alive || pinned || !panelOpen) return;
+      if (inUse()) { if (document.querySelector('#modal:not([hidden])')) armFold(); return; }
+      panelOpen = false; paintPanel(); firstFoldTip();
+    }, FOLD_MS);
+  };
+  const firstFoldTip = () => {
+    if (tipShown || store.get('apd-chat-panel-tip') === '1') return;
+    tipShown = true; store.set('apd-chat-panel-tip', '1'); tip.hidden = false;
+    tipTimer = setTimeout(() => { tip.hidden = true; }, 6000);
+  };
+  // keep: the owner chose it, so it is remembered. Without it the panel only showed or folded by itself.
+  const setPanel = (open, { keep = true } = {}) => {
+    panelOpen = open; paintPanel();
+    if (keep && !narrow()) store.set('apd-chat-panel', open ? 'open' : 'closed');
+    if (open && !narrow()) armFold(); else clearTimeout(foldTimer);
+  };
+  // something new for the owner here: show the panel for a moment, or only mark the icon while he is typing
+  const panelNews = () => {
+    if (narrow() || !alive) return;
+    if (panelOpen) { armFold(); return; }
+    if (input.value.trim() && document.activeElement === input) { hasNew = true; paintPanel(); return; }
+    setPanel(true, { keep: false });
+  };
   setPanel(panelOpen, { keep: false });
   panelBtn.onclick = () => setPanel(!panelOpen);
+  showBtn.onclick = () => { setPanel(true); try { pinBtn.focus({ preventScroll: true }); } catch {} };
+  pinBtn.onclick = () => { pinned = !pinned; store.set('apd-chat-pin', pinned ? '1' : '0'); if (pinned) { clearTimeout(foldTimer); store.set('apd-chat-panel', 'open'); } else armFold(); paintPanel(); };
+  drawer.addEventListener('pointerenter', () => clearTimeout(foldTimer));
+  drawer.addEventListener('pointerleave', () => { if (!drawer.contains(document.activeElement)) armFold(); });
+  drawer.addEventListener('focusin', () => clearTimeout(foldTimer));
+  drawer.addEventListener('focusout', (e) => { if (!drawer.contains(e.relatedTarget) && !drawer.matches(':hover')) armFold(); });
 
   let chats = []; let chat = null; let messages = []; let alive = true;
   const msgEls = new Map();       // message id -> element
@@ -109,7 +179,7 @@ async function render(el, ui, route) {
   if (!curId) { try { curId = localStorage.getItem('apd-chat') || 'everyone'; } catch { curId = 'everyone'; } }
   // the seconds on a waiting reply tick once a second
   const waitTick = setInterval(() => { for (const w of chatEl.querySelectorAll('.wait[data-wait]')) { try { w.textContent = waitLine(JSON.parse(w.dataset.wait)); } catch {} } }, 1000);
-  ui.onLeave(() => { alive = false; clearInterval(waitTick); });
+  ui.onLeave(() => { alive = false; clearInterval(waitTick); clearTimeout(foldTimer); clearTimeout(tipTimer); });
 
   const openFile = (p) => { if (typeof ui.openFile === 'function') ui.openFile(p); else location.hash = '#/files?path=' + encodeURIComponent(p || ''); };
   const agentName = (id) => ui.agent(id)?.name || (id === 'coordinator' ? 'Coordinator' : 'Agent');
@@ -211,7 +281,8 @@ async function render(el, ui, route) {
     const live = m.status === 'streaming';
     const text = live ? liveText(cleanReply(streaming.get(m.id) ?? m.text), m.meta?.steps) : m.text;
     const wide = (m.cards || []).some(c => ['table', 'report', 'draft', 'progress', 'sources', 'answer-length'].includes(c.kind) || String(c.kind).includes('.'));
-    const who = h('span', { class: 'who' }, agentName(m.agentId), m.label ? [' · ', h('span', { class: 'mdl' }, m.label)] : null, m.meta?.note ? ' · ' + m.meta.note : null);
+    const whoText = agentName(m.agentId) + (m.label ? ' · ' + m.label : '') + (m.meta?.note ? ' · ' + m.meta.note : '');
+    const who = h('span', { class: 'who', title: whoText }, agentName(m.agentId), m.label ? [' · ', h('span', { class: 'mdl' }, m.label)] : null, m.meta?.note ? ' · ' + m.meta.note : null);
     const steps = (m.meta?.steps || []).filter(s => s.tool);
     const stepsEl = steps.length ? h('div', { class: 'steps' }, stepChips(steps, agentName, m.status).map(t => h('span', null, t))) : null;
     const waitEl = live && m.meta?.wait ? h('span', { class: 'wait', 'data-wait': JSON.stringify(m.meta.wait) }, waitLine(m.meta.wait)) : null;
@@ -220,7 +291,7 @@ async function render(el, ui, route) {
     const foot = tagText ? pill(tagText, tagText === 'Offline' ? 'wait' : 'stop') : null;
     const speak = !live && text && window.apdVoice?.speak ? btn('Read aloud', { kind: 'ghost sm', onClick: () => window.apdVoice.speak(text) }) : null;
     const rate = !live && m.status === 'done' ? answerRating(m) : null;
-    return h('div', { class: 'msg it' + (wide ? ' wide' : '') + (hasTable(text) ? ' tbl' : ''), 'data-role': 'assistant', 'data-agent-id': m.agentId || '', 'data-status': m.status, dataset: { id: m.id } }, who, body, stepsEl, ...(m.cards || []).map(c => cardEl(c, m)), foot || speak || rate ? h('div', { class: 'foot' }, foot, speak, rate, h('span', { class: 'sub', style: { fontSize: '11px' } }, fmt.time(m.at))) : null);
+    return h('div', { class: 'msg it' + (wide ? ' wide' : '') + (hasTable(text) ? ' tbl' : ''), 'data-role': 'assistant', 'data-agent-id': m.agentId || '', 'data-status': m.status, dataset: { id: m.id } }, who, body, stepsEl, ...(m.cards || []).map(c => cardEl(c, m)), foot || speak || rate ? h('div', { class: 'foot' }, foot, speak, rate, h('span', { class: 'sub time', style: { fontSize: '11px' } }, fmt.time(m.at))) : null);
   }
 
   // ---------- cards
@@ -434,12 +505,16 @@ async function render(el, ui, route) {
   }
 
   // ---------- panel
+  const seenOutputs = new Map();   // chat id -> output files already shown, so only a new one calls for attention
+  const jobSeen = new Map();       // job id -> last status
   async function paintDrawer() {
     if (!chat) return;
     const name = chatTitle(chat);
     const memberPills = chat.members.map(id => h('span', { class: 'pill' }, agentName(id)));
     const tasks = h('div'); const outputs = h('div');
     const files = uniqueOutputs(messages).slice(0, 8);
+    const seen = seenOutputs.get(chat.id); const keys = files.map(f => f.path || f.name);
+    seenOutputs.set(chat.id, new Set(keys)); if (seen && keys.some(k => !seen.has(k))) panelNews();
     outputs.replaceChildren(...(files.length ? files.map(f => line(f.name || baseName(f.path), `${m_name(f.by)} · ${fmt.when(f.at)}`, btn('Open', { kind: 'ghost sm', onClick: () => { openFile(f.path); } }))) : [h('p', { class: 'sub' }, 'Files made in this chat show here.')]));
     const swarm = ui.seg(['1', '5', '20', '50'], Math.max(0, ['1', '5', '20', '50'].indexOf(String(chat.settings.swarm || 5))), (v) => saveSettings({ swarm: Number(v) }));
     drawerBody.replaceChildren(
@@ -507,6 +582,7 @@ async function render(el, ui, route) {
     if (location.hash !== '#/chat/' + encodeURIComponent(chat.id)) history.replaceState(null, '', '#/chat/' + encodeURIComponent(chat.id));
     setRunning(!!chat.running);
     paintRail(); paintHeader(); paintMessages(); paintDrawer(); paintUnder();
+    if (!narrow() && !panelOpen && store.get('apd-chat-panel') !== 'closed') setPanel(true, { keep: false });
     if (await loadRenderers()) paintMessages();
   }
 
@@ -531,7 +607,7 @@ async function render(el, ui, route) {
   function scheduleStream(m) { pendingPaint.add(m.id); if (raf) return; raf = requestAnimationFrame(() => { raf = 0; for (const id of pendingPaint) { const mm = messages.find(x => x.id === id); if (mm) upsert(mm); } pendingPaint.clear(); }); }
   ui.on('approval', () => setTimeout(() => { if (!alive) return; const old = chatEl.querySelector(':scope > .approvals'); if (old) old.replaceWith(approvalsEl()); if (messages.some(m => (m.cards || []).some(c => c.kind === 'draft'))) repaintSoon(); }, 250));
   let jobTimer = null;
-  ui.on('job', (j) => { if (chat && j?.chatId === chat.id) { clearTimeout(jobTimer); jobTimer = setTimeout(paintDrawer, 400); } });
+  ui.on('job', (j) => { if (chat && j?.chatId === chat.id) { if (j.id != null && jobSeen.get(j.id) !== j.status) { jobSeen.set(j.id, j.status); panelNews(); } clearTimeout(jobTimer); jobTimer = setTimeout(paintDrawer, 400); } });
   ui.on('agents', () => setTimeout(() => { if (alive) { paintRail(); paintHeader(); paintUnder(); } }, 300));
   ui.on('security', () => setTimeout(paintUnder, 50));
   ui.on('settings', () => setTimeout(paintUnder, 50));
