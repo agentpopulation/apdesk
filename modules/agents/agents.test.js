@@ -175,3 +175,14 @@ test('a first hire posts a welcome note for its role in its own chat, written by
     assert.equal((await t.call('/api/m/chat/chats/dm-co-founder/messages')).json.messages.length, 1, 'no second note');
   } finally { await t.close(); }
 });
+
+test('every drawn avatar has eyes that can blink, or a motion hook; states are a closed set', async () => {
+  const { AVATARS, STATES } = await import('./ui-avatars.js');
+  for (const a of AVATARS) {
+    const eyed = a.art.includes('class="ey"');
+    assert.ok(eyed ? a.art.includes('class="pu"') : true, a.id + ': a blinking eye can also move its pupil');
+    assert.ok(!/<script|on\w+=|href|<text|<animate|<set /i.test(a.art), a.id + ' has no script and no SMIL timers');
+  }
+  assert.deepEqual([...STATES].sort(), ['failed', 'idle', 'waiting', 'working']);
+  assert.ok(AVATARS.filter(a => !a.art.includes('class="ey"')).every(a => /class="(tw|nd)"/.test(a.art) || ['planet', 'rocket', 'leaf'].includes(a.id)), 'eyeless drawings sway or twinkle');
+});

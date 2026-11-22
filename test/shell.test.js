@@ -153,7 +153,7 @@ test('tracker: each agent line shows its own avatar, drawn by the Agents page\'s
   assert.deepEqual(a.map(x => x.avatar), [{ look: 'owl', colour: 'teal' }, null]);
   const page = fs.readFileSync(path.join(ROOT, 'app', 'ui', 'pages', 'tracker.js'), 'utf8');
   assert.match(page, /import\('\/modules\/agents\/ui\.js'\)/, 'the helper is loaded, and a desk without it keeps the plain line');
-  assert.match(page, /avatarEl\?\.\(a, 's'\)|avatarEl \? avatarEl\(a, 's'\)/);
+  assert.match(page, /avatarEl\?\.\(a, 's'[,)]|avatarEl \? avatarEl\(a, 's'[,)]/);
 });
 
 test('tracker: a running job with no agent is the desk\'s own work and is said so; quiet upkeep and agents\' jobs are not', () => {

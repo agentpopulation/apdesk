@@ -232,6 +232,7 @@ Everything below was built and tested on Linux after the 0.1.0 release. The Wind
 - In a group, every agent answers from its own role or passes in one quiet line, and the Coordinator then writes a short summary. Under "This chat" you can choose "The Coordinator" to get one answer as before. Everyone answering takes more model calls and is slower on free models.
 - Every reply says who did the work in one line, taken from the record of the turn. Everyone always holds all your agents and cannot be edited, and its doubled title is gone.
 - Rating a reply is two dim thumbs beside the time, with the research rating, reasons and a note after a rating. Agents show their avatars in the chat list and in replies, and the chat panel has a Close button on a phone.
+- Agent avatars blink and their eyes follow the pointer a little; an agent that is working pulses softly, one waiting for you shows an amber dot. An "Avatar motion" switch on the agent's Profile tab turns it off for the whole desk, and nothing moves when the system asks for less motion.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

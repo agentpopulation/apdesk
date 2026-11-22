@@ -2,7 +2,7 @@
 // Tabs in order: Profile, Model (models module), Tools and skills, Memory (memory module), Computer (browser module).
 // The cause of "the agent profile looks so basic": a letter in a circle and bare rows. Now each agent has a drawn avatar
 // (ui-avatars.js) and the Profile tab is four cards: who it is, what it always does, what it is good at, what it did lately.
-import { AVATARS, COLOURS, LETTER, avatarEl as drawAvatar, avatarValue, defaultAvatar } from './ui-avatars.js';
+import { AVATARS, COLOURS, LETTER, MOTION_KEY, avatarEl as drawAvatar, avatarValue, defaultAvatar, setAvatarMotion } from './ui-avatars.js';
 
 const API = 'm/agents/';
 const TAB_ORDER = [['profile', 'Profile', 'agents'], ['model', 'Model', 'models'], ['tools', 'Tools and skills', 'agents'], ['memory', 'Memory', 'memory'], ['computer', 'Computer', 'browser']];
@@ -14,9 +14,11 @@ export const agentTabs = {
   tools: { title: 'Tools and skills', render: toolsTab },
 };
 
-/** The avatar element for an agent, for any page: avatarEl(agent, '' | 's' | 'l'). Marked with the agent's id so a new choice shows at once. */
-export function avatarEl(agent, size = '') { const el = drawAvatar(agent, size); el.dataset.agent = agent?.id || ''; return el; }
-const repaintAvatars = (a) => { for (const el of document.querySelectorAll('.agav[data-agent]')) if (el.dataset.agent === a.id) el.replaceWith(avatarEl(a, ['s', 'l'].find(c => el.classList.contains(c)) || '')); };
+/** The avatar element for an agent, for any page: avatarEl(agent, '' | 's' | 'l', state?). Marked with the agent's id so a new choice shows at once.
+ *  state (optional): 'working' | 'waiting' | 'idle' | 'failed', or { state }; with none the avatar is calm and its eyes stay alive. */
+export function avatarEl(agent, size = '', state = null) { const el = drawAvatar(agent, size, null, state); el.dataset.agent = agent?.id || ''; return el; }
+const STATE_OF = { run: 'working', slow: 'waiting', fail: 'failed', live: 'idle', off: 'idle' };   // the Agents page's own status classes
+const repaintAvatars = (a) => { for (const el of document.querySelectorAll('.agav[data-agent]')) if (el.dataset.agent === a.id) el.replaceWith(avatarEl(a, ['s', 'l'].find(c => el.classList.contains(c)) || '', el.dataset.state || null)); };
 
 async function render(el, ui, route) {
   const { h, api, btn, pill, toast, statusChip } = ui;
@@ -54,7 +56,7 @@ async function render(el, ui, route) {
     busy.hidden = !working; busy.textContent = `${working} working`;
     const cur = pickId();
     list.replaceChildren(...agents.map(a => { const [cls, txt] = jobLine(a); return h('button', { class: 'card hov acard' + (a.id === cur ? ' sel' : ''), type: 'button', 'aria-current': a.id === cur ? 'true' : null, onclick: () => ui.go('agents', a.id, route?.parts?.[1] || 'profile') },
-      avatarEl(a),
+      avatarEl(a, '', STATE_OF[cls]),
       h('span', { class: 'ac-t' }, h('span', { class: 'ac-n' }, h('b', null, a.name), statusChip(txt, cls)), h('span', { class: 'sub ac-r' }, a.role || 'No role yet'), h('span', { class: 'ac-m', title: 'The model it answers with' }, modelWords(a)))); }));
     off.replaceChildren(...(gone.length ? [h('div', { class: 'lbl', style: { marginTop: '6px' } }, 'Not on your team'), ...gone.map(a => h('div', { class: 'card acard offc' },
       avatarEl(a, 's'),
@@ -79,7 +81,7 @@ async function render(el, ui, route) {
     // the shared tab bar; it keeps the "seg" class the page checks look for
     const bar = h('div', { class: 'tabbar seg', role: 'tablist' }, avail.map(t => h('button', { type: 'button', role: 'tab', 'aria-selected': String(t[0] === tabId), 'aria-pressed': String(t[0] === tabId), onclick: () => ui.go('agents', a.id, t[0]) }, t[1])));
     det.replaceChildren(
-      h('div', { class: 'work-head' }, avatarEl(a, 'l'),
+      h('div', { class: 'work-head' }, avatarEl(a, 'l', STATE_OF[cls]),
         h('div', { class: 'wh-t' }, h('h3', null, a.name), h('div', { class: 'sub' }, a.role || 'No role yet'), h('div', null, statusChip(long, cls))),
         h('span', { class: 'grow' }),
         h('div', { class: 'row' }, a.id !== 'coordinator' ? btn('Retire', { kind: 'ghost', onClick: () => retire(a) }) : null, btn('Chat', { onClick: () => ui.go('chat', 'dm-' + a.id) }))),
@@ -153,6 +155,14 @@ async function profileTab(el, ui, agent) {
     hues.replaceChildren(...COLOURS.map(x => h('button', { type: 'button', class: 'avhue', title: x.label, 'aria-label': x.label, 'aria-pressed': String(c.colour === x.id), style: { background: `var(${x.token})` }, onclick: () => c.colour !== x.id && choose({ look: c.look, colour: x.id }) })));
   };
   paintLook();
+  // Avatar motion: one switch for the whole desk (the setting ui.avatarMotion, saved through the settings route); on unless switched off
+  const motionMark = savedMark();
+  const motionOn = ui.state.settings?.[MOTION_KEY] !== false;
+  const motion = ui.sw(motionOn, 'Avatar motion', async (on) => {
+    const ok = await motionMark.run(() => api('settings', { body: { [MOTION_KEY]: on } }));
+    if (ok) { if (ui.state.settings) ui.state.settings[MOTION_KEY] = on; setAvatarMotion(on); } else return false;
+  });
+  const motionRow = h('div', { class: 'stack', style: { marginTop: '10px' } }, h('div', { class: 'pf-h' }, h('span', { class: 'pf-l', style: { whiteSpace: 'nowrap' } }, 'Avatar motion'), motion, motionMark), h('p', { class: 'sub' }, 'Blinking eyes and small movements. It stays still if your system asks for less motion.'));
 
   const skills = h('div', { class: 'chips' }, ui.spinner());
   const lately = h('div', { class: 'group' }, h('div', { class: 'sub' }, 'Reading the records…'));
@@ -163,7 +173,7 @@ async function profileTab(el, ui, agent) {
       card('Who it is', field('Name', 'name'), field('Role', 'role', { empty: 'No role yet' }), field('Personality', 'personality', { multiline: true, empty: 'Not set: it talks plainly' })),
       card('What it always does', field('Standing instructions', 'instructions', { multiline: true, empty: 'None yet. Add what it should always do or never do.', quote: true }))),
     h('div', { class: 'stack' },
-      card('How it looks', h('div', { class: 'pf-h' }, h('span', { class: 'pf-l' }, 'Avatar and colour'), lookMark), grid, hues),
+      card('How it looks', h('div', { class: 'pf-h' }, h('span', { class: 'pf-l' }, 'Avatar and colour'), lookMark), grid, hues, motionRow),
       card('What it is good at', skills, h('p', { class: 'sub' }, 'Switch skills on or off in Tools and skills.')),
       card('What it did lately', lately))));
 
