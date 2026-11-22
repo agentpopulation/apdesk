@@ -221,14 +221,15 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
 
   // ================= D. where the agents went
   const BLOCK_CODES = new Set(['private', 'desk', 'bad_url', 'blocked', 'rule_never', 'rule_ask', 'rule_denied', 'denied']);
-  function logVisit({ url, via = 'read', who = null, error = null, blocked = null, finalUrl = null } = {}) {
-    if (who?.owner) return;
+  function logVisit({ url, via = 'read', who = null, error = null, blocked = null, finalUrl = null, through = null } = {}) {
+    if (who?.owner && !through) return;   // the owner's own reads are not logged, except a page whose address went to a reading service
     const u = String(url || '').slice(0, 1000); if (!u) return;
     let result = 'read', note = null;
     if (via === 'browser') { result = blocked ? 'blocked' : 'opened'; note = blocked ? String(blocked).slice(0, 200) : null; }
     else if (error) { result = BLOCK_CODES.has(error.code) || [401, 403, 429, 451].includes(Number(error.status)) ? 'blocked' : 'failed'; note = String(error.message || '').slice(0, 200); }
     else if (finalUrl && finalUrl !== u) note = 'Ended at ' + String(finalUrl).slice(0, 300);
-    const label = whoLabel(who);
+    if (through && !error) note = ['Read through ' + String(through).slice(0, 60), note].filter(Boolean).join('. ');
+    const label = who?.owner ? 'You' : whoLabel(who);
     ctx.db.run('INSERT INTO m_network_visits (at, url, host, via, who, result, note) VALUES (?, ?, ?, ?, ?, ?, ?)', new Date(clock()).toISOString(), u, hostOf(u), via === 'browser' ? 'Browser' : 'Page read', label, result, note);
     if (Math.random() < 0.01) ctx.db.run('DELETE FROM m_network_visits WHERE id <= (SELECT MAX(id) - 50000 FROM m_network_visits)');
   }

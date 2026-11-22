@@ -6,15 +6,21 @@ import TurndownService from 'turndown';
 import { UA, plain } from './providers.js';
 import { checkUrl, checkUrlDeep } from './guard.js';
 
-const MAX_BYTES = 8 * 1024 * 1024;
-const MAX_TEXT = 200_000;
+export const MAX_BYTES = 8 * 1024 * 1024;
+export const MAX_TEXT = 200_000;
 
 /** Kept for callers of the old name: the text-only check. The reader itself uses checkUrlDeep on every hop. */
 export const publicUrl = (raw, opts) => checkUrl(raw, opts);
 
-const CHALLENGE = /<title>\s*(Just a moment|Attention Required|Access denied|Are you a robot|Security check)|cf-chl-|challenge-platform|g-recaptcha|h-captcha|px-captcha|Please enable JS and disable any ad blocker/i;
+export const CHALLENGE = /<title>\s*(Just a moment|Attention Required|Access denied|Are you a robot|Security check)|cf-chl-|challenge-platform|g-recaptcha|h-captcha|px-captcha|Please enable JS and disable any ad blocker/i;
 
-async function readBody(res, signal) {
+// Seen only on a page with no readable text: the shell some vendors serve instead of the page (they also add these to real pages).
+const BLOCK_SHELL = /_Incapsula_Resource|captcha-delivery\.com|Request unsuccessful\. Incapsula/i;
+/** A bot check in a reading service's answer (markdown or markup, and the title it reports). */
+export const CHALLENGE_TITLE = /^\s*(Just a moment|Attention Required|Access denied|Are you a robot|Security check)/i;
+export const CHALLENGE_TEXT = /Verifying you are human|needs to review the security of your connection|Checking your browser before accessing|Enable JavaScript and cookies to continue|Please complete the security check/i;
+
+export async function readBody(res, signal) {
   const len = Number(res.headers.get('content-length') || 0);
   if (len > MAX_BYTES) throw Object.assign(new Error('The page is too large to read.'), { code: 'too_large' });
   const reader = res.body.getReader(); const chunks = []; let n = 0;
@@ -82,21 +88,26 @@ export async function readPage(fetchFn, rawUrl, { signal, timeoutMs = 20000, des
     cur = await checkUrlDeep(new URL(loc, cur).href, { deskPort, lookup });
   }
   const u = first; const finalUrl = cur.href;
+  try { return await readFinal(res, u, finalUrl, ac); } catch (e) { e.finalUrl ??= finalUrl; throw e; }   // where the redirects ended, for a second try
+}
+
+async function readFinal(res, u, finalUrl, ac) {
   if (res.status !== 200) { try { await res.body?.cancel(); } catch {} throw Object.assign(new Error(`The page answered ${res.status}.`), { code: 'http', status: res.status }); }
   const type = String(res.headers.get('content-type') || '').toLowerCase();
-  const buf = await readBody(res, ac);
+  const buf = await readBody(res, ac); let html = null;
   const isPdf = type.includes('application/pdf') || buf.subarray(0, 5).toString('latin1') === '%PDF-';
   let out;
   if (isPdf) {
     const p = await pdfToText(buf).catch((e) => { throw Object.assign(new Error('The PDF could not be read: ' + e.message), { code: 'unsupported' }); });
     out = { title: p.title || decodeURIComponent(u.pathname.split('/').pop() || u.hostname), text: p.text, markdown: p.text, kind: 'pdf', pages: p.pages };
   } else if (type.includes('html') || type.includes('xml') || !type) {
-    const html = buf.toString('utf8');
+    html = buf.toString('utf8');
     if (CHALLENGE.test(html.slice(0, 20000)) && html.length < 60000) throw Object.assign(new Error('The site answered with a bot check; not read (we never work around it).'), { code: 'blocked' });
     out = { ...htmlToDoc(html, finalUrl), kind: 'html' };
   } else if (type.startsWith('text/') || type.includes('json')) {
     const t = buf.toString('utf8'); out = { title: u.hostname + u.pathname, text: t, markdown: t, kind: 'text' };
   } else throw Object.assign(new Error(`This kind of file (${type.split(';')[0]}) is not read.`), { code: 'unsupported' });
+  if ((!out.text || out.text.length < 80) && html != null && (CHALLENGE.test(html) || BLOCK_SHELL.test(html))) throw Object.assign(new Error('The site answered with a bot check; not read (we never work around it).'), { code: 'blocked' });
   if (!out.text || out.text.length < 80) throw Object.assign(new Error('The page had no readable text.'), { code: 'empty' });
   if (out.text.length > MAX_TEXT) out.text = out.text.slice(0, MAX_TEXT);
   if (out.markdown.length > MAX_TEXT) out.markdown = out.markdown.slice(0, MAX_TEXT);
