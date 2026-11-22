@@ -46,10 +46,11 @@ export async function activate(ctx) {
         try { return await runDeep(ctx, j, { rid: id, question, agentId, chatId, store: reports }); }
         catch (e) {
           const st = stopped(e, j.signal) ? 'stopped' : 'failed';
-          reports.update(id, { status: st, step: st === 'stopped' ? 'Stopped' : 'Failed', error: e.message });
+          const why = ctx.plainFailure(e).line; if (st === 'failed') ctx.log('research failed', e?.message || e);   // the raw text in the log only
+          reports.update(id, { status: st, step: st === 'stopped' ? 'Stopped' : 'Failed', error: why });
           j.card({ kind: 'progress', id: 'research-' + id, title: 'Deep research', detail: st === 'stopped' ? 'Stopped' : 'Failed', progress: reports.get(id)?.progress || 0, status: st });
           if (st === 'failed') {                             // never end without a report or this message, in full, with a way to try again
-            j.card({ kind: 'text', text: `**The research did not finish.** ${e.message}` });
+            j.card({ kind: 'text', text: `**The research did not finish.** ${why}` });
             j.card({ kind: 'actions', actions: [{ label: 'Try again', tool: 'research_deep', args: { question } }] });
           }
           throw e;
@@ -58,6 +59,8 @@ export async function activate(ctx) {
     ctx.db.run('UPDATE m_research_reports SET job_id = ? WHERE id = ?', job.id, id);
     return { ...job, reportId: id };
   }
+  /** How many of a swarm's parts are read at the same time (kv 'swarmConcurrency'); the rest wait their turn. */
+  const atOnce = () => Math.max(1, Math.min(10, Number(ctx.kv.get('swarmConcurrency', 4)) || 4));
   async function swarm({ task, agents = 5, chatId = null, agentId = 'scout' } = {}) {
     refuseOffline();
     task = String(task || '').trim(); if (!task) throw new Error('Say what the swarm should do.');
@@ -65,16 +68,17 @@ export async function activate(ctx) {
     if (!ctx.agents.get(agentId)) agentId = 'scout';
     const id = rid('swm_');
     ctx.db.run('INSERT INTO m_research_swarms (id, task, size, status, chat_id, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?)', id, task, agents, 'running', chatId, now(), now());
-    const concurrency = Math.max(1, Math.min(10, Number(ctx.kv.get('swarmConcurrency', 4)) || 4));
+    const concurrency = atOnce();
     const job = await ctx.jobs.start({ kind: 'research.swarm', title: `Swarm of ${agents}: ${shortTitle(task, 70)}`, agentId, chatId, input: { task, agents, swarmId: id },
       async run(j) {
         try { return await runSwarm(ctx, j, { sid: id, task, agents, agentId, chatId, store: swarms, concurrency }); }
         catch (e) {
           const st = stopped(e, j.signal) ? 'stopped' : 'failed';
           const s = swarms.get(id); const tiles = (s?.tiles || []).map((t) => (['done', 'failed'].includes(t.status) ? t : { ...t, status: st === 'stopped' ? 'stopped' : 'failed', detail: st === 'stopped' ? 'Stopped' : 'Failed' }));
-          swarms.update(id, { status: st, error: e.message, tiles }); ctx.events.emit('research', { kind: 'swarm', id, tiles, done: true });
+          const why = ctx.plainFailure(e).line; if (st === 'failed') ctx.log('swarm failed', e?.message || e);
+          swarms.update(id, { status: st, error: why, tiles }); ctx.events.emit('research', { kind: 'swarm', id, tiles, done: true });
           j.card({ kind: 'progress', id: 'swarm-' + id, title: 'Swarm', detail: st === 'stopped' ? 'Stopped' : 'Failed', progress: 0, status: st });
-          if (st === 'failed') { j.card({ kind: 'text', text: `**The swarm did not finish.** ${e.message}` }); j.card({ kind: 'actions', actions: [{ label: 'Try again', tool: 'research_swarm', args: { task, agents } }] }); }
+          if (st === 'failed') { j.card({ kind: 'text', text: `**The swarm did not finish.** ${why}` }); j.card({ kind: 'actions', actions: [{ label: 'Try again', tool: 'research_swarm', args: { task, agents } }] }); }
           throw e;
         }
       } });
@@ -99,6 +103,7 @@ export async function activate(ctx) {
     if (!owner) return ctx.json(res, { error: 'Only the owner at this desk can start research here.' }, 403);
     try { ctx.json(res, await deep({ question: body?.question, chatId: body?.chatId || null })); } catch (e) { ctx.json(res, { error: e.message, code: e.code }, ['halted', 'offline'].includes(e.code) ? 409 : 400); }
   });
+  ctx.route('GET', '/swarm-size', async (req, res) => ctx.json(res, { atOnce: atOnce() }));   // what the chat panel says
   ctx.route('GET', '/swarms', async (req, res) => ctx.json(res, { swarms: ctx.db.all('SELECT id, task, size AS agentCount, status, label, created, updated, job_id FROM m_research_swarms ORDER BY created DESC LIMIT 50') }));
   ctx.route('GET', '/swarms/:id', async (req, res, { params }) => { const s = swarms.get(params.id); if (!s) return ctx.json(res, { error: 'No such swarm.' }, 404); ctx.json(res, { id: s.id, task: s.task, agents: s.size, status: s.status, tiles: s.tiles || [], answer: s.answer, sources: s.sources || [], label: s.label, error: s.error, created: s.created, jobId: s.job_id, oneModel: s.data?.oneModel ?? null, findings: s.data?.findings ?? null, scouts: s.data?.scouts ?? null }); });
   ctx.route('POST', '/swarm', async (req, res, { body, owner }) => {
@@ -113,7 +118,7 @@ export async function activate(ctx) {
     async run(args, call) { if (ctx.settings.get('online') === false) return { started: false, error: OFFLINE_LINE }; const j = await deep({ question: args.question, chatId: call.chatId, agentId: call.agentId === 'coordinator' ? 'scout' : call.agentId || 'scout' }); return { started: true, jobId: j.id, reportId: j.reportId, note: 'Deep research has started. Progress shows in this chat; the report opens on the Research page when it is ready.', go: '#/research/' + j.reportId }; },
   });
   ctx.tool({
-    name: 'research_swarm', description: 'Split a research job across several agents working in parallel (1 to 50), then merge their findings into one answer with sources. Runs as a background job.',
+    name: 'research_swarm', description: `Split a research job into parts (agents: 1 to 50), read by agents up to ${atOnce()} at a time while the rest wait their turn, then merge their findings into one answer with sources. Runs as a background job.`,
     parameters: { type: 'object', properties: { task: { type: 'string' }, agents: { type: 'integer', minimum: 1, maximum: 50 } }, required: ['task'] },
     async run(args, call) { if (ctx.settings.get('online') === false) return { started: false, error: OFFLINE_LINE }; const j = await swarm({ task: args.task, agents: args.agents || 5, chatId: call.chatId, agentId: call.agentId === 'coordinator' ? 'scout' : call.agentId || 'scout' }); return { started: true, jobId: j.id, swarmId: j.swarmId, note: 'The swarm has started. Each agent shows as a tile on the Research page, Swarm tab.', go: '#/research/swarm/' + j.swarmId }; },
   });

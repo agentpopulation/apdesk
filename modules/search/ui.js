@@ -5,7 +5,7 @@ export const settings = {
     const { h, api, card, btn, sw, toast, empty } = ui;
     const line = (...a) => { const l = ui.line(...a); l.style.flexWrap = 'wrap'; l.firstChild.style.minWidth = '240px'; return l; };
     const box = h('div'), capBox = h('div'), tryBox = h('div');
-    const act = async (fn, ok) => { try { const r = await fn(); if (ok) toast(ok, 'ok'); await paint(); return r; } catch (e) { toast(e.message, 'err'); } };
+    const act = async (fn, ok) => { try { const r = await fn(); if (ok) toast(ok, 'ok'); await paint(); return r; } catch (e) { toast(e, 'err'); return false; } };
     const pw = (ph) => h('input', { type: 'password', placeholder: ph, autocomplete: 'new-password', style: { width: '220px' } });
     let notice = h('p', { class: 'sub' });
 
@@ -19,19 +19,25 @@ export const settings = {
       return line(s.label, desc,
         h('span', { class: 'sub' }, 'Use'), sw(s.switchedOn, `Use ${s.label}`, (on) => act(() => api('m/search/readers', { body: { id: s.id, on } }))),
         s.keylessLine ? h('span', { class: 'sub' }, 'Without a key') : null, s.keylessLine ? sw(s.keyless, `${s.label} without a key`, (on) => act(() => api('m/search/readers', { body: { id: s.id, keyless: on } }))) : null,
-        key, btn('Save', { kind: 'ghost sm', onClick: () => act(saveKey, `${s.label} key saved`) }),
+        key, btn('Save', { kind: 'ghost sm', onClick: () => key.value.trim() ? act(saveKey, `${s.label} key saved`) : ui.needs(key, 'Paste the key first.') }),
         s.hasKey && s.keyFrom === 'here' ? btn('Remove', { kind: 'ghost sm', onClick: () => act(() => api('m/search/readers', { body: { id: s.id, removeKey: true } }), 'Key removed') }) : null,
         btn('Test', { kind: 'ghost sm', onClick: async () => { try { const r = await api('m/search/readers/test', { body: { id: s.id } }); toast(r.ok ? r.note : r.error, r.ok ? 'ok' : 'err'); await paint(); } catch (e) { toast(e.message, 'err'); } } }),
         h('a', { href: s.signup, target: '_blank', rel: 'noopener noreferrer', class: 'sub' }, 'Get a key'));
     };
 
     const paint = async () => {
-      let d; try { d = await api('m/search/readers'); } catch (e) { box.replaceChildren(empty(e.message)); return; }
+      let d; try { d = await api('m/search/readers'); } catch (e) { box.replaceChildren(empty(ui.plainError(e))); return; }
       notice.textContent = d.notice;
       box.replaceChildren(...d.services.map(row));
       const cap = h('input', { type: 'number', min: 1, max: 1000, value: d.cap, style: { width: '90px' } });
       capBox.replaceChildren(line('Daily cap', 'Pages each service may read in one day. The count starts again at midnight in your time zone.', cap,
-        btn('Save', { kind: 'ghost sm', onClick: () => act(() => api('m/search/readers/cap', { body: { cap: Number(cap.value) } }), 'Cap saved') })));
+        btn('Save', { kind: 'ghost sm', onClick: async () => {
+          // a cap the desk cannot keep is refused beside the box, and the cap in use stays in it
+          const n = Number(cap.value);
+          if (cap.value.trim() === '' || !(n >= 1 && n <= 1000)) { cap.value = String(d.cap); return ui.needs(cap, 'Type a number from 1 to 1000.'); }
+          try { await api('m/search/readers/cap', { body: { cap: n } }); } catch (e) { cap.value = String(d.cap); return ui.needs(cap, ui.plainError(e)); }
+          toast('Cap saved', 'ok'); await paint();
+        } })));
     };
 
     // Try a page: read it the desk's own way; when that comes back empty, offer "Read with <service>".
@@ -39,8 +45,9 @@ export const settings = {
     const out = h('div', { class: 'sub' });
     const show = (r) => { out.replaceChildren(r.error ? r.error : `Read "${r.title}"${r.through ? '' : ' the desk\'s own way'}. ${plural(r.text.length, 'character')}.`); };
     const readIt = async (withId) => {
+      if (!addr.value.trim()) return ui.needs(addr, 'Type the address of a page first.');
       out.textContent = 'Reading…';
-      let r; try { r = await api('m/search/read?url=' + encodeURIComponent(addr.value.trim()) + (withId ? '&with=' + encodeURIComponent(withId) : '')); } catch (e) { r = e.data?.error ? e.data : { error: e.message }; }
+      let r; try { r = await api('m/search/read?url=' + encodeURIComponent(addr.value.trim()) + (withId ? '&with=' + encodeURIComponent(withId) : '')); } catch (e) { r = e.data?.error ? { ...e.data, error: ui.plainError(e) } : { error: ui.plainError(e) }; }
       show(r);
       for (const s of r.readWith || []) out.append(' ', btn(`Read with ${s.label}`, { kind: 'ghost sm', onClick: () => readIt(s.id) }));
       if (withId) await paint();

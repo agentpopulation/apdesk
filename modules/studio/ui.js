@@ -12,7 +12,7 @@ export const pages = {
       if (tab === 0) await sites(); else await replay();
 
       async function sites() {
-        const brief = h('textarea', { placeholder: 'A short brief, e.g. "A one-page site for Asha’s Bakery in Pune: fresh sourdough and cakes, open 7 to 7, order by phone."', style: { minHeight: '110px' } });
+        const brief = h('textarea', { placeholder: 'A short brief, for example "A one-page site for a neighbourhood bakery: fresh bread and cakes, open 7 to 7, order by phone."', style: { minHeight: '110px' } });
         const name = h('input', { type: 'text', placeholder: 'Folder name (optional)' });
         const status = h('div');
         const list = h('div', { class: 'stack' });

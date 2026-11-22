@@ -17,7 +17,7 @@ function install() {
       try { blocked = d.isOffline() && !d.allows(url); } catch { blocked = false; }
       if (blocked) {
         try { d.onRefused?.(url); } catch {}
-        return Promise.reject(Object.assign(new Error(`The desk is offline, so ${url.hostname} was not called.`), { code: 'offline' }));
+        return Promise.reject(Object.assign(new Error(`The desk is offline, so ${url.hostname} was not called.` + (isLocalAddress(url.href) ? '' : ' It is not on this PC or your own network.')), { code: 'offline' }));
       }
     }
     // an allowed local address must not hand the call on to an outside one while Offline
@@ -72,11 +72,33 @@ export function allowLocalEngine(url) {
   return () => localEngines.delete(k);
 }
 
-/** The addresses a desk may still call while Offline: itself, Ollama, the desk's local engine, and the owner's LAN model nodes. */
+/** What counts as local while Offline, in the words the pages show when an address is not. */
+export const LOCAL_WORDS = 'Local means this PC, an address on your own network (10.x, 172.16 to 172.31, 192.168.x, 169.254.x, 100.64 to 100.127 used by mesh VPNs, or fc00:: to fdff:: and fe80::), or a local name such as nas, nas.local, .lan, .home, .home.arpa, .internal, .localdomain, .ts.net or .fritz.box.';
+const LOCAL_SUFFIX = /\.(local|lan|home|home\.arpa|internal|localdomain|ts\.net|fritz\.box)$/;
+const privateV4 = (a, b) => a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127);
+/** True for an address on this PC or the owner's own network: loopback, a private, link-local or carrier-grade (mesh VPN)
+ *  address, an IPv4 one written as IPv6, or a plain local name (one word, or one of the home and VPN endings above).
+ *  Anything else is on the internet. */
+export function isLocalAddress(u) {
+  let x; try { x = new URL(String(u)); } catch { return false; }
+  const host = x.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (LOOP.has(host) || LOOP.has(x.hostname)) return true;
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (v4) return privateV4(Number(v4[1]), Number(v4[2]));
+  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);   // ::ffff:192.168.1.5, as the address parser writes it
+  if (mapped) { const hi = parseInt(mapped[1], 16); return privateV4(hi >> 8, hi & 255); }
+  if (host.includes(':')) return /^(fc|fd|fe8|fe9|fea|feb)/.test(host) || host === '::1';
+  return !host.includes('.') || LOCAL_SUFFIX.test(host);
+}
+
+/** The addresses a desk may still call while Offline: itself, Ollama, the desk's local engine, and the owner's LAN model
+ *  nodes, each only when it is on this PC or the owner's own network: an outside address set as Ollama or a node does not
+ *  open a way out while Offline. */
 export function offlineAllowList({ settings, port }) {
   const list = new Set(localEngines);
   if (port()) list.add(hostKey(`http://127.0.0.1:${port()}`));
-  const o = origin(settings.get('ollama.baseUrl')); if (o) list.add(o);
-  for (const n of settings.get('network.lanNodes') || []) { const x = origin(n && n.baseUrl); if (x) list.add(x); }
+  const local = (u) => isLocalAddress(u) ? origin(u) : null;
+  const o = local(settings.get('ollama.baseUrl')); if (o) list.add(o);
+  for (const n of settings.get('network.lanNodes') || []) { const x = local(n && n.baseUrl); if (x) list.add(x); }
   return list;
 }

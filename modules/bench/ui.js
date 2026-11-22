@@ -10,7 +10,7 @@ export const spendWords = (g, fmt) => g.daySpendMinor > 0 ? `${fmt.money(g.daySp
 const spendLine = (ui, g) => spendWords(g, ui.fmt);
 /** The owner's own name for Bench's menu place (Settings, Menu), which the shell gives a page as ui.label; else "Bench". */
 export const placeName = (ui) => (typeof ui?.label === 'function' && ui.label('bench', 'Bench')) || 'Bench';
-const modeName = (ui) => { const n = placeName(ui); return n === 'Bench' ? 'Bench mode' : n; };
+const modeName = (ui) => placeName(ui);   // one name everywhere: the menu, the settings tab, the Store card and the switch
 /** The usage rows as the kit's table reads them: columns { key, label } and one object per row. */
 export function usageTable(u, fmt) {
   const cols = [{ key: 'agent', label: 'Agent' }, { key: 'calls', label: 'Calls' }, { key: 'errors', label: 'Errors' }, { key: 'tokens', label: 'Tokens' }, { key: 'spend', label: 'Spend' }];
@@ -58,7 +58,7 @@ export function stepsBlock(ui, jobId) {
       try { const r = await ui.api(`m/bench/steps/${encodeURIComponent(jobId)}`);
         body.replaceChildren(h('p', { class: 'sub' }, "The desk's record of what ran — times, models and pages. Not a model's own reason."),
           ...(r.steps.length ? r.steps.map((s, i) => h('div', { class: 'sub', style: { overflowWrap: 'anywhere' } }, `${i + 1}. ${s.action}${s.model ? ' · ' + s.model : ''}${s.ms ? ' · ' + Math.round(s.ms) + ' ms' : ''}${s.outcome ? ' — ' + s.outcome : ''}`)) : [h('p', { class: 'sub' }, 'Nothing was recorded for this one.')]));
-      } catch (e) { body.replaceChildren(h('p', { class: 'sub' }, e.message)); }
+      } catch (e) { body.replaceChildren(h('p', { class: 'sub' }, ui.plainError(e))); }
     }
   } });
   return h('div', null, toggle, body);
@@ -158,7 +158,7 @@ function todoView(ui, todo, { ended = false } = {}) {
 async function rulebookView(el, ui) {
   const { h, card, btn, line, empty, toast } = ui;
   const paint = async () => {
-    let r; try { r = await ui.api(API + 'rules'); } catch (e) { return put(el, empty(e.message)); }
+    let r; try { r = await ui.api(API + 'rules'); } catch (e) { return put(el, empty(ui.plainError(e))); }
     const act = (id, a, body = {}) => async () => { try { await ui.api(`${API}rules/${id}/${a}`, { body }); paint(); } catch (e) { toast(e.message, 'err'); } };
     const edit = (x) => async () => { const t = await ui.ask('Edit the rule', { value: x.text, multiline: true }); if (t != null) act(x.id, 'edit', { text: t })(); };
     const where = (x) => `${x.kindWord} · ${x.file}, line ${x.line}`;
@@ -187,7 +187,7 @@ export const pages = {
       function paintGate(v) {
         const g = v.gate;
         put(gateEl, card({ 'data-apd': 'bench-gate' }, line(g.ready ? `Spend: ${g.optionWord}` : 'Spend: not chosen',
-          g.ready ? `${spendLine(ui, g)} · session ${g.limitStatus.used.sources}/${g.limits.sources} sources, ${g.limitStatus.used.steps}/${g.limits.steps} steps${g.invalid ? ' · cap reached, winding to free' : g.limitStatus.winding ? ' · winding down' : ''}` : `${B} will not run until you choose how it may spend.`,
+          g.ready ? `${spendLine(ui, g)} · session ${g.limitStatus.used.sources} of ${ui.plural(g.limits.sources, 'source')}, ${g.limitStatus.used.steps} of ${ui.plural(g.limits.steps, 'step')}${g.invalid ? ' · cap reached, winding to free' : g.limitStatus.winding ? ' · winding down' : ''}` : `${B} will not run until you choose how it may spend.`,
           btn(g.ready ? 'Change' : 'Choose', { kind: g.ready ? 'ghost sm' : 'sm', onClick: () => ui.go('settings', 'bench') }))));
       }
       async function paintNow() {
@@ -197,7 +197,7 @@ export const pages = {
         put(now, !v.settings.enabled ? line(`${BM} is off`, `Switch it on in ${B} settings.`, btn('Settings', { kind: 'ghost sm', onClick: () => ui.go('settings', 'bench') }))
           : !v.gate.ready ? line('Waiting for your spend choice', `Choose Local only, Free, or Paid, capped in ${B} settings.`, btn('Choose', { kind: 'sm', onClick: () => ui.go('settings', 'bench') }))
           : r ? [line(`Running since ${fmt.when(r.started)}`, `Stage ${r.tier} of 4${r.now ? ' · ' + r.now : ''}${r.waiting ? ' · ' + r.waiting : ''}`, pill('Working', 'run')),
-            line('Used so far', `${r.used.calls} model calls, ${r.used.pages} pages read, ${Math.round((r.used.ms || 0) / 60000)} minutes of work`),
+            line('Used so far', `${ui.plural(r.used.calls, 'model call')}, ${ui.plural(r.used.pages, 'page')} read, ${ui.plural(Math.round((r.used.ms || 0) / 60000), 'minute')} of work`),
             todoView(ui, r.todo),
             v.keepAwake?.held ? h('p', { class: 'sub' }, 'Keeping this PC awake while work is queued.') : null,
             h('p', { class: 'sub' }, 'It stops as soon as you use the desk.')]
@@ -248,7 +248,7 @@ export const pages = {
         stepsBlock(ui, c.jobId),
         ratingBar(ui, c.kind === 'bench' ? 'bench_item' : 'job', c.id, c.rating));
       async function paint() {
-        let p, u; try { [p, u] = await Promise.all([ui.api(API + 'return'), ui.api(API + 'usage')]); } catch (e) { return put(wrap, empty(e.message)); }
+        let p, u; try { [p, u] = await Promise.all([ui.api(API + 'return'), ui.api(API + 'usage')]); } catch (e) { return put(wrap, empty(ui.plainError(e))); }
         const hl = p.headline;
         const spend = hl.spendTodayMinor > 0 ? fmt.money(hl.spendTodayMinor, hl.currency) : 'No paid spend';
         const usageCard = u.agents.length ? card(h('div', { class: 'row' }, h('h3', { style: { margin: 0 } }, 'Usage today'), h('span', { class: 'grow' }), btn('Download CSV', { kind: 'ghost sm', onClick: downloadCsv })),
@@ -290,17 +290,29 @@ export const pages = {
 
 export const settings = {
   bench: {
-    title: 'Bench mode',
+    title: 'Bench',
     async render(el, ui) {
       const { h, card, line, btn, sw, seg, toast } = ui;
       const box = h('div', { class: 'stack' }); el.append(box);
-      const save = async (patch) => { await ui.api(API + 'settings', { body: patch }); paint(); };
-      const saveGate = async (patch) => { await ui.api(API + 'spendgate', { body: patch }); paint(); };
+      const save = async (patch) => { await ui.api(API + 'settings', { body: patch }); ui.toast('Saved.', 'ok'); paint(); };
+      const saveGate = async (patch) => { try { await ui.api(API + 'spendgate', { body: patch }); ui.toast('Saved.', 'ok'); } finally { paint(); } };
       async function paint() {
         const v = await ui.api(API + 'state'); const c = v.settings; const g = v.gate; const cur = g.currency; const B = placeName(ui); const BM = modeName(ui);
         const optSeg = seg(['Local only', 'Free', 'Paid, capped'], g.options.indexOf(g.option), (_, i) => { if (g.options[i] === 'paid' && !v.paidAllowed) { toast('Paid models are not allowed for any provider in Models, so Bench cannot use them.', 'err'); paint(); return; } saveGate({ option: g.options[i] }).catch((e) => toast(e.message, 'err')); });
-        const capInput = (label, minorVal, key) => h('label', { class: 'row', style: { gap: '6px' } }, h('span', { class: 'sub' }, label), h('input', { type: 'number', min: '0', value: String((minorVal || 0) / 100), style: { width: '110px' }, 'aria-label': `${label} cap in ${cur}`, onchange: (e) => saveGate({ [key]: Math.round(Number(e.target.value) * 100) }).catch((er) => toast(er.message, 'err')) }));
-        const limInput = (label, val, key) => h('label', { class: 'row', style: { gap: '6px' } }, h('span', { class: 'sub' }, label), h('input', { type: 'number', min: '1', value: String(val), style: { width: '90px' }, 'aria-label': `${label} limit`, onchange: (e) => saveGate({ limits: { [key]: Number(e.target.value) } }).catch((er) => toast(er.message, 'err')) }));
+        // A number box saves only a number it can keep: an empty box or a typo is refused beside the box with the reason,
+        // the old value stays, and "Saved." shows only after the desk saved it.
+        const numInput = (label, shown, { min, width, aria, words, patch }) => {
+          const f = h('input', { type: 'number', min: String(min), value: String(shown), style: { width }, 'aria-label': aria });
+          f.addEventListener('change', async () => {
+            const raw = f.value.trim(); const n = Number(raw);
+            if (f.validity?.badInput || raw === '' || !Number.isFinite(n) || n < min) { f.value = String(shown); return ui.needs(f, words); }
+            try { await ui.api(API + 'spendgate', { body: patch(n) }); } catch (e) { f.value = String(shown); return ui.needs(f, ui.plainError(e)); }
+            toast('Saved.', 'ok'); paint();
+          });
+          return h('label', { class: 'row', style: { gap: '6px' } }, h('span', { class: 'sub' }, label), f);
+        };
+        const capInput = (label, minorVal, key) => numInput(label, (minorVal || 0) / 100, { min: 0, width: '110px', aria: `${label} cap in ${cur}`, words: 'Type an amount, 0 or more. 0 means no cap.', patch: (n) => ({ [key]: Math.round(n * 100) }) });
+        const limInput = (label, val, key) => numInput(label, val, { min: 1, width: '90px', aria: `${label} limit`, words: 'Type a whole number, 1 or more.', patch: (n) => ({ limits: { [key]: Math.round(n) } }) });
         const battery = h('select', { 'aria-label': 'Stop on battery below', onchange: (e) => save({ battery: Number(e.target.value) }).catch((er) => toast(er.message, 'err')) }, [0, 10, 20, 30, 40, 50, 60].map((n) => h('option', { value: String(n), selected: n === c.battery }, n ? `${n}%` : 'Never')));
         const site = h('input', { type: 'text', value: c.site, placeholder: 'yourbusiness.example', 'aria-label': 'Your site address', onchange: (e) => save({ site: e.target.value }).catch((er) => toast(er.message, 'err')) });
         put(box,
@@ -315,9 +327,9 @@ export const settings = {
           card(h('h3', null, 'Spending'),
             h('p', { class: 'sub' }, `${B} must have a money choice before it runs. Keys and paid switching stay in Models; "Paid, capped" only lets ${B} prefer a paid route where you already allow paid use there.`),
             line(`How ${B} may spend`, g.ready ? g.optionWord : `Not chosen yet. ${B} will not run until you choose.`, optSeg),
-            g.option === 'paid' ? line('Caps', `Local first; paid only when it clearly helps, up to these caps in ${cur}. 0 means no cap. At a cap ${B} winds down to free.`, h('div', { class: 'row', style: { gap: '12px', flexWrap: 'wrap' } }, capInput('Per session', g.capSessionMinor, 'capSessionMinor'), capInput('Per day', g.capDayMinor, 'capDayMinor'))) : null,
+            g.option === 'paid' ? line('Caps', (g.capSessionMinor || g.capDayMinor) ? `Local first; paid only when it clearly helps, up to these caps in ${cur}. 0 means no cap. At a cap ${B} winds down to free.` : `No cap is set, so only the spend limits you set in Models apply. Type a cap in ${cur} to add one; 0 means no cap.`, h('div', { class: 'row', style: { gap: '12px', flexWrap: 'wrap' } }, capInput('Per session', g.capSessionMinor, 'capSessionMinor'), capInput('Per day', g.capDayMinor, 'capDayMinor'))) : null,
             line('Session limits', `Whatever the money choice: at 80% of any limit ${B} winds down to cheaper or local routes; at 100% it stops, checkpoints and lists what is left.`, h('div', { class: 'row', style: { gap: '12px', flexWrap: 'wrap' } }, limInput('Tasks', g.limits.tasks, 'tasks'), limInput('Sources', g.limits.sources, 'sources'), limInput('Steps', g.limits.steps, 'steps'), limInput('Minutes', g.limits.minutes, 'minutes'))),
-            g.ready ? line('Today', `${spendLine(ui, g)}. This session so far: ${g.limitStatus.used.sources} sources, ${g.limitStatus.used.steps} steps, ${g.limitStatus.used.minutes} minutes.`) : null),
+            g.ready ? line('Today', `${spendLine(ui, g)}. This session so far: ${ui.plural(g.limitStatus.used.sources, 'source')}, ${ui.plural(g.limitStatus.used.steps, 'step')}, ${ui.plural(g.limitStatus.used.minutes, 'minute')}.`) : null),
           card(h('h3', null, "Today's find"),
             h('p', { class: 'sub' }, `Once a day while ${B} works, the desk picks one question from your own tasks, ratings and ${B} findings in the desk (not your browser), and answers it from pages within your spend choice.`),
             line("Today's find", c.find.off ? 'Off' : 'On', sw(!c.find.off, "Today's find", (on) => save({ findOff: !on }).catch((e) => toast(e.message, 'err')))),

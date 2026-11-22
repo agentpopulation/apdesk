@@ -49,7 +49,16 @@ export async function activate(ctx) {
   }
   function list({ limit = 100 } = {}) { return ctx.jobs.list({ limit }).map(j => ({ ...j, by: byOf(j) })); }
 
-  const wrap = (fn) => async (req, res, a) => { try { ctx.json(res, await fn(a)); } catch (e) { ctx.json(res, { error: e.message }, e.status || (e.code === 'halted' ? 503 : 500)); } };
+  // a refusal (a status under 500) keeps its own sentence; any other fault is one plain line and a short code, the raw text in the log
+  const wrap = (fn) => async (req, res, a) => {
+    try { ctx.json(res, await fn(a)); }
+    catch (e) {
+      const status = e.status || (e.code === 'halted' ? 503 : 500);
+      if (status < 500) return ctx.json(res, { error: e.message }, status);
+      const f = ctx.plainFailure(e); ctx.log('tasks route failed', e?.message || e);
+      ctx.json(res, { error: f.line, code: f.code }, status);
+    }
+  };
   const owner = (o) => { if (!o) throw bad('Only the owner at this desk can start tasks.', 403); };
   ctx.route('GET', '/jobs', wrap(({ query }) => ({ jobs: list({ limit: Math.min(300, Number(query.limit) || 150) }) })));
   ctx.route('POST', '/create', wrap(({ body, owner: o }) => { owner(o); return create(body || {}); }));

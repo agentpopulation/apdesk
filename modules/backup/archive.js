@@ -40,6 +40,35 @@ export function walk(root) {
   return out;
 }
 
+/** Keys kept outside the secrets table, in plain settings: the router's key, and a key per LAN model node. A backup
+ *  without keys leaves them out too (the VACUUM after this leaves no old page behind). */
+const SETTING_SECRETS = ['router.apiKey'];
+function dropSettingSecrets(copy) {
+  for (const k of SETTING_SECRETS) copy.prepare('DELETE FROM settings WHERE key = ?').run(k);
+  const row = copy.prepare("SELECT value FROM settings WHERE key = 'network.lanNodes'").get();
+  let nodes = null; try { nodes = row ? JSON.parse(row.value) : null; } catch { nodes = null; }
+  if (Array.isArray(nodes)) copy.prepare("UPDATE settings SET value = ? WHERE key = 'network.lanNodes'").run(JSON.stringify(nodes.map(n => (n && typeof n === 'object' ? Object.fromEntries(Object.entries(n).filter(([f]) => f !== 'apiKey')) : n))));
+}
+
+/** The keys this desk holds in plain settings now, to put back after a restore from a backup without keys: the router's
+ *  key, and each LAN node's key by the node's id. */
+function liveSettingSecrets(db) {
+  const get = (k) => { const r = db.prepare('SELECT value FROM main.settings WHERE key = ?').get(k); return r ? r.value : undefined; };
+  const plain = Object.fromEntries(SETTING_SECRETS.map(k => [k, get(k)]).filter(([, v]) => v !== undefined));
+  let nodes = []; try { nodes = JSON.parse(get('network.lanNodes') ?? '[]'); } catch {}
+  const nodeKeys = new Map((Array.isArray(nodes) ? nodes : []).filter(n => n && n.id != null && n.apiKey).map(n => [String(n.id), n.apiKey]));
+  return { plain, nodeKeys };
+}
+function putBackSettingSecrets(db, { plain, nodeKeys }) {
+  for (const [k, v] of Object.entries(plain)) db.prepare('INSERT OR REPLACE INTO main.settings (key, value) VALUES (?, ?)').run(k, v);
+  if (!nodeKeys.size) return;
+  const row = db.prepare("SELECT value FROM main.settings WHERE key = 'network.lanNodes'").get();
+  let nodes = null; try { nodes = row ? JSON.parse(row.value) : null; } catch { nodes = null; }
+  if (!Array.isArray(nodes)) return;
+  const back = nodes.map(n => (n && typeof n === 'object' && !n.apiKey && nodeKeys.has(String(n.id)) ? { ...n, apiKey: nodeKeys.get(String(n.id)) } : n));
+  db.prepare("UPDATE main.settings SET value = ? WHERE key = 'network.lanNodes'").run(JSON.stringify(back));
+}
+
 function tableCounts(db, schema = 'main') {
   const out = {};
   for (const { name } of db.prepare(`SELECT name FROM ${schema}.sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`).all()) {
@@ -64,7 +93,7 @@ export function createBackup({ db, workspace, backupsDir, includeKeys = false, v
     const copy = new DatabaseSync(dbFile);
     let tables;
     try {
-      if (!includeKeys) { copy.exec('DELETE FROM secrets'); copy.exec('VACUUM'); }
+      if (!includeKeys) { copy.exec('DELETE FROM secrets'); dropSettingSecrets(copy); copy.exec('VACUUM'); }
       tables = tableCounts(copy);
     } finally { copy.close(); }
     const created = new Date();
@@ -149,7 +178,7 @@ export function planRestore({ db, opened, workspace }) {
 }
 
 // ---- what a backup from elsewhere may not bring in (safety review R2-5)
-const SAFE_SETTINGS = new Set(['theme', 'role', 'onboarded', 'ownerName', 'country', 'currency', 'timeZone', 'locale', 'menuPosition', 'textSize', 'motion', 'countries', 'city']);
+const SAFE_SETTINGS = new Set(['theme', 'role', 'onboarded', 'ownerName', 'country', 'currency', 'timeZone', 'locale', 'city']);
 const safeSettingSql = `(key IN (${[...SAFE_SETTINGS].map(qs).join(', ')}) OR key LIKE 'ui.%')`;
 const isConnection = (k) => /^(router\.|ollama\.|provider\.)/.test(k) || ['network.lanNodes', 'model.defaultChain', 'online'].includes(k);
 /** Module tables that let something reach a person or the outside (accounts, allow-lists, servers, grants, logins). */
@@ -241,7 +270,7 @@ export function reviewRestore(db, backupDbFile) {
  * trusted = false (a backup from elsewhere): content comes back, but connections, folder grants, allow-lists and accounts,
  * module settings and switches, keys, and agents' instructions and model picks stay as they are here; schedules arrive paused.
  */
-export function restoreDatabase(db, backupDbFile, { trusted = true } = {}) {
+export function restoreDatabase(db, backupDbFile, { trusted = true, withKeys = null } = {}) {
   const report = { tables: {}, created: [], keptSecrets: false, heldBack: [], skipped: [] };
   const held = (x) => { if (!report.heldBack.includes(x)) report.heldBack.push(x); };
   withBackup(db, backupDbFile, () => {
@@ -267,6 +296,8 @@ export function restoreDatabase(db, backupDbFile, { trusted = true } = {}) {
         report.created.push(t.name);
       });
       const keep = KEEP_SETTINGS.map(p => `key NOT LIKE ${qs(p)}`).join(' AND ');
+      // a backup made without keys leaves the keys on this desk as they are: the secrets table and the keys in settings
+      const keysIn = withKeys ?? (bkAll.some(t => t.name === 'secrets') && db.prepare('SELECT COUNT(*) AS n FROM bk.secrets').get().n > 0);
       for (const t of plain) {
         const liveCols = new Set(cols('main', t.name));
         const common = cols('bk', t.name).filter(c => liveCols.has(c));
@@ -275,12 +306,14 @@ export function restoreDatabase(db, backupDbFile, { trusted = true } = {}) {
         const T = qi(t.name);
         if (t.name === 'migrations') {
           step(t.name, 'merge database versions', () => db.exec(`INSERT OR IGNORE INTO main.migrations (${list}) SELECT ${list} FROM bk.migrations`));
-        } else if (t.name === 'secrets' && (!trusted || db.prepare('SELECT COUNT(*) AS n FROM bk.secrets').get().n === 0)) {
+        } else if (t.name === 'secrets' && (!trusted || !keysIn || db.prepare('SELECT COUNT(*) AS n FROM bk.secrets').get().n === 0)) {
           report.keptSecrets = true; if (!trusted) held('keys and logins'); continue;
         } else if (t.name === 'settings') {
           if (trusted) step(t.name, 'replace settings except security and spend', () => {
+            const here = keysIn ? null : liveSettingSecrets(db);
             db.exec(`DELETE FROM main.settings WHERE ${keep}`);
             db.exec(`INSERT OR REPLACE INTO main.settings (${list}) SELECT ${list} FROM bk.settings WHERE ${keep}`);
+            if (here) { putBackSettingSecrets(db, here); report.keptSecrets = true; }
           });
           else {
             step(t.name, 'bring in plain preferences only', () => db.exec(`INSERT OR REPLACE INTO main.settings (${list}) SELECT ${list} FROM bk.settings WHERE ${safeSettingSql} AND ${keep}`));

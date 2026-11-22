@@ -4,12 +4,20 @@ export class Panic {
   constructor() { this.halted = false; this.reason = null; this.at = null; this._ac = new AbortController(); this._hooks = new Set(); this._listeners = new Set(); }
   get signal() { return this._ac.signal; }
   /** A signal that aborts when Panic fires or when `parent` aborts. */
-  child(parent) {
+  // A child's listeners are taken off the house signal and its parents as soon as any of them aborts, and by
+  // signal.release() when the call ends without that, so a long-running desk does not keep one per finished call.
+  // (AbortSignal.any is not used: in Node 22 it slows down with every signal it has made.)
+  child(...parents) {
     const ac = new AbortController();
-    const onAbort = (why) => () => { if (!ac.signal.aborted) ac.abort(why); };
-    if (this.halted) ac.abort('halted');
-    this._ac.signal.addEventListener('abort', onAbort('halted'), { once: true });
-    if (parent) { if (parent.aborted) ac.abort(parent.reason || 'aborted'); else parent.addEventListener('abort', onAbort('aborted'), { once: true }); }
+    parents = parents.filter(Boolean);
+    const offs = [];
+    const release = () => { for (const off of offs.splice(0)) off(); };
+    Object.defineProperty(ac.signal, 'release', { value: release });
+    if (this.halted) { ac.abort('halted'); return ac.signal; }
+    const gone = parents.find(s => s.aborted); if (gone) { ac.abort(gone.reason || 'aborted'); return ac.signal; }
+    const on = (sig, why) => { const fn = () => { release(); if (!ac.signal.aborted) ac.abort(why()); }; sig.addEventListener('abort', fn, { once: true }); offs.push(() => sig.removeEventListener('abort', fn)); };
+    on(this._ac.signal, () => 'halted');
+    for (const s of parents) on(s, () => s.reason || 'aborted');
     return ac.signal;
   }
   onStop(fn) { this._hooks.add(fn); return () => this._hooks.delete(fn); }
@@ -35,7 +43,7 @@ export class Panic {
     return {
       get halted() { return p.halted; }, get reason() { return p.reason; }, get at() { return p.at; },
       get signal() { const s = p.signal; if (seen?.from !== s) seen = { from: s, signal: AbortSignal.any([s, closed.signal]) }; return seen.signal; },
-      child: (parent) => AbortSignal.any([p.child(parent), closed.signal]), onStop: (fn) => add(p._hooks, fn), onChange: (fn) => add(p._listeners, fn),
+      child: (parent) => p.child(parent, closed.signal), onStop: (fn) => add(p._hooks, fn), onChange: (fn) => add(p._listeners, fn),
       stopAll: (reason) => p.stopAll(reason), resume: () => p.resume(), state: () => p.state(),
       async close(reason = 'Shutting down') {
         const st = { halted: true, reason, at: new Date().toISOString() };

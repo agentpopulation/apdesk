@@ -41,9 +41,9 @@ export async function activate(ctx) {
     const mode = !enabled ? 'off' : own.ok ? 'owner' : builtinOn ? 'builtin' : 'none';
     const models = mode === 'owner' ? own.models : mode === 'builtin' ? ups.filter(u => u.enabled).flatMap(u => u.models) : [];
     const line = mode === 'off' ? `${ROUTER_NAME.short} is switched off.`
-      : mode === 'owner' ? `Your own router answers at ${baseUrl} with ${own.models.length} models.`
-      : mode === 'builtin' ? `No router of your own answers at ${baseUrl}, so the built-in free hosts are used: ${ups.filter(u => u.enabled).map(u => u.name).join(', ') || 'none switched on'}.`
-      : `No router of your own answers at ${baseUrl}, and the built-in free hosts are off.`;
+      : mode === 'owner' ? `Your own router answers with ${own.models.length === 1 ? '1 model' : own.models.length + ' models'}.`
+      : mode === 'builtin' ? `No router of your own answers, so the built-in free hosts are used: ${ups.filter(u => u.enabled).map(u => u.name).join(', ') || 'none switched on'}.`
+      : `No router of your own answers, and the built-in free hosts are off.`;   // the address itself is in the box beside this line
     const t = tests(); const upTests = Object.fromEntries(ups.map(u => [u.id, t[tkey('router', 'up:' + u.id, null)] || null]));
     return { name: ROUTER_NAME.full, shortName: ROUTER_NAME.short, raw: rawUpstreams(), cooling: typeof ctx.model.routerCooling === 'function' ? ctx.model.routerCooling() : {}, tests: upTests, enabled, baseUrl, builtin: builtinOn, ownerAnswers: !!own.ok, ownerError: own.ok ? null : own.error, mode, models, upstreams: ups, line, online: S('online') !== false };
   }

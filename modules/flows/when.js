@@ -115,14 +115,14 @@ export const hm = (h, m) => `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(
 /** A cron expression in plain words (the owner never sees the expression itself). */
 export function describeCron(expr) {
   const p = String(expr || '').trim().split(/\s+/);
-  if (p.length !== 5) return 'On a custom timetable';
+  if (p.length !== 5) return 'On a custom schedule';
   const [mi, ho, dom, mon, dow] = p;
   const isN = (x) => /^\d+$/.test(x);
   if (p.join(' ') === '* * * * *') return 'Every minute';
-  let m = mi.match(/^\*\/(\d+)$/); if (m && ho === '*' && dom === '*' && mon === '*' && dow === '*') return `Every ${m[1]} minutes`;
+  let m = mi.match(/^\*\/(\d+)$/); if (m && ho === '*' && dom === '*' && mon === '*' && dow === '*') return m[1] === '1' ? 'Every minute' : `Every ${m[1]} minutes`;
   if (isN(mi) && ho === '*' && dom === '*' && mon === '*' && dow === '*') return mi === '0' ? 'Every hour' : `Every hour at ${mi} past`;
-  m = ho.match(/^\*\/(\d+)$/); if (isN(mi) && m && dom === '*' && mon === '*' && dow === '*') return `Every ${m[1]} hours`;
-  if (!isN(mi) || !isN(ho)) return 'On a custom timetable';
+  m = ho.match(/^\*\/(\d+)$/); if (isN(mi) && m && dom === '*' && mon === '*' && dow === '*') return m[1] !== '1' ? `Every ${m[1]} hours` : mi === '0' ? 'Every hour' : `Every hour at ${mi} past`;
+  if (!isN(mi) || !isN(ho)) return 'On a custom schedule';
   const at = hm(Number(ho), Number(mi));
   if (dom === '*' && mon === '*') {
     if (dow === '*') return `Every day at ${at}`;
@@ -132,7 +132,7 @@ export function describeCron(expr) {
   }
   if (isN(dom) && mon === '*' && dow === '*') return `Every month on day ${dom} at ${at}`;
   if (isN(dom) && isN(mon) && dow === '*') return `Every year on ${dom} ${MONTHS[Number(mon) - 1] || ''} at ${at}`;
-  return 'On a custom timetable';
+  return 'On a custom schedule';
 }
 
 /** What to do, with the time words taken out: "Every morning at 8, brief me" -> "brief me". */

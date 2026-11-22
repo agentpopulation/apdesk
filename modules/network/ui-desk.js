@@ -45,7 +45,7 @@ export function drawDeps(doc, model, { width = 640, sel = null, onSelect = () =>
   }
   for (const p of g.providers) {
     const on = rel.providers.has(p.provider);
-    const n = svgEl(doc, 'g', { 'data-provider': p.provider, opacity: dim(on), tabindex: 0, role: 'button', style: 'cursor:pointer', 'aria-pressed': String(on), 'aria-label': `${p.label}, ${p.calls} calls${p.down ? ', last check failed' : ''}` });
+    const n = svgEl(doc, 'g', { 'data-provider': p.provider, opacity: dim(on), tabindex: 0, role: 'button', style: 'cursor:pointer', 'aria-pressed': String(on), 'aria-label': `${p.label}, ${p.calls} call${p.calls === 1 ? '' : 's'}${p.down ? ', last check failed' : ''}` });
     n.append(svgEl(doc, 'title', {}, p.label),
       svgEl(doc, 'circle', { cx: p.x, cy: p.y, r: 8, fill: p.down ? 'var(--stop)' : 'var(--bubble)', stroke: p.down ? 'var(--stop)' : 'var(--fg)', 'stroke-width': on ? 3 : 1.5 }),
       svgEl(doc, 'text', { x: p.x + 14, y: p.y + 4, fill: p.down ? 'var(--stop)' : 'var(--fg)', 'font-size': 12 }, short(p.label, 14) + (p.down ? ' (check failed)' : '')));

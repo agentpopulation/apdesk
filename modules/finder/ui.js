@@ -59,7 +59,7 @@ export const pages = {
           const asked = r.asked?.length ? h('details', null, h('summary', null, `Asked ${one(new Set(r.asked.map((a) => a.provider)).size, 'provider')} with ${one(new Set(r.asked.map((a) => a.query)).size, 'wording')}; read ${one(r.read.filter((x) => x.ok).length, 'page')}`),
             h('ul', null, r.asked.map((a) => h('li', null, `${a.provider}, “${a.query}”: ${a.ok ? a.n + ' results' : a.note}`)), r.read.map((x) => h('li', null, `${x.url}: ${x.ok ? (x.note || 'read') : x.note}`)))) : null;
           list.replaceChildren(...notes, ...(r.passages.length ? r.passages.map(passage) : [empty(r.nothing || 'No page read answers this. Try other words, or fewer of them.')]), titled || '', asked || '');
-        } catch (e) { list.replaceChildren(empty(e.message)); }
+        } catch (e) { list.replaceChildren(empty(ui.plainError(e))); }
         finally { go.disabled = false; loadSide(); }
       }
       async function loadSide() {
@@ -67,6 +67,7 @@ export const pages = {
         const site = h('input', { type: 'text', placeholder: 'example.com', 'aria-label': 'Site never to keep' });
         const add = h('form', { class: 'row', onsubmit: async (e) => {
           e.preventDefault();
+          if (!site.value.trim()) return ui.needs(site, 'Type a site first, for example example.com.');
           try {
             const r = await api('/api/m/finder/library/never-keep', { body: { site: site.value } });
             const d = (r.neverKeep || []).find((x) => !s.neverKeep.includes(x)) || site.value.trim();

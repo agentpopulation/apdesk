@@ -5,10 +5,11 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { createBackup, listBackups, openBackup, planRestore, restoreDatabase, restoreWorkspace, reviewRestore, recordMadeHere, madeHere, NAME_RE, backupName } from './archive.js';
 
-const LAYOUT = [
-  ['start.bat, stop.bat, README.md', 'Start and stop the desk; how to use it'],
+/** The install folder, as the About card shows it. The module count is read from the module list, never typed. */
+const layout = (modules) => [
+  [process.platform === 'win32' ? 'start.bat, stop.bat, README.md' : process.platform === 'darwin' ? 'start.command, README.md' : 'start.sh, README.md', 'Start and stop the desk; how to use it'],
   ['app', 'The shell and the four doors'],
-  ['modules', 'The 30 modules, one folder each'],
+  ['modules', `The ${modules} modules, one folder each`],
   ['vendor', 'Open-source code copied in, with licences'],
   ['node_modules', 'Installed packages (made by setup)'],
   ['setup', 'Setup and reinstall'],
@@ -52,7 +53,7 @@ export async function activate(ctx) {
         const plan = planRestore({ db: ctx.db, opened, workspace: ctx.workspace });
         const ours = madeHere(ctx.backupsDir, zipPath);
         const trusted = ours || !!trustAll;
-        const db = restoreDatabase(ctx.db, opened.dbFile, { trusted });
+        const db = restoreDatabase(ctx.db, opened.dbFile, { trusted, withKeys: !!opened.manifest.includeKeys });
         const files = restoreWorkspace({ fromDir: opened.workspaceDir, workspace: ctx.workspace, wipeExtra: !!wipeExtra, binDir: path.join(ctx.dataDir, 'bin') });
         ctx.db.run('INSERT INTO activity (at, agent_id, action, title, how, detail) VALUES (?, ?, ?, ?, ?, ?)', new Date().toISOString(), null, 'backup.restore', `Restored the backup ${path.basename(zipPath)}${ours ? '' : ' (from elsewhere)'}`, 'owner', `${Object.keys(db.tables).length} tables, ${files.copied} files${db.heldBack.length ? '; held back: ' + db.heldBack.join('; ') : trusted && !ours ? '; everything brought in: you trusted where it came from' : ''}`);
         ctx.events.emit('backup', { restored: path.basename(zipPath) });
@@ -131,7 +132,7 @@ export async function activate(ctx) {
     ctx.json(res, {
       version: version(), node: process.version, platform: process.platform,
       folders: { install: ctx.root, data: ctx.dataDir, workspace: ctx.workspace, backups: ctx.backupsDir },
-      layout: LAYOUT, attribution: read('ATTRIBUTION.md'),
+      layout: layout(ctx.modules.list().length), attribution: read('ATTRIBUTION.md'),
       updates: 'Signed updates from GitHub: see the Updates card. Your data folder is never changed by an update.',
     });
   });

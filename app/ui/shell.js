@@ -1,7 +1,7 @@
 // The shell: top bar, the official menu, theme, Panic, approvals, Home, onboarding, Settings frame, module pages.
 import * as kit from '/ui/kit.js';
 import { homePage, ROLES, applyRole, teamFor, STARTING_TEAM } from '/ui/pages/home.js';
-import { settingsPage, coreSettingsSections, ABOUT_MAX, ABOUT_HELP } from '/ui/pages/settings.js';
+import { settingsPage, coreSettingsSections, ABOUT_MAX, ABOUT_HELP, placeChoice, placeOptions, modernZone } from '/ui/pages/settings.js';
 import { trackerPage, trackerBody } from '/ui/pages/tracker.js';
 import { MENU_KEY, cleanMenu, arrangeMenu, firstPlace, placeName, tabTitle, cutPlaces, menuEnds } from '/ui/menus.js';
 import { mergeJob, runningCount, needsYou, updateReady, leftWords, popShowsDownloads, whoAsks, jobWho, trackWriting, writingWords } from '/ui/tracker-data.js';
@@ -107,7 +107,7 @@ function paintMenu() {
   const off = role()?.off || [];
   // at each end that hides places an arrow says so and moves the menu by a view (shown by menuEdges)
   const more = (side) => h('button', { class: 'more ' + side, tabindex: '-1', 'aria-label': 'More places', title: 'More places', onclick: () => { const m = $('#menu'); m.scrollBy({ left: (side === 'l' ? -1 : 1) * Math.max(60, m.clientWidth - 2 * MENU_FADE), behavior: 'smooth' }); } }, side === 'l' ? '\u2039' : '\u203a');
-  $('#menu').replaceChildren(more('l'), ...menuItems().map(it => h('button', { class: 'nav', 'data-v': it.id, 'aria-current': it.id === state.route.page ? 'page' : null, disabled: off.includes(it.id), title: off.includes(it.id) ? 'Off for this role. Switch it on in Settings.' : null, onclick: () => ui.go(it.id) }, it.label, badges.get(it.id) ? h('span', { class: 'badge', title: 'Finished since you last looked' }, String(badges.get(it.id))) : null)), more('r'));
+  $('#menu').replaceChildren(more('l'), ...menuItems().map(it => h('button', { class: 'nav', 'data-v': it.id, 'aria-current': it.id === state.route.page ? 'page' : null, disabled: off.includes(it.id), title: off.includes(it.id) ? 'Off for this role. Change what you use the desk for in Settings › General.' : null, onclick: () => ui.go(it.id) }, it.label, badges.get(it.id) ? h('span', { class: 'badge', title: 'Finished since you last looked' }, String(badges.get(it.id))) : null)), more('r'));
   fitMenu();
   paintTitle();
 }
@@ -151,7 +151,7 @@ try { if (!localStorage.getItem('apd-theme')) applyTheme('dark'); } catch { docu
 async function setTheme(dark) {
   applyTheme(dark ? 'dark' : 'light');
   state.settings.theme = dark ? 'dark' : 'light'; state.settings['ui.themeChosen'] = true; paintChrome();
-  api('settings', { body: { theme: state.settings.theme, 'ui.themeChosen': true } }).catch(() => {});
+  return api('settings', { body: { theme: state.settings.theme, 'ui.themeChosen': true } });   // Settings › Appearance shows the tick or the reason
 }
 ui.setTheme = setTheme;
 
@@ -197,7 +197,7 @@ async function panic(on) {
 }
 $('#panic').onclick = () => panic(!state.panic.halted);
 $('#resume').onclick = () => panic(false);
-$('#theme').onclick = () => setTheme(document.documentElement.dataset.theme !== 'dark');
+$('#theme').onclick = () => setTheme(document.documentElement.dataset.theme !== 'dark').catch(e => toast('The theme was not kept: ' + e.message, 'err'));
 $('#home').onclick = () => ui.go('home');
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && e.shiftKey) panic(true); });
 
@@ -218,13 +218,21 @@ function stoppedSection() {
     ...list.map(a => kit.line(a.title, `${jobWho(state.agents, a)} · ${ACTION_WORDS[a.action] || a.action} · stopped ${kit.fmt.when(a.decided)}`,
       kit.btn('Dismiss', { kind: 'ghost sm', onClick: () => dismissStopped({ id: a.id }) }))));
 }
+// The rows of an approval card in plain words: a key becomes words ("toAddress" reads "To address"), a size in bytes
+// reads "2.1 GB". A download's own bookkeeping (its kind, the engine name, the checksum) stays off the card: its title
+// says what and how big, its detail line says where from and that it is checked.
+const ROW_WORDS = { url: 'From', file: 'Saved as', size: 'Size', to: 'To', cc: 'Copy to', subject: 'Subject', body: 'Text', path: 'File', folder: 'Folder', cmd: 'Command', cwd: 'In the folder', amount: 'Amount', currency: 'Currency' };
+const rowWords = (key) => { const last = String(key).split('.').pop(); return ROW_WORDS[last] || (last.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase())); };
+const DOWNLOAD_BOOKKEEPING = new Set(['kind', 'what', 'sha256']);
 function approvalCard(a) {
   // Everything the approval covers is shown, in full: long text scrolls inside its box, nothing is cut or left out.
   const rows = []; const walk = (obj, prefix) => { for (const [k, v] of Object.entries(obj || {})) { if (v == null) continue; if (typeof v === 'object') walk(v, prefix + k + '.'); else rows.push([prefix + k, String(v)]); } };
   if (a.payload && typeof a.payload === 'object') walk(a.payload, ''); else if (a.payload != null) rows.push(['', String(a.payload)]);
-  const total = rows.reduce((n, r) => n + r[1].length, 0);
-  const body = rows.length ? h('div', { class: 'draft', style: { marginTop: '8px', maxHeight: '260px', overflow: 'auto' } },
-    rows.map(([k, v]) => h('div', { style: { marginBottom: '6px' } }, k ? h('span', { class: 'sub', style: { display: 'block' } }, k + (v.length > 400 ? ` (${v.length} characters)` : '')) : null, h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: /code|command|script|body|text|content/i.test(k) && v.length > 120 ? 'var(--mono)' : null, fontSize: v.length > 600 ? '12.5px' : null } }, v)))) : null;
+  const download = a.payload?.kind === 'download';
+  const shown = rows.filter(([k]) => !(download && DOWNLOAD_BOOKKEEPING.has(k))).map(([k, v]) => [k, /(^|\.)(size|bytes)$/i.test(k) && /^\d+$/.test(v) ? kit.fmt.bytes(Number(v)) : v]);
+  const total = shown.reduce((n, r) => n + r[1].length, 0);
+  const body = shown.length ? h('div', { class: 'draft', style: { marginTop: '8px', maxHeight: '260px', overflow: 'auto' } },
+    shown.map(([k, v]) => h('div', { style: { marginBottom: '6px' } }, k ? h('span', { class: 'sub', style: { display: 'block' } }, rowWords(k) + (v.length > 400 ? ` (${v.length} characters)` : '')) : null, h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: /code|command|script|body|text|content/i.test(k) && v.length > 120 ? 'var(--mono)' : null, fontSize: v.length > 600 ? '12.5px' : null } }, v)))) : null;
   return h('div', { class: 'card', style: { marginBottom: '8px' } },
     h('div', { class: 'row' }, h('b', null, a.title), kit.pill(ACTION_WORDS[a.action] || a.action, 'wait')),
     h('div', { class: 'sub' }, `${whoAsks(state.agents, a)}${a.detail ? ' · ' + a.detail : ''}${a.amount ? ' · ' + kit.fmt.money(a.amount, a.currency) : ''}`),
@@ -256,10 +264,12 @@ function paintPop() {
   if (key) { const n = [...pop.querySelectorAll('button')].find(x => rowOf(x) === key[0] && x.textContent === key[1]); (n || pop.querySelector('button'))?.focus({ preventScroll: true }); }
 }
 function drawPop(pop, kind) {
-  if (kind === 'approvals') pop.replaceChildren(popHead('Waiting for you', kind), ...(state.pendingApprovals.length ? state.pendingApprovals.map(approvalCard) : [kit.empty('Nothing is waiting.')]), stoppedSection());
-  else if (kind === 'downloads') pop.replaceChildren(popHead('Downloads', kind), ...downloadRows());
-  else if (kind === 'network') pop.replaceChildren(popHead('Network', kind), ...netRows());
-  else if (kind === 'tracker') pop.replaceChildren(popHead('Tracker', kind), ...trackerBody(ui));
+  // native replaceChildren writes a null child as the word "null": every list is filtered first
+  const put = (...kids) => pop.replaceChildren(...kids.flat().filter(x => x != null && x !== false));
+  if (kind === 'approvals') put(popHead('Waiting for you', kind), state.pendingApprovals.length ? state.pendingApprovals.map(approvalCard) : [kit.empty('Nothing is waiting.')], stoppedSection());
+  else if (kind === 'downloads') put(popHead('Downloads', kind), downloadRows());
+  else if (kind === 'network') put(popHead('Network', kind), netRows());
+  else if (kind === 'tracker') put(popHead('Tracker', kind), trackerBody(ui));
 }
 function showApprovals(open) { if (open) showPop('approvals', true); else showPop('approvals', false); }
 const togglePop = (kind) => popKind() === kind ? closePop(kind) : showPop(kind, true);
@@ -284,12 +294,14 @@ async function loadDownloads() {
 }
 function paintDownloads() {
   const b = $('#dl'); if (!b) return;
-  const { active = 0, total = 0 } = dls.summary || {};
+  const { active = 0, total = 0, stuck = 0 } = dls.summary || {};
   b.hidden = total === 0;
   if (b.hidden) { if (popShowsDownloads(popKind())) paintPop(); return; }
-  const text = `${active} of ${total}`;
+  // a download that stopped on an error says so, in the warning colour, instead of "0 of 1" moving
+  const text = stuck ? `${stuck} stopped` : `${active} of ${total}`;
   if (b.dataset.text !== text) { b.innerHTML = ICON.down; b.append(h('span', null, text)); b.dataset.text = text; }
-  const name = `Downloads: ${active} of ${total} moving. Show the list`;
+  b.classList.toggle('warn', stuck > 0);
+  const name = stuck ? `Downloads: ${kit.plural(stuck, 'download')} stopped on an error, ${active} of ${total} moving. Show the list` : `Downloads: ${active} of ${total} moving. Show the list`;
   b.setAttribute('aria-label', name); b.title = name;
   if (popShowsDownloads(popKind())) paintPop();
 }
@@ -476,6 +488,9 @@ async function render() {
   const old = $('#view'); const view = document.createElement('section'); view.id = 'view'; view.className = 'view'; old.replaceWith(view);
   const stale = () => seq !== renderSeq; $('#pane').scrollTop = 0; showPop(null, false);
   paintMenu(); paintDoctor();
+  // behind the lock the desk answers nothing: a page drawn now could only fail and leave a "locked" line. The lock
+  // draws the page when it opens (it reads the state again, then the address).
+  if (state.locked) return;
   try {
     if (page === 'home') return await homePage(view, ui);
     if (page === 'settings') return await settingsPage(view, ui);
@@ -565,6 +580,8 @@ function placeNotice() {
   box.classList.toggle('under', !side); win.classList.toggle('noting', !side);
   Object.assign(box.style, side ? { top: bar.top + 'px', height: bar.height + 'px', left: (ctlLeft - 10 - room) + 'px', width: room + 'px' }
     : { top: (bar.bottom - 1) + 'px', height: '', left: bar.left + 'px', width: bar.width + 'px' });
+  // under the bar a long notice takes a second line: the page moves down by what the notice needs
+  if (!side) win.style.setProperty('--note-gap', Math.max(20, Math.ceil(t.getBoundingClientRect().height) + 2) + 'px'); else win.style.removeProperty('--note-gap');
 }
 new MutationObserver(placeNotice).observe($('#toasts'), { childList: true });
 window.addEventListener('resize', placeNotice);
@@ -575,20 +592,43 @@ window.addEventListener('hashchange', () => {
   render();
 });
 
-// ---------- onboarding (optional; Skip shows everything). Step one: the role. Step two, one screen, only on a fresh desk:
-// what he does, his starting team, and which models answer. Save or Skip; Skip leaves everything as a fresh desk has it.
+// ---------- onboarding (optional; Skip shows everything). Step one: the role, under one row that says where the desk
+// thinks the owner is (country, currency, time zone: "Is this right?"), changed there before anything is saved. Step two,
+// one screen, only on a fresh desk: what he does, his starting team, and which models answer. Save or Skip; Skip leaves
+// everything as a fresh desk has it. Step two stays open ('ui.firstStep': 'open') until it is saved or skipped, so a
+// reload or a closed window brings it back.
+const place = { country: null, currency: null, timeZone: null };
+function placeRow() {
+  // the desk runs on this PC: the page's own time zone is the better guess when the server's differs
+  let tz = state.settings.timeZone;
+  try { const mine = modernZone(Intl.DateTimeFormat().resolvedOptions().timeZone); if (mine && placeOptions('timeZone', null).some(([v]) => v === mine)) tz = mine; } catch {}
+  for (const k of ['country', 'currency']) place[k] = place[k] || state.settings[k] || null;
+  place.timeZone = modernZone(place.timeZone || tz || '') || null;
+  const nameOf = (k, v) => (placeOptions(k, v).find(([x]) => x === v) || [v, v])[1];
+  const words = h('span', { class: 'd', id: 'onb-place-words' });
+  const sayIt = () => { words.textContent = `${nameOf('country', place.country)} · ${nameOf('currency', place.currency)} · ${String(place.timeZone || '').replace(/_/g, ' ')}`; };
+  const pick = (k) => h('label', { class: 'f' }, { country: 'Country', currency: 'Currency', timeZone: 'Time zone' }[k], placeChoice(ui, k, place[k], (v) => { place[k] = v; sayIt(); }));
+  const edit = h('div', { class: 'placeedit', hidden: true }, pick('country'), pick('currency'), pick('timeZone'));
+  const change = h('button', { type: 'button', class: 'link', 'aria-expanded': 'false', onclick: () => { edit.hidden = !edit.hidden; change.setAttribute('aria-expanded', String(!edit.hidden)); change.textContent = edit.hidden ? 'Change' : 'Done'; } }, 'Change');
+  sayIt();
+  return h('div', { class: 'onbplace', id: 'onb-place', 'data-apd': 'place' },
+    h('div', { class: 'row' }, h('span', null, h('b', null, 'Is this right? '), words), h('span', { class: 'grow' }), change), edit);
+}
 function paintOnboarding() {
-  $('#onb').hidden = !!state.settings.onboarded;
+  const open = state.settings['ui.firstStep'] === 'open';
+  $('#onb').hidden = !!state.settings.onboarded && !open;
+  if (state.settings.onboarded) { if (open) firstStep(state.settings.role); return; }
+  $('#onb-place')?.remove();
+  $('#roles').before(placeRow());
   $('#roles').replaceChildren(...Object.entries(ROLES).map(([id, r]) => h('button', { class: 'role', onclick: () => chooseRole(id) }, h('b', null, r.name), h('span', null, r.desc))));
 }
 async function chooseRole(id) {
   const fresh = !state.settings.onboarded;
-  await applyRole(ui, id);
-  if (fresh) {
-    // the desk runs on this PC: the page's own time zone wins over the server's guess, once, on a fresh desk
-    try { const tz = Intl.DateTimeFormat().resolvedOptions().timeZone; if (tz && tz !== state.settings.timeZone) { const r = await api('settings', { body: { timeZone: tz } }); state.settings = r.settings; kit.setPrefs({ timeZone: tz }); } } catch {}
-    return firstStep(id);
-  }
+  try {
+    // a fresh desk keeps the place shown in the row above (as detected, or as changed there), and step two opens
+    await applyRole(ui, id, fresh ? { 'ui.firstStep': 'open', ...Object.fromEntries(Object.entries(place).filter(([, v]) => v)) } : {});
+  } catch (e) { toast('That did not save: ' + e.message, 'err'); return; }
+  if (fresh) { kit.setPrefs({ timeZone: state.settings.timeZone, locale: state.settings.locale, currency: state.settings.currency }); return firstStep(id); }
   $('#onb').hidden = true; paintChrome(); render();
 }
 $('#onb-skip').onclick = () => chooseRole(null);
@@ -602,13 +642,13 @@ async function hasFastModel() {
  *  Nothing is fetched here; Save asks the desk to start the downloads, and each one still asks the owner first.
  *  There is always a choice: every model in the list is shown with its size and the memory it needs. One too large
  *  for this PC can still be picked, after one plain warning. Memory free right now is a note, never a refusal. */
-function localModelBox() {
+function localModelBox({ openModels } = {}) {
   const cb = h('input', { type: 'checkbox', id: 'onb-local', disabled: true, 'aria-describedby': 'onb-local-d' });
   const what = h('span', { class: 'd', id: 'onb-local-d' }, 'Checking what fits this PC…');
   const choose = h('button', { type: 'button', class: 'link', hidden: true, 'aria-expanded': 'false' }, 'Choose another');
   // memory free now changes from minute to minute: after closing programs the owner can read it again
   const again = h('button', { type: 'button', class: 'link', hidden: true }, 'Check again');
-  // nothing recommended: Models is where the owner can look further; it saves this step without the model, as the model note does
+  // Models is where the owner can look further; it saves this step with the model he ticked, or says plainly none was started
   const models = h('button', { type: 'button', class: 'link', hidden: true, 'data-apd': 'local-model-open' }, 'Open Models');
   const note = h('span', { class: 'd', 'data-apd': 'local-model-note', hidden: true });
   const free = h('span', { class: 'd', 'data-apd': 'local-model-free', hidden: true });   // plan.freeNote: "Close some programs before you use it: …"
@@ -649,7 +689,7 @@ function localModelBox() {
   const choice = (id) => { what.textContent = 'Checking…'; read(id).catch(e => off('Could not check it now: ' + e.message)); };
   again.onclick = () => { again.hidden = true; what.textContent = 'Checking…'; read(pick.id, true).catch(e => off('Could not check it now: ' + e.message, true)); };
   choose.onclick = () => { list.hidden = !list.hidden; choose.setAttribute('aria-expanded', String(!list.hidden)); };
-  models.onclick = () => { cb.checked = false; pick.ok = false; const save = [...(box.closest('.card')?.querySelectorAll('.btn') || [])].find(b => b.textContent === 'Save'); ui.go('models'); save?.click(); };
+  models.onclick = () => openModels?.();
   read(null).catch(e => off('Could not check what fits this PC: ' + e.message));
   return { el: box, wanted: () => pick.ok && cb.checked && !cb.disabled ? pick.id : null };
 }
@@ -658,7 +698,7 @@ async function firstStep(roleId) {
   const box = $('#onb .card'); const done = () => { $('#onb').hidden = true; paintChrome(); render(); };
   const role = ROLES[roleId];
   const help = roleId === 'sales' ? 'What you sell, who buys it, and where. Your agents use this for leads, drafts and research.' : ABOUT_HELP;
-  const about = h('textarea', { id: 'onb-about', rows: 3, maxlength: String(ABOUT_MAX), 'aria-label': 'What do you do?', placeholder: 'For example: Payroll software for small firms. HR heads buy it. Pune and Mumbai.' });
+  const about = h('textarea', { id: 'onb-about', rows: 3, maxlength: String(ABOUT_MAX), 'aria-label': 'What do you do?', placeholder: 'For example: Payroll software for small firms. HR heads buy it, in our region.' });
   // the team: the agents a fresh desk has, ticked from the role; the Coordinator is always on
   const want = new Set(teamFor(roleId));
   const ticks = state.agents.filter(a => STARTING_TEAM.includes(a.id)).map(a => {
@@ -671,10 +711,17 @@ async function firstStep(roleId) {
   const noteSeen = !!state.settings['ui.modelNoteSeen'];
   const noteSlot = h('div', { hidden: true });
   let note = null;
-  const local = localModelBox();
+  // Open Models (in the local box or the model note): this step is saved first, with the ticked local model, then Models opens
+  const toModels = async () => { if (await finish(true, { toModels: true })) ui.go('models'); };
+  const local = localModelBox({ openModels: toModels });
+  // the spend limits that hold from now on, in the currency just confirmed, and where to change them
+  const lim = state.settings, money = (k) => kit.fmt.money(lim[k], lim.currency);
+  const spend = h('p', { class: 'sub', 'data-apd': 'spend-limits' }, Number(lim['spend.perItem']) > 0
+    ? `Spending: once Payments is on, agents may spend up to ${money('spend.perItem')} an item, ${money('spend.perDay')} a day and ${money('spend.perMonth')} a month without asking you. Change this in Settings › Payments and spend.`
+    : `Spending: the desk has no usual limits for ${lim.currency}: paid model calls are off until you set limits in Settings › Payments and spend. Free and local models work.`);
   const err = h('p', { class: 'sub', role: 'status' });
   const skipBtn = kit.btn('Skip for now', { kind: 'ghost', onClick: () => finish(false) }), saveBtn = kit.btn('Save', { onClick: () => finish(true) });
-  async function finish(saveIt, { withLocal = saveIt } = {}) {
+  async function finish(saveIt, { withLocal = saveIt, toModels = false } = {}) {
     skipBtn.disabled = saveBtn.disabled = true; err.textContent = saveIt ? 'Saving…' : '';
     try {
       const body = { 'ui.firstStep': saveIt ? 'saved' : 'skipped' };
@@ -691,33 +738,39 @@ async function firstStep(roleId) {
       // the local model: only on Save, only when ticked. Each download then asks the owner, as every download does.
       const modelId = saveIt && withLocal ? local.wanted() : null;
       if (modelId) {
-        try { await api('local-engine/get', { body: { model: modelId } }); toast('The local model will download in the background once you allow it.', 'ok', 7000); }
+        try { await api('local-engine/get', { body: { model: modelId } }); toast('The local model downloads once you allow it.', 'ok', 7000); }
         catch (e) { toast('The local model did not start: ' + e.message, 'err'); }
-      }
+      } else if (toModels) toast('No local model was started. You can get one on the Models page.', '', 7000);
       done(); return true;
     } catch (e) { err.textContent = 'That did not save: ' + e.message; skipBtn.disabled = saveBtn.disabled = false; return false; }
   }
-  box.replaceChildren(
-    h('div', null, h('h2', null, 'What do you do?'), h('p', { class: 'sub' }, help)), about, team, noteSlot, local.el, err,
-    h('div', { class: 'row' }, h('span', { class: 'grow' }), skipBtn, saveBtn));
+  // native replaceChildren writes a null child (no team to pick) as the word "null": empty ones are left out
+  box.replaceChildren(...[
+    h('div', null, h('h2', null, 'What do you do?'), h('p', { class: 'sub' }, help)), about, team, noteSlot, local.el, spend, err,
+    h('div', { class: 'row' }, h('span', { class: 'grow' }), skipBtn, saveBtn)].filter(Boolean));
   box.classList.add('step2');
   about.focus();
   if (!noteSeen) hasFastModel().then((fast) => {
     if (fast || !noteSlot.isConnected) return;
     note = h('div', { class: 'note', id: 'model-note' }, h('span', null, 'Free models answer by default. They need no key but can be slow. For faster answers add a free key or a local model in Models.'),
-      h('span', { class: 'row' }, kit.btn('Open Models', { kind: 'ghost sm', onClick: async () => { if (await finish(true, { withLocal: false })) ui.go('models'); } }), kit.btn('Got it', { kind: 'ghost sm', onClick: () => { note.remove(); api('settings', { body: { 'ui.modelNoteSeen': true } }).catch(() => {}); } })));
+      h('span', { class: 'row' }, kit.btn('Open Models', { kind: 'ghost sm', onClick: toModels }), kit.btn('Got it', { kind: 'ghost sm', onClick: () => { note.remove(); api('settings', { body: { 'ui.modelNoteSeen': true } }).catch(() => {}); } })));
     noteSlot.replaceWith(note);
   });
 }
 
 // ---------- state and live events
+let onbWaits = false;   // first start not drawn yet: the desk started locked
 async function refresh() {
   const s = await api('state');
+  state.locked = !!s.locked;
   Object.assign(state, { settings: s.settings, security: s.security, panic: s.panic, modules: s.modules, agents: s.agents, jobs: s.jobs, pendingApprovals: s.pendingApprovals, tools: s.tools, version: s.version });
   kit.setPrefs({ timeZone: s.settings.timeZone, locale: s.settings.locale, currency: s.settings.currency });
   applyTheme(themeOf(s.settings, s.settings.theme));
   await refreshStopped();
   paintChrome();
+  // first start is drawn from the real settings only: behind the lock the state holds no spend limits and no agents,
+  // so a desk that started locked draws it once the lock opens
+  if (onbWaits && !state.locked) { onbWaits = false; paintOnboarding(); }
 }
 function connect() {
   // an event stream cannot send a header, so this window's token goes in the address; its space's events only
@@ -799,7 +852,10 @@ async function startDesk() {
 async function boot() {
   await refresh();
   await refreshWho();
-  paintOnboarding();
+  if (state.locked) onbWaits = true; else paintOnboarding();
+  // a country, currency, zone or style stored before that this computer cannot use was replaced at start: said once
+  const healed = state.settings['ui.placeNotice'];
+  if (healed) { setTimeout(() => toast(String(healed), '', 12000), 600); api('settings', { body: { 'ui.placeNotice': null } }).then(r => { state.settings = r.settings; }).catch(() => {}); }
   connect();
   loadDownloads(); loadNet({ calls: true }); loadJobs();
   // the Network module's stored summary, read again now and then while the window is shown (a read on this PC, never a call out)

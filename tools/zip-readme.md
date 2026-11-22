@@ -6,7 +6,7 @@ A local desk of agents for one owner. It runs on your own PC, answers only on `h
 
 ## Install
 1. Unzip `agent-population-desk.zip` anywhere. You get an `apdesk` folder.
-2. Double-click `install.bat` in it. It asks where to put AP Desk (press Enter for `%LOCALAPPDATA%\Programs\AP Desk`), copies it there, and adds **AP Desk** to your Start menu and, if you like, your Desktop and Settings › Apps.
+2. Double-click `install.bat` in it. The installer opens in your browser. It asks where to put AP Desk (there is a Browse button), copies it there, and adds **AP Desk** to your Start menu and, if you like, your Desktop and Settings › Apps. If no browser can be opened, or you run `install.bat /console`, it asks the same questions in the window (press Enter for `%LOCALAPPDATA%\Programs\AP Desk`).
 3. Start it from the Start menu: **AP Desk**. It runs in the background; closing a window does not stop it. **Stop AP Desk** stops it, **AP Desk log** shows what it is doing.
 
 It is an install for you only: no administrator rights are needed and nothing is changed for other users. Windows may show its usual notice for a downloaded file; you decide whether to continue.
@@ -25,7 +25,7 @@ Without installing: double-click `start.bat` in the unzipped folder. The desk ru
 | `uninstall.bat` | Removes AP Desk. Asks before deleting your data. |
 | `README.md` | This page. |
 | `app` | The shell and the four doors: models, approvals, storage, modules. |
-| `modules` | The 30 modules, one folder each. 16 are on from the first run. |
+| `modules` | The 35 modules, one folder each. 17 are on from the first run. |
 | `vendor` | Open-source code copied in, with its licences. |
 | `node_modules` | Installed packages. |
 | `setup` | The installer, `setup.bat` (first run), `reinstall.bat` (repair), `autostart.bat on` or `off` (start when you sign in), the icon and the start page. |
@@ -45,9 +45,10 @@ Keys found in the environment when the desk starts are used for that run and are
 | Platform | State |
 |---|---|
 | Linux x64, Node 22 and 24 | Developed and tested here |
-| Windows 11 x64 | The main target. An earlier build of 0.1.0 was run and tested on Windows 11 on 14 Nov 2026. This exact build has not been re-run there yet |
-| Windows on ARM64 (Snapdragon X) | Should work, **untested**. The installer fetches the ARM64 build of Node.js. The desk is plain JavaScript with `node:sqlite`; the zip holds no native add-ons. The agent's browser uses the Edge already installed on the PC |
-| macOS | Untested. There is no start script for it; `node app/server.js` is the way in |
+| Windows 11 x64 | The main target. The one-line install from a GitHub download was run by the project owner on Windows 11 on 20 Nov 2026 and opened the desk |
+| Windows 11 on ARM64 | `install.bat` with its console questions was run by the project owner on 22 Nov 2026: it fetched the ARM64 build of Node.js 22, installed the packages and opened the desk. The agent's browser uses the Edge already installed on the PC |
+| Windows, not run yet | The visual installer in the browser, the hidden start, the background mode and the update step have not been run on Windows. They are covered by tests on Linux only |
+| macOS | Not run. This zip has no start file for it (`start.command` is in the GitHub download, where the README names it). With Node.js 22.13 or newer installed, `node app/server.js` starts the desk |
 
 ## Small local models (4B and 8B through Ollama)
 Small models can be picked per agent under Models. How the larger jobs behave on them was **not checked** (no Ollama was available during testing). What the test runs on weak free models showed is the best guide:

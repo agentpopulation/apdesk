@@ -215,6 +215,7 @@ export async function activate(ctx) {
   ctx.route('GET', '/status', (req, res, arg) => ctx.json(res, status(arg.owner)));
   ctx.route('POST', '/telegram/token', async (req, res, arg) => {
     owner(arg); const token = String(arg.body?.token || '').trim();
+    if (!token && arg.body?.remove !== true) throw err('Paste your bot token first.');   // an empty press never wipes a saved token; Remove says so
     if (!token) { ctx.secrets.set('telegram.token', null); stopPolling(); setTg('needs_token', 'Paste your bot token to start.', { bot: null }); return ctx.json(res, status(true)); }
     if (token.length > 200 || /\s/.test(token)) throw err('That does not look like a bot token.');
     ctx.secrets.set('telegram.token', token); kv.set('telegram.offset', 0); tg.bot = null;
@@ -226,9 +227,12 @@ export async function activate(ctx) {
   ctx.route('POST', '/telegram/check', async (req, res, arg) => { owner(arg); const ok = await checkToken(); if (ok) startPolling(); ctx.json(res, status(true)); });
   ctx.route('POST', '/telegram/settings', (req, res, arg) => {
     owner(arg); const b = arg.body || {};
-    if (b.apiBase !== undefined) kv.set('telegram.apiBase', cleanApiBase(b.apiBase));
+    // every part is checked before anything is kept, so a refused change saves nothing
+    const base = b.apiBase !== undefined ? cleanApiBase(b.apiBase) : undefined;
+    if (b.agentId !== undefined && !ctx.agents.get(String(b.agentId))) throw err('That agent is not on this desk. Pick another one.');
+    if (base !== undefined) kv.set('telegram.apiBase', base);
     if (b.allowed !== undefined) kv.set('telegram.allowed', [...new Set((Array.isArray(b.allowed) ? b.allowed : String(b.allowed).split(/[\s,]+/)).map(x => String(x).trim()).filter(x => /^-?\d{1,20}$/.test(x)))]);
-    if (b.agentId !== undefined && ctx.agents.get(String(b.agentId))) kv.set('telegram.agentId', String(b.agentId));
+    if (b.agentId !== undefined) kv.set('telegram.agentId', String(b.agentId));
     if (b.pollTimeout !== undefined) kv.set('telegram.pollTimeout', Number(b.pollTimeout) || 25);
     if (b.enabled !== undefined) kv.set('telegram.enabled', !!b.enabled);
     if (b.apiBase !== undefined || b.enabled !== undefined) startPolling();

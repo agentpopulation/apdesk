@@ -495,15 +495,17 @@ test('where you are: a fresh desk takes zone, locale, country and currency from 
     assert.deepEqual(systemPlace({ timeZone: 'Europe/Berlin', locale: 'de-DE' }), { country: 'DE', currency: 'EUR', timeZone: 'Europe/Berlin', locale: 'de-DE' });
     assert.deepEqual(systemPlace({ timeZone: 'America/Chicago', locale: 'en-US' }), { country: 'US', currency: 'USD', timeZone: 'America/Chicago', locale: 'en-US' });
     assert.equal(systemPlace({ timeZone: 'Asia/Kolkata', locale: 'en-IN' }).currency, 'INR');
-    assert.equal(systemPlace({ timeZone: 'Africa/Cairo', locale: 'ar-EG' }).currency, 'USD', 'a country not in the short map: USD until he changes it');
+    assert.equal(systemPlace({ timeZone: 'Africa/Dakar', locale: 'fr-SN' }).currency, 'USD', 'a country not in the map: USD until he changes it');
     const s1 = new Settings(openStorage(path.join(dir, 'a'), path.join(dir, 'ab')), { system: { timeZone: 'Europe/London', locale: 'en-GB' } });
     assert.deepEqual([s1.get('country'), s1.get('currency'), s1.get('timeZone'), s1.get('locale')], ['GB', 'GBP', 'Europe/London', 'en-GB']);
     assert.equal(s1.all().currency, 'GBP'); assert.equal(s1.stored('currency'), false);
     s1.set('currency', 'INR'); s1.set('timeZone', 'Asia/Kolkata');
     assert.equal(s1.get('currency'), 'INR'); assert.equal(s1.get('timeZone'), 'Asia/Kolkata'); assert.equal(s1.get('country'), 'GB');
-    // a desk set up before (onboarded) keeps exactly what it showed then, whatever the computer says now
+    // a desk set up before the place came from the computer (its first records are older) keeps exactly what it showed
+    // then, India, whatever the computer says now
     const st2 = openStorage(path.join(dir, 'b'), path.join(dir, 'bb'));
     st2.run("INSERT INTO settings (key, value) VALUES ('onboarded', 'true')");
+    st2.run("INSERT INTO agents (id, name, created, updated) VALUES ('a1', 'Ada', '2026-11-14T10:00:00.000Z', '2026-11-14T10:00:00.000Z')");
     const s2 = new Settings(st2, { system: { timeZone: 'America/New_York', locale: 'en-US' } });
     assert.deepEqual([s2.get('country'), s2.get('currency'), s2.get('timeZone'), s2.get('locale')], ['IN', 'INR', 'Asia/Kolkata', 'en-IN']);
     // the one write a module has: the owner's business text, nothing else

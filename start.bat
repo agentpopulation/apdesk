@@ -32,17 +32,34 @@ exit /b 0
 
 :start
 if "%MODE%"=="background" goto :background
+rem The start page reads data\start-state.js, so it can say when the desk stopped instead of waiting on.
+node "%~dp0setup\background.mjs" mark starting
 if "%OPEN%"=="yes" call "%~dp0setup\open.bat" starting
 
 rem 4. In this window: open the desk once it answers, and run the desk here. 75 means it asked to be started again.
 if "%OPEN%"=="yes" start "" /min cmd /c "node "%~dp0setup\check.mjs" wait && call "%~dp0setup\open.bat" desk"
 echo AP Desk is starting at http://127.0.0.1:%APD_PORT%/  Closing this window stops it.
+rem A proxy set for this PC in HTTPS_PROXY or HTTP_PROXY is used for the desk's own web calls (Node reads it when
+rem NODE_USE_ENV_PROXY is 1). This PC itself never goes through the proxy.
+if not defined NODE_USE_ENV_PROXY if defined HTTPS_PROXY set "NODE_USE_ENV_PROXY=1"
+if not defined NODE_USE_ENV_PROXY if defined HTTP_PROXY set "NODE_USE_ENV_PROXY=1"
+if "%NODE_USE_ENV_PROXY%"=="1" if defined NO_PROXY set "NO_PROXY=127.0.0.1,localhost,::1,%NO_PROXY%"
+if "%NODE_USE_ENV_PROXY%"=="1" if not defined NO_PROXY set "NO_PROXY=127.0.0.1,localhost,::1"
 :run
-if exist "%~dp0setup\apply-update.mjs" node "%~dp0setup\apply-update.mjs"
+if exist "%~dp0setup\apply-update.mjs" node --no-warnings "%~dp0setup\apply-update.mjs"
 node --no-warnings "%~dp0app\server.js"
 set "RC=%errorlevel%"
 if "%RC%"=="75" goto :run
 if "%RC%"=="2" if "%OPEN%"=="yes" call "%~dp0setup\open.bat" desk
+rem 0 is a clean stop, -1073741510 is Ctrl+C in this window. Anything else: the start page and this window say so.
+if "%RC%"=="0" exit /b 0
+if "%RC%"=="-1073741510" exit /b %RC%
+node "%~dp0setup\background.mjs" mark stopped %RC%
+if "%RC%"=="2" exit /b %RC%
+echo.
+echo AP Desk stopped because of an error. The lines above say why.
+echo Start it again with start.bat. If it stops again, run setup\setup.bat, then start.bat.
+pause
 exit /b %RC%
 
 :background

@@ -28,7 +28,7 @@ export const pages = {
           const [s, c] = await Promise.all([api('m/flows/schedules'), api('m/flows/chains')]);
           data = { ...s, chains: c.chains, agents: ui.state.agents || [] };
           paint();
-        } catch (e) { root.replaceChildren(empty('Schedules could not load: ' + e.message)); }
+        } catch (e) { root.replaceChildren(empty('Schedules could not load. ' + ui.plainError(e))); }
       }
       let timer = null; const soon = () => { clearTimeout(timer); timer = setTimeout(load, 250); };
       ui.on('schedule', soon); ui.on('flow', soon);

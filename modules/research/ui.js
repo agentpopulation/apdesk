@@ -62,7 +62,7 @@ async function deepTab(ui, body, pickId) {
   let current = pickId || list[0]?.id || null;
   const paintList = () => listCard.replaceChildren(h('h3', { style: { marginBottom: '6px' } }, 'Reports'),
     ...(list.length ? list.map((r) => h('button', { class: 'line hov', style: { width: '100%', textAlign: 'left', background: r.id === current ? 'var(--accent-soft)' : null, borderRadius: '8px', padding: '8px 6px' }, onclick: () => ui.go('research', r.id) },
-      h('div', null, h('b', null, r.title || r.question), h('span', { class: 'd' }, `${ui.fmt.when(r.created)} · ${r.status === 'done' && r.counts ? `${r.counts.cited} sources, ${r.counts.passed} of ${r.counts.claims} claims checked` : r.step || ''}`)),
+      h('div', null, h('b', null, r.title || r.question), h('span', { class: 'd' }, `${ui.fmt.when(r.created)} · ${r.status === 'done' && r.counts ? `${ui.plural(r.counts.cited, 'source')}, ${r.counts.passed} of ${ui.plural(r.counts.claims, 'claim')} checked` : r.step || ''}`)),
       ui.pill(...(STATUS[r.status] || ['', ''])))) : [ui.empty('No reports yet. Ask a question above, or in Chat say "Research … in depth".')]));
   paintList();
 
@@ -73,7 +73,7 @@ async function deepTab(ui, body, pickId) {
       srcCard.replaceChildren(h('h3', null, 'Sources'), ui.empty('Sources appear here.'));
       return;
     }
-    let r; try { r = await ui.api('m/research/reports/' + encodeURIComponent(current)); } catch (e) { reportCard.replaceChildren(ui.empty(e.message)); return; }
+    let r; try { r = await ui.api('m/research/reports/' + encodeURIComponent(current)); } catch (e) { reportCard.replaceChildren(ui.empty(ui.plainError(e))); return; }
     const [word, kind] = STATUS[r.status] || ['', ''];
     const meter = ui.meter(r.progress || 0, { live: r.status === 'running' });
     head.replaceChildren(...[h('h3', null, r.title || r.question), ui.pill(word, kind), meter, h('span', { class: 'sub' }, r.step || ''),
@@ -127,7 +127,7 @@ async function councilTab(ui, body) {
     if (!panel?.render) throw new Error('it has no panel yet');
     await panel.render(el, ui);
     if (panel.unmount) cleanup.push(() => panel.unmount());
-  } catch (e) { el.replaceChildren(ui.h('div', { class: 'offnote' }, ui.h('b', null, 'The Council could not open its panel.'), ui.h('span', { class: 'sub' }, e.message))); }
+  } catch (e) { el.replaceChildren(ui.h('div', { class: 'offnote' }, ui.h('b', null, 'The Council could not open its panel.'), ui.h('span', { class: 'sub' }, ui.plainError(e)))); }
 }
 
 // ---------------- Swarm
@@ -141,7 +141,9 @@ async function swarmTab(ui, body, pickId) {
   const grid = h('div', { class: 'swg' });
   const head = h('div', { class: 'row' });
   const answer = h('div', { class: 'stack' });
-  const setLabel = () => { label.textContent = `${n} ${n > 1 ? 'agents' : 'agent'} in parallel`; };
+  const setLabel = () => { label.textContent = ui.plural(n, 'agent'); };
+  const each = h('div', { class: 'sub' }, 'Each takes one part of the job');
+  ui.api('m/research/swarm-size').then((r) => { if (Number(r?.atOnce) > 0) each.textContent = `Each takes one part of the job; up to ${r.atOnce} work at once, the rest wait their turn`; }).catch(() => {});
   const placeholders = () => grid.replaceChildren(...Array.from({ length: n }, (_, i) => h('div', { class: 'tile' }, h('b', null, `Scout ${i + 1}`), 'Ready for its part', h('div', { class: 'meter', style: { marginTop: '6px' } }, h('b', { style: { width: '0%' } })))));
   let showing = null;
   range.addEventListener('input', () => { n = Number(range.value); setLabel(); try { localStorage.setItem('apd-swarm-n', String(n)); } catch {} if (!showing || showing.status !== 'running') { showing = null; head.replaceChildren(); answer.replaceChildren(); placeholders(); } });
@@ -153,7 +155,7 @@ async function swarmTab(ui, body, pickId) {
   task.addEventListener('keydown', (e) => { if (e.key === 'Enter') start(); });
   setLabel();
   body.replaceChildren(
-    h('div', { class: 'card row' }, h('div', { style: { minWidth: '170px' } }, label, h('div', { class: 'sub' }, 'Each takes one part of the job')), task, range, ui.btn('Start swarm', { onClick: start })),
+    h('div', { class: 'card row' }, h('div', { style: { minWidth: '170px' } }, label, each), task, range, ui.btn('Start swarm', { onClick: start })),
     head, h('div', { style: { overflow: 'auto', minHeight: '0', flex: '1', display: 'flex', flexDirection: 'column', gap: '12px' } }, grid, answer));
 
   const paintTiles = (tiles) => grid.replaceChildren(...tiles.map((t) => h('div', { class: 'tile', title: t.query || '' }, h('b', null, t.agent), t.title,

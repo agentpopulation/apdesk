@@ -72,9 +72,68 @@ test('start lines: in a window the code is printed; run hidden (APD_BACKGROUND=1
   assert.doesNotMatch(hidden, /\b\d{3} \d{3}\b/, 'no code in the hidden desk\'s lines');
 });
 
-test('background runner: the desk it starts is marked as hidden', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'setup', 'background.mjs'), 'utf8');
-  assert.match(src, /runOnce\(\['--no-warnings', path\.join\(ROOT, 'app', 'server\.js'\)\], log, \{ APD_BACKGROUND: '1' \}\)/, 'the mark goes to the server run only');
+test('background runner: the desk it starts is marked as hidden', async () => {
+  const { runDesk } = await import('../setup/background.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'apd-bg-')); const desk = path.join(dir, 'desk.mjs');
+  try {
+    fs.writeFileSync(desk, 'console.log("hidden=" + process.env.APD_BACKGROUND); process.exit(0);\n');
+    const log = { text: '', write(d) { this.text += String(d); } };
+    assert.equal(await runDesk({ log, mark: () => {}, desk }), 0);
+    assert.match(log.text, /hidden=1/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// A web server that answers as a proxy would ("via proxy") and one on this PC ("direct"): where did each call go?
+async function proxyAndLocal() {
+  const http = await import('node:http');
+  const listen = (s) => new Promise(r => s.listen(0, '127.0.0.1', () => r(s.address().port)));
+  const proxy = http.createServer((q, s) => s.end('via proxy')); const local = http.createServer((q, s) => s.end('direct'));
+  // Node goes through a proxy with CONNECT, then sends its request inside the tunnel: answer that one
+  proxy.on('connect', (q, sock) => { sock.write('HTTP/1.1 200 Connection Established\r\n\r\n'); sock.once('data', () => sock.end('HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nvia proxy')); });
+  return { proxy: await listen(proxy), local: await listen(local), close: () => { proxy.close(); local.close(); } };
+}
+const CALLS = (local) => `const a = await fetch("http://example.invalid/").then(r => r.text(), e => "failed"); const b = await fetch("http://127.0.0.1:${local}/").then(r => r.text(), e => "failed"); console.log("outside=" + a + " local=" + b); process.exit(0);\n`;
+const NO_PROXY_VARS = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'NO_PROXY', 'no_proxy', 'NODE_USE_ENV_PROXY'];
+
+test('proxy: with HTTP_PROXY set, the desk the runner starts sends web calls through it and calls this PC directly', async () => {
+  const { runDesk, proxyEnv } = await import('../setup/background.mjs');
+  const s = await proxyAndLocal(); const saved = Object.fromEntries(NO_PROXY_VARS.map(k => [k, process.env[k]]));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'apd-px-')); const desk = path.join(dir, 'desk.mjs');
+  try {
+    for (const k of NO_PROXY_VARS) delete process.env[k];
+    fs.writeFileSync(desk, CALLS(s.local));
+    process.env.HTTP_PROXY = `http://127.0.0.1:${s.proxy}`;
+    const log = { text: '', write(d) { this.text += String(d); } };
+    await runDesk({ log, mark: () => {}, desk });
+    assert.match(log.text, /outside=via proxy local=direct/);
+    // no proxy set: nothing is added; the owner's own choice is kept
+    assert.deepEqual(proxyEnv({ PATH: 'x' }), { PATH: 'x' });
+    assert.equal(proxyEnv({ HTTPS_PROXY: 'http://p:1', NODE_USE_ENV_PROXY: '0' }).NODE_USE_ENV_PROXY, '0');
+    const e = proxyEnv({ https_proxy: 'http://p:1', no_proxy: 'corp.lan' });
+    assert.equal(e.NODE_USE_ENV_PROXY, '1'); assert.equal(e.no_proxy, '127.0.0.1,localhost,::1,corp.lan'); assert.equal(e.NO_PROXY, e.no_proxy);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v == null) delete process.env[k]; else process.env[k] = v; }
+    s.close(); fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('proxy: start.sh starts the desk with the proxy from the environment, and this PC directly', { skip: process.platform === 'win32' ? 'a Linux and Mac script' : false }, async () => {
+  const s = await proxyAndLocal();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'apd-sh-'));
+  try {
+    // start.sh as shipped, beside stand-in parts: every check passes, nothing is running, and the "desk" makes two calls
+    fs.copyFileSync(path.join(ROOT, 'start.sh'), path.join(dir, 'start.sh'));
+    fs.mkdirSync(path.join(dir, 'setup')); fs.mkdirSync(path.join(dir, 'app'));
+    fs.writeFileSync(path.join(dir, 'setup', 'check.mjs'), 'const w = process.argv[2]; if (w === "port") console.log("3460"); process.exit(w === "running" || w === "wait" ? 1 : 0);\n');
+    fs.writeFileSync(path.join(dir, 'app', 'server.js'), CALLS(s.local));
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !NO_PROXY_VARS.includes(k)));
+    const out = await new Promise((resolve) => {
+      const p = spawn('sh', [path.join(dir, 'start.sh')], { env: { ...env, https_proxy: `http://127.0.0.1:${s.proxy}`, HTTP_PROXY: `http://127.0.0.1:${s.proxy}` } });
+      let o = ''; p.stdout.on('data', d => { o += d; }); p.stderr.on('data', d => { o += d; });
+      const to = setTimeout(() => p.kill(), 20000); p.on('exit', () => { clearTimeout(to); resolve(o); });
+    });
+    assert.match(out, /outside=via proxy local=direct/);
+  } finally { s.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('install as app: the manifest and its icons need no session or paired browser; the page links the manifest', async () => {

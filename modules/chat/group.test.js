@@ -53,7 +53,7 @@ test('in a group every agent answers in its own reply, one passes in a quiet lin
     assert.equal(msgs.filter(m => m.role === 'user').length, 1, 'one owner message');
     // the member prompt asks for its own role and says how to pass
     const sys = t.fake.calls.find(b => whoIs(b) === 'Scout' && !isChoice(b)).messages[0].content;
-    assert.match(sys, /You chose to answer because your role adds something/); assert.match(sys, /reply with exactly PASS/); assert.match(sys, /Do not repeat or cover what belongs to another role/);
+    assert.match(sys, /You chose to answer because your role adds something/); assert.match(sys, /reply with exactly PASS/); assert.match(sys, /do not repeat what belongs to another role/);
     // each agent first made its own short choice, told who else is in the group and that small talk is the Coordinator's
     const choice = t.fake.calls.find(b => whoIs(b) === 'Closer' && isChoice(b)).messages[0].content;
     assert.match(choice, /Scout: /); assert.match(choice, /Coordinator: answers greetings and small talk itself/); assert.match(choice, /greeting, thanks or small talk is the Coordinator's to answer/);

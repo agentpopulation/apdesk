@@ -50,7 +50,7 @@ A control beside the level: **15 minutes**, **1 hour**, **today**, or off. While
 
 ## Spend limits
 
-Settings › Payments and spend: `spend.perItem`, `spend.perDay`, `spend.perMonth` in the owner's currency (default INR, from Settings › General). The door sums `spend` approvals granted today and this month plus estimated paid-model cost. Above any limit the request asks, whatever the level or window. The Payments module ships off; while it is off, any `spend` request with `amount > 0` asks.
+Settings › Payments and spend: `spend.perItem`, `spend.perDay`, `spend.perMonth`, stored in hundredths of the main unit of the owner's currency (the currency in Settings › General, which a fresh desk takes from the computer, never a fixed one). When the owner has set none, the usual amounts for that currency apply (`SPEND_USUAL` in `app/core/settings.js`, for example 25, 50 and 200 for USD); a currency with no usual amounts has none (all 0), so every spend asks until he sets his own. A day or month limit of 0 means no limit is set, never a limit reached: the model door then makes no paid model call (MODEL-DOOR.md, Spend), because a model call's cost is not known before it is made and cannot be asked about first. A change of currency clears limits the owner set in the old one, the same way. The door sums `spend` approvals granted today and this month plus estimated paid-model cost. Above any limit the request asks, whatever the level or window. The Payments module ships off; while it is off, any `spend` request with `amount > 0` asks.
 
 ## Send to a person
 

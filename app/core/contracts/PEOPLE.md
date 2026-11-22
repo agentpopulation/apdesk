@@ -45,8 +45,10 @@ whoever calls them. Timers, promises, servers and child processes started there 
 its code and code outside every space read the same (no space), so a desk with one space behaves, and costs, exactly as
 one desk did before. A listener on a process-wide emitter runs in the space of whoever fired it; a module does not keep one.
 
-While Offline, a call is judged by the allow list of the space that made it (its own Ollama and LAN model nodes, the
-desk itself, the local engine); a closed space may call nothing.
+While Offline, a call is judged by the allow list of the space that made it: the desk itself, the local engine, and the
+Ollama address and LAN model nodes. Those two (`ollama.baseUrl`, `network.lanNodes`) are kept by the house, like
+`online`: every space reads the keeper's, and only the keeper's desk can change them. Only loopback, private or
+link-local addresses and plain local names count as local (offline.js `isLocalAddress`). A closed space may call nothing.
 
 Closing a space alone (`space.close()`) aborts every signal it was handed (`panic.signal`, `panic.child()`), so its
 fetches, model calls and waiting approvals stop with it, then runs its own stop hooks and closes its file.

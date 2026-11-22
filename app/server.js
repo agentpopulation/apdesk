@@ -12,6 +12,7 @@ import { openSpace } from './core/space.js';
 import { otherSpace } from './core/space-context.js';
 import { Updater } from './core/update.js';
 import { People } from './core/people.js';
+import { plainFailure } from './core/model-door.js';
 
 const APP = path.dirname(fileURLToPath(import.meta.url));     // <install>/app: the shell and the doors
 const ROOT = path.dirname(APP);                               // <install>: app, modules, vendor, node_modules, setup, data, backups
@@ -102,7 +103,15 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
   const pairCode = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
   const pairTries = { wrong: 0, lockedUntil: 0 };
   const rememberBrowser = (res) => { const c = crypto.randomBytes(32).toString('base64url'); settings.set('security.browsers', [...knownBrowsers(), sha(c)].slice(-20)); res.setHeader('set-cookie', `apd_owner=${c}; HttpOnly; SameSite=Strict; Path=/; Max-Age=315360000`); };
-  const pairPage = (note) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AP Desk</title><style>body{margin:0;height:100vh;display:grid;place-items:center;background:#f1f2f4;color:#16171a;font:15px -apple-system,"Segoe UI",system-ui,sans-serif}form{background:#fff;border:1px solid #e1e3e8;border-radius:16px;padding:26px;max-width:420px;display:flex;flex-direction:column;gap:12px}h1{font-size:20px;margin:0}p{margin:0;color:#5d626e}input{font:inherit;font-size:22px;letter-spacing:.2em;padding:10px 14px;border:1px solid #e1e3e8;border-radius:10px;text-align:center}button{font:inherit;background:#0a5fd6;color:#fff;border:0;border-radius:10px;padding:10px;cursor:pointer}.n{color:#c8261c}</style></head><body><form method="post" action="/pair"><h1>Open the desk in this browser</h1><p>This browser has not opened your desk before. Type the six-digit code shown in the desk's own window (the one start.bat opened), or under Show code in Settings › Security in a browser that already opens the desk.</p>${note ? `<p class="n">${note}</p>` : ''}<input name="code" inputmode="numeric" autocomplete="off" maxlength="7" autofocus aria-label="Code"><button>Open the desk</button><p>Panic still works without the code: stop.bat, or the Panic button in a browser you already use.</p></form></body></html>`;
+  const pairPage = (note) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AP Desk</title><style>body{margin:0;height:100vh;display:grid;place-items:center;background:#f1f2f4;color:#16171a;font:15px -apple-system,"Segoe UI",system-ui,sans-serif}form{background:#fff;border:1px solid #e1e3e8;border-radius:16px;padding:26px;box-sizing:border-box;width:min(420px,calc(100vw - 32px));display:flex;flex-direction:column;gap:12px}h1{font-size:20px;margin:0}p{margin:0;color:#5d626e}input{font:inherit;font-size:22px;letter-spacing:.2em;padding:10px 14px;border:1px solid #e1e3e8;border-radius:10px;text-align:center}button{font:inherit;background:#0a5fd6;color:#fff;border:0;border-radius:10px;padding:10px;cursor:pointer}.n{color:#c8261c}</style></head><body><form method="post" action="/pair"><h1>Open the desk in this browser</h1><p>This browser has not opened your desk before. ${pairWhere()}</p>${note ? `<p class="n">${note}</p>` : ''}<input name="code" inputmode="numeric" autocomplete="off" maxlength="7" autofocus aria-label="Code"><button>Open the desk</button><p>${process.platform === 'win32' ? 'Panic still works without the code: stop.bat, or the Panic button in a browser you already use.' : 'Panic still works without the code: the Panic button in a browser you already use.'}</p></form></body></html>`;
+  // Where the code is: a desk started hidden (the installer, the shortcuts) prints it nowhere, so only Settings is named;
+  // a desk started in a window names that window the way this system starts it.
+  function pairWhere() {
+    const settingsWay = 'under Show code in Settings › Security in a browser that already opens the desk';
+    if (env.APD_BACKGROUND === '1') return `Type the six-digit code shown ${settingsWay}.`;
+    const win = process.platform === 'win32' ? 'the one start.bat opened' : process.platform === 'darwin' ? 'the Terminal window start.command opened' : 'the terminal where start.sh runs';
+    return `Type the six-digit code shown in the desk's own window (${win}), or ${settingsWay}.`;
+  }
   const allowedHosts = () => new Set([`127.0.0.1:${core.port}`, `localhost:${core.port}`, `[::1]:${core.port}`]);
 
   const stateOf = ({ settings, approval, modules, agents, jobs }) => ({
@@ -110,6 +119,39 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
     modules: modules.list(), agents: agents.list(), jobs: jobs.summary(), pendingApprovals: approval.listPending(), tools: [...modules.tools.values()].map(t => ({ name: t.name, module: t.module, description: t.description })),
   });
   const state = () => stateOf(core);
+  // While a space is locked, its state holds only what the lock screen and the page behind it need to draw: looks, the
+  // owner's zone and money style, Panic and the module list (for the lock's own screen). No agents, jobs, approvals or tools.
+  const LOCK_SETTINGS = ['theme', 'timeZone', 'locale', 'currency', 'country', 'appName', 'onboarded', 'role', 'online', 'notifications'];
+  const lockedStateOf = ({ settings, approval, modules }) => {
+    const all = publicSettings(settings);
+    const shown = Object.fromEntries(Object.entries(all).filter(([k]) => LOCK_SETTINGS.includes(k) || k.startsWith('ui.')));
+    return { app: 'Agent Population Desk', version: core.version, locked: true, settings: shown, security: { level: approval.level, pending: 0 }, panic: panic.state(),
+      modules: modules.list(), agents: [], jobs: { running: 0, waiting: 0, done: 0, failed: 0, stopped: 0, interrupted: 0 }, pendingApprovals: [], tools: [] };
+  };
+  const isLockedCore = (c) => c?.modules.api('accounts')?.isLocked?.() === true;
+  // A locked space's event stream carries only what the lock needs: the lock itself and Panic. Streams opened before
+  // the lock are ended when it locks, and the lock's own streams when it opens, so the browser reconnects to the right one.
+  const LOCK_EVENTS = new Set(['accounts', 'panic']);
+  const lockStreams = new Map();   // events -> Set of { res, off }
+  const lockedStream = (req, res, ev) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+    res.write(': connected\n\n');
+    const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 20000);
+    const off = ev.on((type, data) => { if (!LOCK_EVENTS.has(type)) return; const d = JSON.stringify(data ?? {}); try { res.write(`event: ${type}\ndata: ${d}\n\nevent: apd\ndata: ${JSON.stringify({ type, data: data ?? {} })}\n\n`); } catch {} });
+    let set = lockStreams.get(ev); if (!set) lockStreams.set(ev, set = new Set());
+    const st = { res, off: () => { off(); clearInterval(ping); set.delete(st); } };
+    set.add(st);
+    req.on('close', st.off);
+  };
+  const watchLock = (c) => c.events.on((type, data) => {
+    if (type !== 'accounts' || typeof data?.locked !== 'boolean') return;
+    // after this event has reached every stream: end the ones that no longer fit
+    setImmediate(() => {
+      if (data.locked) { for (const cl of [...c.events.clients]) endStream({ res: cl.res, events: c.events }); }
+      else for (const st of [...(lockStreams.get(c.events) || [])]) { st.off(); try { st.res.end(); } catch {} }
+    });
+  });
+  watchLock(core);
   // The code that pairs another browser, for the owner's own window only (Settings › Security, Show code): the paired
   // browser's session, and a browser's own same-origin fetch. Another program, a module's server code, a frame or a
   // page on another site never gets it. The global checks before this already need the session and a paired browser.
@@ -128,8 +170,8 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
       res.setHeader('cache-control', 'no-store');
       sendJson(res, { code: pairCode, address: `http://${host}:${core.port}`, seconds: 60 });
     },
-    'GET /api/state': (req, res) => sendJson(res, stateOf(c)),
-    'GET /api/events': (req, res) => events.handle(req, res),
+    'GET /api/state': (req, res) => sendJson(res, isLockedCore(c) ? lockedStateOf(c) : stateOf(c)),
+    'GET /api/events': (req, res) => (isLockedCore(c) ? lockedStream(req, res, events) : events.handle(req, res)),
     'GET /api/panic': (req, res) => sendJson(res, panic.state()),
     'POST /api/panic': async (req, res, { body }) => { const hooks = await panic.stopAll(body?.reason || 'Panic'); sendJson(res, { ...panic.state(), stopped: { hooks: hooks.length, jobs: jobs.summary() } }); },
     'POST /api/panic/resume': (req, res) => { if (!sessionOk(req)) return sendJson(res, { error: 'Only the owner at this desk can resume.' }, 403); panic.resume(); sendJson(res, panic.state()); },
@@ -161,7 +203,7 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
       try {
         const r = await model.chat({ agentId: body?.agentId, model: body?.model, purpose: 'chat', messages: sys ? [{ role: 'system', content: sys }, ...messages] : messages, signal: ac.signal, onDelta: body?.stream === false ? undefined : (t) => line({ delta: t }) });
         line({ done: true, text: r.text, label: r.label, model: r.model, provider: r.provider, ms: r.ms, attempts: r.attempts });
-      } catch (e) { line({ done: true, error: e.message, code: e.code || 'error', attempts: e.attempts || [] }); }
+      } catch (e) { const f = plainFailure(e); if (f.code === 'failed') log('model ask', e?.message || e); line({ done: true, error: f.line, code: /^[a-z_]+$/.test(String(e?.code || '')) ? e.code : 'error', why: f.code, attempts: e.attempts || [] }); }
       res.end();
     },
     // The built-in Agent Population Router, for other programs on this PC (OpenAI-compatible).
@@ -273,7 +315,10 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
       // Screen lock (Accounts and Lock module): while the desk is locked nothing answers except what is needed to
       // show the lock, unlock it, and stop everything.
       if ((p.startsWith('/api/') || p.startsWith('/router/')) && target?.core.modules.api('accounts')?.isLocked?.() === true) {
-        const open = p === '/api/state' || p === '/api/events' || p === '/api/panic' || /^\/api\/m\/accounts\/(state|unlock|lock)$/.test(p);
+        // who is at the desk (GET /api/people, /api/people/me) is open too: the page needs it to start and draw the lock
+        // at all. While locked, the list carries only the people's own looks, never what waits for them.
+        const open = p === '/api/state' || p === '/api/events' || p === '/api/panic' || /^\/api\/m\/accounts\/(state|unlock|lock)$/.test(p)
+          || (method === 'GET' && (p === '/api/people' || p === '/api/people/me'));
         if (!open) return sendJson(res, { error: 'The desk is locked.', code: 'locked' }, 423);
       }
       if (p.startsWith('/api/') || p.startsWith('/router/')) {
@@ -322,7 +367,11 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
       res.writeHead(404, { 'content-type': 'text/plain' }); res.end('Not found');
     } catch (e) {
       log('http', method, p, e?.status && e.status < 500 ? String(e.message || e) : (e?.stack || e));   // an expected refusal is one line; only a real fault prints its stack
-      if (!res.headersSent) sendJson(res, { error: String(e?.message || e), code: e?.code || undefined }, e?.status || (e?.code === 'halted' ? 503 : 500));
+      // an expected refusal (a status under 500) keeps its own sentence; any other fault is one plain line and a short
+      // code (plainFailure): the raw text is only in the log line above
+      const status = e?.status || (e?.code === 'halted' ? 503 : 500);
+      const f = plainFailure(e);
+      if (!res.headersSent) sendJson(res, { error: status < 500 ? String(e?.message || e) : f.line, code: /^[a-z_]+$/.test(String(e?.code || '')) ? e.code : status < 500 ? undefined : f.code }, status);   // the desk's own codes only, never a system one
       else try { res.end(); } catch {}
     }
   });
@@ -336,6 +385,7 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
     other.core.restart = (reason) => core.restart(reason);
     other.core.model.localEngine = core.localEngine;
     spaces.add(other);
+    watchLock(other.core);
     const close = other.close;
     other.close = async () => { if (!spaces.delete(other)) return; await close(); };
     return other;
@@ -397,6 +447,7 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
     const entered = (res, id, token) => sendJson(res, { token, person: people.get(id), notice: people.takeNotice(id) });
     const spacesOf = (id) => people.hasPersonal(id) ? ['work', 'personal'] : ['work'];
     // What cannot be undone, said plainly on the Incognito screen (contracts/PEOPLE.md, section 8).
+    const SEPARATE_WAY = { win32: 'give each person their own Windows account and turn on disk encryption (BitLocker).', darwin: 'give each person their own Mac user account and turn on FileVault.', other: 'give each person their own user account on this computer and turn on disk encryption.' };
     const INCOGNITO_CAUTIONS = [
       'Incognito leaves nothing on this desk: when you leave, its chats, memory, visit log, ratings and approvals are dropped and its scratch files deleted.',
       'What you do still leaves the desk. A mail you approve is still sent and sits in the provider’s Sent folder. A site still saw your visit. Money spent is spent.',
@@ -405,7 +456,10 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
       'Deleting the Incognito scratch files is not a secure wipe on an SSD.',
     ];
     return {
-      'GET /api/people': (req, res) => sendJson(res, { people: people.list().map(p => ({ ...p, waiting: personSpaces.get(p.id)?.core.approval.listPending().length || 0, spaces: spacesOf(p.id) })), you: me(req)?.personId || null, incognito: !!me(req)?.incognito }),
+      'GET /api/people': (req, res) => {
+        const w = me(req); const locked = isLockedCore((w ? spaceOfWindow(w) : isOpen() ? space : null)?.core);
+        sendJson(res, { people: people.list().map(p => (locked ? { ...p, waiting: 0, spaces: ['work'] } : { ...p, waiting: personSpaces.get(p.id)?.core.approval.listPending().length || 0, spaces: spacesOf(p.id) })), you: w?.personId || null, incognito: !!w?.incognito });
+      },
       'GET /api/people/me': (req, res) => {
         const w = me(req); if (!w) return sendJson(res, { error: 'Choose who you are first.', code: 'no_person' }, 401);
         const incognito = !!w.incognito;
@@ -465,7 +519,7 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
         approval.activity({ action: 'people.add', title: `${person.name} was added to this desk`, how: 'keeper' });
         // The honest limit of the PIN, said plainly when a person is added: it keeps people apart, it does not protect
         // their files from another OS user or from code run here. Real separation is a separate login and disk encryption.
-        sendJson(res, { person, folder: people.folderOf(person.id), note: `${person.name} gets their own chats, keys and space, kept apart by their PIN. The PIN encrypts nothing: anyone who can sign in to this PC as this user, or run a program here, can still read every person's files. For real separation give each person their own Windows account and turn on disk encryption.` });
+        sendJson(res, { person, folder: people.folderOf(person.id), note: `${person.name} gets their own chats, keys and space, kept apart by their PIN. The PIN encrypts nothing: anyone who can sign in to this PC as this user, or run a program here, can still read every person's files. For real separation ${SEPARATE_WAY[process.platform] || SEPARATE_WAY.other}` });
       },
       // Removing a person detaches them: their windows end, their space closes, their folder stays where it is.
       'POST /api/people/:id/remove': async (req, res, { params, body }) => {

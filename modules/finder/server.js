@@ -75,7 +75,7 @@ export async function activate(ctx) {
   ctx.route('GET', '/library', async (req, res) => ctx.json(res, { ...library.stats(), offline: offline(), modelWording: !!ctx.kv.get('modelWording', false) }));
   ctx.route('POST', '/library/clear', async (req, res, { owner }) => {
     if (!owner) return deny(res, 'clear the library');
-    const removed = library.clear(); ctx.activity('Cleared the Finder library', `${removed} pages removed`);
+    const removed = library.clear(); ctx.activity('Cleared the Finder library', `${removed} page${removed === 1 ? '' : 's'} removed`);
     ctx.json(res, { removed, ...library.stats() });
   });
   ctx.route('POST', '/library/never-keep', async (req, res, { body, owner }) => {

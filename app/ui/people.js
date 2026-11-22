@@ -5,8 +5,17 @@
 import * as kit from '/ui/kit.js';
 const { h, api, btn, card, toast } = kit;
 
-// The honest limit of the PIN, said plainly wherever the keeper adds a person (the same point PEOPLE.md makes).
-export const PIN_CAUTION = 'A PIN keeps people at this desk apart. It does not protect your files from anyone who can open this PC: they can read every person\'s chats and keys. For real separation, give each person their own Windows account and turn on disk encryption (BitLocker).';
+// The honest limit of the PIN, said plainly wherever the keeper adds a person (the same point PEOPLE.md makes), in the
+// words of the system this desk runs on (the window is on the same computer as the desk).
+export function pinCaution(platform = '') {
+  const p = String(platform);
+  const how = /^win/i.test(p) ? 'their own Windows account and turn on disk encryption (BitLocker)'
+    : /mac/i.test(p) ? 'their own user account on this Mac and turn on FileVault'
+    : 'their own user account on this computer and turn on disk encryption';
+  return `A PIN keeps people at this desk apart. It does not protect your files from anyone who can open this computer: they can read every person's chats and keys. For real separation, give each person ${how}.`;
+}
+const platformName = () => { try { return navigator.userAgentData?.platform || navigator.platform || ''; } catch { return ''; } };
+export const PIN_CAUTION = pinCaution(platformName());
 
 const EMOJIS = ['🙂', '😎', '🦊', '🐱', '🐼', '🦉', '🌻', '🌲', '⭐', '🚀', '🎧', '📚', '🍵', '⚽', '🎨', '🧭', '🐝', '🍋'];
 const COLOURS = ['#5b6270', '#0a6cff', '#127a40', '#c98a00', '#c8261c', '#7a4cd6', '#0a8a8a', '#d2382f', '#336699', '#aa5500'];
@@ -71,11 +80,11 @@ export async function showChooser(ui, { mode = 'enter' } = {}) {
     const go = async () => {
       err.textContent = '';
       try { await enter(ui, p, input.value, mode); }
-      catch (e) { err.textContent = e.status === 429 ? `Too many wrong tries. Wait ${e.data?.waitSeconds || 0} seconds, then try again.` : 'That PIN is not right.'; input.value = ''; input.focus(); }
+      catch (e) { err.textContent = e.status === 429 ? `Too many wrong tries. Wait ${kit.plural(e.data?.waitSeconds || 1, 'second')}, then try again.` : 'That PIN is not right.'; input.value = ''; input.focus(); }
     };
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
     show([h('div', { class: 'stack', style: { alignItems: 'center', gap: '12px' } },
-      personAvatar(p, 'big'), h('b', null, p.name), h('p', { class: 'sub' }, 'Enter your PIN'), input, err,
+      personAvatar(p, 'big'), h('b', null, p.name), h('p', { class: 'sub' }, 'Enter your own PIN'), input, err,
       h('div', { class: 'row', style: { justifyContent: 'center' } }, btn('Back', { kind: 'ghost', onClick: () => show(screenList()) }), btn('Open', { onClick: go })))]);
     setTimeout(() => input.focus(), 30);
   };

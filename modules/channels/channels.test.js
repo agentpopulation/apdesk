@@ -24,3 +24,20 @@ test('plumbing (fake model): a stranger is listed, never answered; send needs a 
     assert.equal(r.status, 409);
   } finally { await t.close(); }
 });
+
+test('an empty token is refused and never wipes a saved token; only Remove clears it', async () => {
+  const t = await testDesk({ modules: ['channels'] });
+  try {
+    await t.call('/api/modules/channels/on', { method: 'POST' });
+    const empty = await t.call('/api/m/channels/telegram/token', { body: { token: '' } });
+    assert.equal(empty.status, 400); assert.match(empty.json.error, /token/i);
+    const noBody = await t.call('/api/m/channels/telegram/token', { body: {} });
+    assert.equal(noBody.status, 400);
+    const saved = await t.call('/api/m/channels/telegram/token', { body: { token: '123456789:not-a-real-token-for-this-test' } });
+    assert.equal(saved.status, 200); assert.equal(saved.json.telegram.hasToken, true);
+    assert.equal((await t.call('/api/m/channels/telegram/token', { body: { token: '  ' } })).status, 400);
+    assert.equal((await t.call('/api/m/channels/status')).json.telegram.hasToken, true, 'still saved after an empty press');
+    const gone = await t.call('/api/m/channels/telegram/token', { body: { remove: true } });
+    assert.equal(gone.status, 200); assert.equal(gone.json.telegram.hasToken, false);
+  } finally { await t.close(); }
+});

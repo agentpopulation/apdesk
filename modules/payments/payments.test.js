@@ -27,6 +27,8 @@ test('on: Open level within limits is allowed and logged; record() and limits() 
   try {
     await t.call('/api/modules/payments/on', { body: {} });
     const api = t.core.modules.api('payments');
+    // the usual limits follow the currency (a desk takes its currency from the computer): in rupees, 2,000 an item
+    t.core.settings.set('currency', 'INR');
     assert.equal(api.limits().perItem, 200000);
     const r = await t.core.modules.runTool('spend_request', { what: 'Cable', price: 100 }, { agentId: 'operator' });
     assert.equal(r.decision, 'approved');

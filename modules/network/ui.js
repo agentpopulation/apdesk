@@ -11,6 +11,24 @@ const SECTIONS = [
   ['rules', 'Website rules'], ['ports', 'What listens here'], ['lookup', 'Look up a domain'], ['data', 'Desk data use'],
   ['registrar', 'Registrar history'], ['route', 'Route to a site'], ['places', 'Where things are'],
 ];
+/** Today as a date box wants it (year-month-day), in the owner's zone from Settings, not the browser's. */
+export function todayIn(zone) { try { return new Date().toLocaleDateString('en-CA', { timeZone: zone || undefined }); } catch { return new Date().toLocaleDateString('en-CA'); } }
+
+/** Whether phone pushes are switched on (Settings, Channels and mail). False when Channels is off or does not answer. */
+export async function pushesOn(ui) {
+  if (!ui.moduleOn('channels')) return false;
+  try { return !!(await ui.api('m/channels/status'))?.ntfy?.on; } catch { return false; }
+}
+
+/** The "Also tell my phone" choice. Not offered at all without Channels; shown switched off, with where to turn it on, while phone pushes are off. */
+export function phoneOption(ui, { pushOn, text = 'Also tell my phone', checked = false, onChange, mark = null }) {
+  if (!ui.moduleOn('channels')) return null;
+  const { h } = ui;
+  if (!pushOn) return h('div', { class: 'row', 'data-apd': 'phone-off', style: { gap: '6px' } }, h('input', { type: 'checkbox', disabled: true, 'aria-label': text }),
+    h('span', { class: 'sub' }, `${text}: switched off. Turn on phone pushes in Settings, under Channels and mail.`));
+  const box = h('input', { type: 'checkbox', checked, 'aria-label': text, onchange: (e) => { const was = !e.target.checked; return mark ? mark.run(() => onChange(e.target.checked), { field: e.target, old: was }) : onChange(e.target.checked); } });
+  return h('label', { class: 'row', 'data-apd': 'phone-on', style: { gap: '6px' } }, box, h('span', { class: 'sub' }, text), mark);
+}
 const VIEWS = [['desk', 'Desk'], ['link', 'Link'], ['split', 'Split']];
 const VIEW_KEY = 'apd-network-view';
 const NEEDS_NET = new Set(['speed', 'watch', 'diagnose', 'domain', 'lookup', 'registrar', 'route']);
@@ -123,7 +141,8 @@ export const pages = {
       const waitJob = (jobId, onProgress) => new Promise((resolve) => { const off = ui.on('job', async (jx) => { if (jx?.id !== jobId) return; onProgress?.(jx); if (!['running', 'waiting'].includes(jx.status)) { off(); resolve(await api('jobs/' + jobId)); } }); });
       const busy = async (b, text, fn) => { const old = b.textContent; b.disabled = true; b.textContent = text; try { return await fn(); } catch (e) { toast(e.message, 'err'); return null; } finally { b.disabled = false; b.textContent = old; } };
       const kv = (pairs) => h('div', { class: 'kv' }, pairs.filter(Boolean).flatMap(([k, v]) => [h('span', null, k), h('span', null, v ?? 'Not shown')]));
-      const select = (opts, value, onChange, label) => { const s = h('select', { 'aria-label': label, onchange: (e) => onChange(e.target.value) }, opts.map(([v, t]) => h('option', { value: v, selected: String(v) === String(value) }, t))); return s; };
+      // a choice that saves by itself: "Saved" comes from the handler after the desk saved; a refusal says why and the old choice is back
+      const select = (opts, value, onChange, label) => { let was = String(value); const s = h('select', { 'aria-label': label, onchange: async (e) => { const v = e.target.value; try { await onChange(v); was = v; } catch (er) { s.value = was; toast(er, 'err'); } } }, opts.map(([v, t]) => h('option', { value: v, selected: String(v) === String(value) }, t))); return s; };
       const ms = (v) => (v == null ? '' : v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${v} ms`);
       const timeLabel = (span) => (t) => span > 2 * 86400_000 ? new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: ui.state.settings?.timeZone }) : fmt.time(new Date(t).toISOString());
       const chart = (series, { title: t, unit, height = 190, names }) => {
@@ -151,7 +170,7 @@ const SECTION_RENDER = {
         ['Connected by', c.kind === 'wifi' ? `Wi-Fi${c.signal?.ssid ? ' (' + c.signal.ssid + ')' : ''}` : c.kind === 'cable' ? 'Cable' : c.kind === 'virtual' ? 'A virtual adapter' : 'Another kind of link'],
         ['Adapter', c.adapter], ['Link speed', c.linkMbps ? `${c.linkMbps} Mbps` : 'Not given by the system'],
         c.kind === 'wifi' ? ['Signal', sig ? `${sig} (${signalWords(c.signal.dBm) || 'unknown'})` : 'Not given by the system'] : null,
-        ['Local address', [c.localIPv4, c.localIPv6].filter(Boolean).join(' · ') || null], ['Router (gateway)', c.gateway || 'Not given by the system'],
+        ['Local address', [c.localIPv4, c.localIPv6].filter(Boolean).join(' · ') || null], ['Home network box (gateway)', c.gateway || 'Not given by the system'],
         ['DNS servers', c.dnsServers.length ? c.dnsServers.join(', ') : 'Not given by the system'],
         c.others.length ? ['Other adapters', c.others.map(o => `${o.adapter} ${o.address}`).join(', ')] : null,
       ]) : h('p', { class: 'sub' }, 'No network adapter is connected.'), h('p', { class: 'sub', style: { marginTop: '8px' } }, 'Read from this PC. Nothing was sent anywhere.'));
@@ -164,7 +183,7 @@ const SECTION_RENDER = {
         r ? h('div', { style: { marginTop: '8px' } }, kv([['Address', r.ip], ['Network operator', r.operator || 'Not found'], ['AS number', r.asn ? `AS${r.asn}` : 'Not found'], ['Address block', r.prefix], ['Country', r.country]]),
           h('p', { class: 'sub', style: { marginTop: '6px' } }, `Looked up ${fmt.when(r.at)} via ${r.sources.join(' and ')}${r.trigger === 'schedule' ? ' (your daily schedule)' : ''}.${r.note ? ' ' + r.note : ''}`))
           : h('p', { class: 'sub' }, 'Not looked up yet.'),
-        line('Look it up by itself', 'Off unless you choose it.', select([['off', 'Off'], ['daily', 'Once a day']], p.every, async (v) => { try { await api('m/network/public/schedule', { body: { every: v } }); toast('Saved', 'ok'); } catch (e) { toast(e.message, 'err'); } }, 'Public address schedule')));
+        line('Look it up by itself', 'Off unless you choose it.', select([['off', 'Off'], ['daily', 'Once a day']], p.every, async (v) => { await api('m/network/public/schedule', { body: { every: v } }); toast('Saved', 'ok'); }, 'Public address schedule')));
     };
     const paintDesk = async (check) => {
       const c = await api('m/network/connection' + (check ? '?check=1' : ''));
@@ -184,7 +203,7 @@ const SECTION_RENDER = {
         ['Adapter', c.adapter], ['Link speed', c.linkMbps ? `${c.linkMbps} Mbps` : null],
         c.kind === 'wifi' ? ['Signal', c.signal?.dBm != null ? `${c.signal.dBm} dBm (${c.signalWords || 'unknown'})` : null] : null,
         ['Local IPv4', c.localIPv4], ['Local IPv6', c.localIPv6], ['Subnet mask', c.subnet],
-        ['Router (gateway)', c.gateway], ['DNS servers', c.dnsServers.length ? c.dnsServers.join(', ') : null],
+        ['Home network box (gateway)', c.gateway], ['DNS servers', c.dnsServers.length ? c.dnsServers.join(', ') : null],
         ['MTU', c.mtu ? `${c.mtu} bytes` : null], ['Hardware address', c.mac],
         ['DHCP lease end', c.leaseEnd], ['Link up since', c.linkUpAt],
         c.others.length ? ['Other adapters', c.others.map(o => `${o.adapter} ${o.address}`).join(', ')] : null,
@@ -302,7 +321,7 @@ const SECTION_RENDER = {
     const addBox = h('div'), list = h('div', { class: 'stack' }), noticesBox = h('div');
     const url = h('input', { type: 'text', placeholder: 'example.com or https://example.com/page', style: { flex: '1', minWidth: '200px' }, 'aria-label': 'Address to watch' });
     let every = 30, change = 1440, slow = 3, phone = false;
-    const phoneOn = ui.moduleOn('channels');
+    const phoneNow = await pushesOn(ui);
     const add = btn('Watch it', { onClick: () => busy(add, 'Adding…', async () => { await api('m/network/sites', { body: { url: url.value, everyMin: every, changeMin: change, slowMs: Math.round(slow * 1000), phone } }); url.value = ''; await paint(); }) });
     const slowIn = h('input', { type: 'number', min: '0.2', step: '0.5', value: '3', style: { width: '80px' }, 'aria-label': 'Slow after seconds', onchange: (e) => { slow = Number(e.target.value) || 3; } });
     put(addBox, h('h3', null, 'Add a site'), h('div', { class: 'row' }, url, add),
@@ -310,7 +329,7 @@ const SECTION_RENDER = {
         h('span', { class: 'sub' }, 'Up or down'), select([[5, 'Every 5 min'], [15, 'Every 15 min'], [30, 'Every 30 min'], [60, 'Every hour'], [360, 'Every 6 hours'], [1440, 'Once a day']], 30, (v) => { every = Number(v); }, 'How often to check'),
         h('span', { class: 'sub' }, 'Text changes'), select([[0, 'Off'], [360, 'Every 6 hours'], [1440, 'Once a day']], 1440, (v) => { change = Number(v); }, 'How often to compare text'),
         h('span', { class: 'sub' }, 'Slow after'), slowIn, h('span', { class: 'sub' }, 's'),
-        phoneOn ? h('label', { class: 'row', style: { gap: '6px' } }, h('input', { type: 'checkbox', onchange: (e) => { phone = e.target.checked; } }), h('span', { class: 'sub' }, 'Also tell my phone (ntfy)')) : null),
+        phoneOption(ui, { pushOn: phoneNow, onChange: (on) => { phone = on; } })),
       h('p', { class: 'sub', style: { marginTop: '8px' } }, 'One request per check with the desk’s own name, never more often than every 5 minutes, longer waits when a site asks us to slow down, and its robots.txt is respected.'));
     const STATE = { up: ['Up', 'ok'], slow: ['Slow', 'wait'], down: ['Down', 'stop'], blocked: ['Blocked', ''] };
     const paint = async () => {
@@ -330,7 +349,7 @@ const SECTION_RENDER = {
           h('div', { class: 'sub mono' }, s.url),
           h('div', { class: 'sub', style: { marginTop: '4px' } }, [s.lastAt ? `Checked ${fmt.when(s.lastAt)}` : 'Not checked yet', s.status ? `answer ${s.status}` : null, s.ms != null ? ms(s.ms) : null, s.certDays != null ? `certificate ends in ${one(s.certDays, 'day')}` : null, `every ${s.everyMin >= 60 ? one(s.everyMin / 60, 'hour') : s.everyMin + ' min'}`].filter(Boolean).join(' · ')),
           s.note ? h('div', { class: 'sub' }, s.note) : null,
-          s.strip.length ? h('div', { class: 'strip', role: 'img', 'aria-label': `Last ${s.strip.length} checks: ${['up', 'slow', 'down', 'blocked'].map(k => `${s.strip.filter(c => c.state === k).length} ${k}`).join(', ')}` }, s.strip.map(c => h('i', { class: c.state, title: `${fmt.when(c.at)}: ${c.state}${c.ms != null ? ', ' + ms(c.ms) : ''}` }))) : null,
+          s.strip.length ? h('div', { class: 'strip', role: 'img', 'aria-label': `Last ${ui.plural(s.strip.length, 'check')}: ${['up', 'slow', 'down', 'blocked'].map(k => `${s.strip.filter(c => c.state === k).length} ${k}`).join(', ')}` }, s.strip.map(c => h('i', { class: c.state, title: `${fmt.when(c.at)}: ${c.state}${c.ms != null ? ', ' + ms(c.ms) : ''}` }))) : null,
           pts.length ? h('div', { style: { maxWidth: w + 'px' } }, drawLine(document, lineModel([{ name: 'Response time', points: pts }], { width: w, height: 90, pad: { l: 52, r: 8, t: 6, b: 20 }, yTicks: 2, xTicks: 3, timeLabel: (t) => fmt.time(new Date(t).toISOString()), valueLabel: (v) => ms(v) }), { title: `Response time of ${s.host}` })) : null,
           s.change ? h('details', null, h('summary', null, `Text changed ${fmt.when(s.changeAt)}: ${s.change.addedCount} added, ${s.change.removedCount} removed`),
             ...s.change.added.map(l => h('div', { class: 'sub' }, '+ ' + l)), ...s.change.removed.map(l => h('div', { class: 'sub' }, '− ' + l))) : s.changeCheckedAt ? h('div', { class: 'sub' }, `Text compared ${fmt.when(s.changeCheckedAt)}: no change.`) : null);
@@ -393,28 +412,30 @@ const SECTION_RENDER = {
   async devices({ h, api, card, btn, fmt, select, box, put, busy, toast, ui, pill, waitJob }) {
     const out = h('div');
     const paint = async () => {
-      const d = await api('m/network/devices');
+      const d = await api('m/network/devices'); const pushNow = await pushesOn(ui);
       const read = btn('Read the device list', { onClick: () => busy(read, 'Reading…', async () => { const r = await api('m/network/devices/read', { body: {} }); if (r.error) toast(r.error, 'err'); else if (r.first) toast('Remembered. New devices from now on raise a notice.', 'ok'); await paint(); }) });
       put(out, h('div', { class: 'row' }, read, select([['off', 'Only when I press it'], ['hourly', 'Every hour']], d.every, async (v) => { await api('m/network/devices/settings', { body: { every: v } }); toast('Saved', 'ok'); }, 'How often'),
-        ui.moduleOn('channels') ? h('label', { class: 'row', style: { gap: '6px' } }, h('input', { type: 'checkbox', checked: d.phone, onchange: async (e) => { await api('m/network/devices/settings', { body: { phone: e.target.checked } }); } }), h('span', { class: 'sub' }, 'Also tell my phone (ntfy) about new devices and domain reminders')) : null),
+        phoneOption(ui, { pushOn: pushNow, checked: d.phone, text: 'Also tell my phone about new devices and domain reminders', mark: ui.savedMark(), onChange: (on) => api('m/network/devices/settings', { body: { phone: on } }) })),
         h('p', { class: 'sub', style: { margin: '8px 0' } }, `Your own network only: ${d.subnets.length ? d.subnets.join(', ') : 'no home network address on this PC'}. Reads this PC’s ARP table; nothing is sent to the devices.${d.lastRead ? ` Last read ${fmt.when(d.lastRead.at)}.` : ''}`),
         ui.table([
-          { label: 'Name', render: x => { const i = h('input', { type: 'text', value: x.name || '', placeholder: 'Give it a name', 'aria-label': 'Name of ' + x.ip, style: { width: '160px' } }); i.onchange = async () => { await api(`m/network/devices/${encodeURIComponent(x.mac)}`, { method: 'PATCH', body: { name: i.value } }); toast('Saved', 'ok'); }; return i; } },
+          { label: 'Name', render: x => { const i = h('input', { type: 'text', value: x.name || '', placeholder: 'Give it a name', 'aria-label': 'Name of ' + x.ip, style: { width: '160px' } }); i.onchange = async () => { try { await api(`m/network/devices/${encodeURIComponent(x.mac)}`, { method: 'PATCH', body: { name: i.value } }); toast('Saved', 'ok'); } catch (e) { i.value = x.name || ''; toast(e, 'err'); } }; return i; } },
           { label: 'Address', key: 'ip' }, { label: 'Hardware address', render: x => h('span', { class: 'mono' }, x.mac) }, { label: 'First seen', render: x => fmt.when(x.firstSeen) }, { label: 'Last seen', render: x => fmt.when(x.lastSeen) },
           { label: 'Known', render: x => { const c = h('input', { type: 'checkbox', checked: x.known, 'aria-label': 'Known: ' + x.ip }); c.onchange = async () => { await api(`m/network/devices/${encodeURIComponent(x.mac)}`, { method: 'PATCH', body: { known: c.checked } }); paint(); }; return h('span', { class: 'row', style: { gap: '6px' } }, c, x.known ? null : pill('New', 'wait')); } }], d.devices, { empty: 'No devices remembered yet. Press Read the device list.' }));
     };
     // other PCs that can run models (the scan that knocks once on 11434 and 8787; asks you first)
     const lan = h('div');
+    let lanNotice = null;   // saved, but the address is not on this PC or the owner's network: said under the list
     const paintLan = async (last) => {
       if (last === undefined) last = (await api('m/network/lan')).last;
       const go = btn('Look for model PCs', { kind: 'ghost', onClick: async () => { go.disabled = true; go.textContent = 'Waiting for you…'; try { const { jobId } = await api('m/network/lan', { body: {} }); const jx = await waitJob(jobId, (x) => { if (x.status === 'running') go.textContent = 'Scanning…'; }); if (jx.status !== 'done') toast(jx.error || 'Scan stopped', 'err'); paintLan(jx.output || null); paint(); } catch (e) { toast(e.message, 'err'); paintLan(); } } });
       const nodes = ui.state.settings['network.lanNodes'] || [];
-      const addNode = async (d, s) => { const id = 'n' + d.ip.replace(/\./g, '') + s.port; const next = [...nodes.filter(n => n.id !== id), { id, name: `${s.what === 'ollama' ? 'Ollama' : 'Router'} on ${d.ip}`, baseUrl: s.baseUrl, models: s.models || [], model: (s.models || [])[0] || null, enabled: true }]; try { const r = await api('settings', { body: { 'network.lanNodes': next } }); ui.state.settings = r.settings; toast('Added. It shows on the Models page.', 'ok'); paintLan(last); } catch (e) { toast(e.message, 'err'); } };
+      const addNode = async (d, s) => { const id = 'n' + d.ip.replace(/\./g, '') + s.port; const next = [...nodes.filter(n => n.id !== id), { id, name: `${s.what === 'ollama' ? 'Ollama' : 'Router'} on ${d.ip}`, baseUrl: s.baseUrl, models: s.models || [], model: (s.models || [])[0] || null, enabled: true }]; try { const r = await api('settings', { body: { 'network.lanNodes': next } }); ui.state.settings = r.settings; lanNotice = r.notice || null; toast('Added. It shows on the Models page.', 'ok'); paintLan(last); } catch (e) { toast(e.message, 'err'); } };
       const withModels = (last?.devices || []).filter(d => d.services.length);
       put(lan, ui.line('Other PCs that can run models', 'Knocks once on ports 11434 (Ollama) and 8787 (a model router) of each address in your own network. Asks you first.', go),
-        last ? h('div', null, h('p', { class: 'sub' }, `Scanned ${fmt.when(last.at)} · ${last.probed} addresses checked`),
-          ui.table([{ label: 'Address', key: 'ip' }, { label: 'Runs', render: d => d.services.map(s => `${s.what === 'ollama' ? 'Ollama' : 'Router'}${s.confirmed ? ` (${(s.models || []).length} models)` : ' (not confirmed)'}`).join(', ') },
-            { label: '', render: d => h('span', null, ...d.services.filter(s => s.confirmed).map(s => nodes.some(n => n.baseUrl === s.baseUrl) ? pill('Added', 'ok') : btn('Add as a model node', { kind: 'ghost sm', onClick: () => addNode(d, s) }))) }], withModels, { empty: 'No PC on your network runs Ollama or a model router.' })) : h('p', { class: 'sub' }, 'Not scanned yet.'));
+        last ? h('div', null, h('p', { class: 'sub' }, `Scanned ${fmt.when(last.at)} · ${ui.plural(last.probed, "address", "addresses")} checked`),
+          ui.table([{ label: 'Address', key: 'ip' }, { label: 'Runs', render: d => d.services.map(s => `${s.what === 'ollama' ? 'Ollama' : 'Router'}${s.confirmed ? ` (${ui.plural((s.models || []).length, 'model')})` : ' (not confirmed)'}`).join(', ') },
+            { label: '', render: d => h('span', null, ...d.services.filter(s => s.confirmed).map(s => nodes.some(n => n.baseUrl === s.baseUrl) ? pill('Added', 'ok') : btn('Add as a model node', { kind: 'ghost sm', onClick: () => addNode(d, s) }))) }], withModels, { empty: 'No PC on your network runs Ollama or a model router.' })) : h('p', { class: 'sub' }, 'Not scanned yet.'),
+        lanNotice ? h('p', { class: 'sub', role: 'status', 'data-apd': 'node-notice' }, lanNotice) : null);
     };
     put(box, card(out), card(lan)); await Promise.all([paint(), paintLan()]);
   },
@@ -456,7 +477,7 @@ const SECTION_RENDER = {
     const column = (kind, title, desc, rows) => {
       const inp = h('input', { type: 'text', placeholder: 'example.com', style: { flex: '1', minWidth: '140px' }, 'aria-label': `Add to ${title}` });
       const prev = h('div', { class: 'sub', role: 'status', style: { minHeight: '18px' } }); let t = null;
-      inp.oninput = () => { clearTimeout(t); t = setTimeout(async () => { const v = inp.value.trim(); if (!v) return prev.textContent = ''; try { const p = await api('m/network/rules/preview?entry=' + encodeURIComponent(v)); prev.textContent = 'Covers: ' + p.covers; } catch (e) { prev.textContent = e.message; } }, 200); };
+      inp.oninput = () => { clearTimeout(t); t = setTimeout(async () => { const v = inp.value.trim(); if (!v) return prev.textContent = ''; try { const p = await api('m/network/rules/preview?entry=' + encodeURIComponent(v)); prev.textContent = 'Covers: ' + p.covers; } catch (e) { prev.textContent = ui.plainError(e); } }, 200); };
       const add = btn('Add', { onClick: async () => { try { const r = await api('m/network/rules', { body: { kind, entry: inp.value } }); inp.value = ''; prev.textContent = ''; paint(r); } catch (e) { toast(e.message, 'err'); } } });
       return card(h('h3', null, title), h('p', { class: 'sub' }, desc), h('div', { class: 'row', style: { marginTop: '6px' } }, inp, add), prev,
         rows.length ? h('div', null, ...rows.map(r => ui.line(r.domain, r.covers, btn('Remove', { kind: 'ghost sm', onClick: async () => { paint(await api('m/network/rules', { method: 'DELETE', body: { domain: r.domain } })); } })))) : empty('None yet.'));
@@ -507,13 +528,13 @@ const SECTION_RENDER = {
         ...r.checks.map(c => line(c.label, c.what + (c.value ? ` (${c.value})` : ''), pill(c.ok ? 'Set' : c.present ? 'Weak' : 'Missing', c.ok ? 'ok' : 'wait'))), h('p', { class: 'sub' }, r.note)),
       archive: (r) => {
         const side = (s, t, other) => { const B = new Set((other || '').split('\n')); return h('div', null, h('b', null, s.found ? `Captured ${fmt.date(s.at)}` : `Nothing near ${s.asked}`), t == null ? h('p', { class: 'sub' }, s.found ? 'Its text could not be read.' : '') : h('div', { class: 'cmp' }, t.split('\n').slice(0, 200).map(l => h('div', { class: B.has(l) ? '' : (other === r.toText ? 'del' : 'add') }, l)))); };
-        return card(h('h3', null, 'How the page looked'), src(r.source, r.cachedAt), r.note ? h('p', { class: 'sub' }, r.note) : null, r.diff ? h('p', null, `${r.diff.addedCount} lines new in the later capture, ${r.diff.removedCount} gone.`) : null,
+        return card(h('h3', null, 'How the page looked'), src(r.source, r.cachedAt), r.note ? h('p', { class: 'sub' }, r.note) : null, r.diff ? h('p', null, `${ui.plural(r.diff.addedCount, 'line')} new in the later capture, ${r.diff.removedCount} gone.`) : null,
           h('div', { class: 'two' }, side(r.from, r.fromText, r.toText), side(r.to, r.toText, r.fromText)), h('p', { class: 'sub' }, 'Red: only in the earlier capture. Green: only in the later one. Text from the archive is shown as plain text.'));
       },
       captures: (r) => card(h('h3', null, `Captures, one a month (${r.captures.length})`), src(r.source, r.cachedAt), h('p', { class: 'mono' }, r.captures.join('  ') || 'None.')),
       shodan: (r) => card(h('h3', null, 'Shodan'), src(r.source, r.cachedAt), line('Names', r.subdomains.join(', ') || 'None'), ui.table([{ label: 'Name', key: 'name' }, { label: 'Type', key: 'type' }, { label: 'Value', render: x => h('span', { class: 'mono' }, x.value) }, { label: 'Last seen', key: 'lastSeen' }], r.records)),
     };
-    const from = h('input', { type: 'date', value: '2015-01-01', 'aria-label': 'Earlier date' }), to = h('input', { type: 'date', value: new Date().toISOString().slice(0, 10), 'aria-label': 'Later date' });
+    const from = h('input', { type: 'date', value: '2015-01-01', 'aria-label': 'Earlier date' }), to = h('input', { type: 'date', value: todayIn(ui.state.settings?.timeZone), 'aria-label': 'Later date' });
     const keys = await api('m/network/osint/keys');
     const keyIn = h('input', { type: 'password', placeholder: 'Your Shodan key', autocomplete: 'off', style: { width: '200px' }, 'aria-label': 'Shodan key' });
     const shodanRow = keys.shodan ? h('div', { class: 'row' }, btn('Shodan: names and DNS', { kind: 'ghost sm', disabled: offline, onClick: osint('shodan', () => ({})) }), btn('Remove key', { kind: 'ghost sm', onClick: async () => { await api('m/network/osint/keys', { body: { service: 'shodan', key: '' } }); ui.go('network', 'lookup'); } }))

@@ -4,8 +4,11 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { id as makeId, now } from './storage.js';
+import { dayStart } from './model-door.js';
 
 export const SETTINGS_TOKEN = Symbol('apd.settings.token');
+/** The last millisecond of the day that holds `ms`, in the owner's zone (a day the clocks change included). */
+export function endOfDay(ms, timeZone) { const start = dayStart(ms, timeZone).getTime(); return dayStart(start + 26 * 3600000, timeZone).getTime() - 1; }
 export const LEVELS = ['open', 'careful', 'strict'];
 export const ACTIONS = ['file.write', 'file.delete', 'file.read.outside', 'shell.run', 'browser.open', 'browser.act', 'net.post', 'send.person', 'spend', 'module.toggle', 'install', 'login', 'calendar.write', 'custom'];
 // An install (a desk update, a module's packages, a local engine or model, any program) asks the owner each time, at
@@ -77,10 +80,10 @@ export class ApprovalDoor {
   setAutoApprove(minutesOrToday, token) {
     if (token !== SETTINGS_TOKEN) throw Object.assign(new Error('Auto-approve changes only from the desk controls.'), { code: 'forbidden' });
     let until = null;
-    if (minutesOrToday === 'today') { const d = new Date(); d.setHours(23, 59, 59, 999); until = d.toISOString(); }
+    if (minutesOrToday === 'today') until = new Date(endOfDay(Date.now(), this.settings.get('timeZone'))).toISOString();   // midnight where the owner is
     else if (Number(minutesOrToday) > 0) until = new Date(Date.now() + Number(minutesOrToday) * 60000).toISOString();
     this.settings.set('security.autoApproveUntil', until);
-    this.activity({ action: 'security.autoApprove', title: until ? `Auto-approve until ${until}` : 'Auto-approve off', how: 'owner' });
+    this.activity({ action: 'security.autoApprove', title: until ? `Auto-approve until ${ownerTime(until, this.settings)}` : 'Auto-approve off', how: 'owner' });
     this.events.emit('security', this.state());
     return this.state();
   }
@@ -268,6 +271,15 @@ export function redact(payload) {
     else out[k] = v;
   }
   return out;
+}
+/** A moment as the owner reads it: his zone and his date style from Settings, with the zone named. A zone or style this
+ *  computer does not know falls back to the computer's own, never to a raw UTC stamp. */
+export function ownerTime(iso, settings) {
+  const d = new Date(iso); const zone = settings?.get?.('timeZone') || undefined; const locale = settings?.get?.('locale') || undefined;
+  for (const [z, l] of [[zone, locale], [zone, undefined], [undefined, undefined]]) {
+    try { return new Intl.DateTimeFormat(l, { timeZone: z, day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' }).format(d); } catch { /* next */ }
+  }
+  return d.toString();
 }
 /** One stable fingerprint of what the owner was shown: every field of the payload, keys sorted, plus the amount. */
 export function bindHash(payload, amount) {

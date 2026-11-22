@@ -58,7 +58,7 @@ test('start files: the port comes from check.mjs, the update runs only when pres
   const bat = read('start.bat'); const sh = read('start.sh');
   assert.match(bat, /for \/f %%p in \('node "%~dp0setup\\check\.mjs" port'\) do set "APD_PORT=%%p"/);
   assert.match(sh, /PORT="\$\(node setup\/check\.mjs port\)" \|\| exit 1/);
-  assert.match(sh, /\[ -f setup\/apply-update\.mjs \] && node setup\/apply-update\.mjs/);
+  assert.match(sh, /\[ -f setup\/apply-update\.mjs \] && node (--no-warnings )?setup\/apply-update\.mjs/);
   assert.match(bat, /if "%RC%"=="75" goto :run/); assert.match(sh, /\[ "\$code" = 75 \]/);
   for (const rel of ['start.bat', 'stop.bat', 'setup/open.bat', 'start.sh', 'setup/check.mjs', 'setup/install.mjs', 'setup/assets/starting.html', 'install.bat', 'uninstall.bat']) assert.equal(read(rel).includes('3960'), false, `${rel}: the old port is gone`);
   assert.match(read('setup/assets/starting.html'), new RegExp(`\\|\\| ${DEFAULT_PORT};`), 'the start page has the same default port as check.mjs');

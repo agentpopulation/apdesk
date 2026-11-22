@@ -15,7 +15,7 @@ export async function activate(ctx) {
 
   async function embed(texts, signal) {
     if (Date.now() < embedOffUntil) return null;
-    try { const r = await ctx.model.embed({ texts }); if (r?.vectors?.length === texts.length) { ctx.kv.set('embed', { ok: true, model: r.model, provider: r.provider }); return r; } }
+    try { const r = await ctx.model.embed({ texts, signal }); if (r?.vectors?.length === texts.length) { ctx.kv.set('embed', { ok: true, model: r.model, provider: r.provider }); return r; } }
     catch (e) { embedOffUntil = Date.now() + 10 * 60_000; ctx.kv.set('embed', { ok: false, note: e.code === 'unavailable' ? 'No embedding model; search by words' : 'Embedding failed; search by words' }); }
     return null;
   }
@@ -88,10 +88,8 @@ export async function activate(ctx) {
     if (ctx.kv.get('chat:' + chatId, true) === false) return false;
     const chat = ctx.modules.api('chat'); if (!chat) return true;
     try {
-      const viaApi = chat.settings?.(chatId) ?? chat.chat?.(chatId)?.settings;
-      if (viaApi) return viaApi.remember !== false;
-      // until Chat exposes settings(chatId): read its own row, read-only
-      const r = ctx.db.get('SELECT opts FROM m_chat_chats WHERE id = ?', chatId); if (r?.opts && JSON.parse(r.opts)?.remember === false) return false;
+      const own = chat.settings?.(chatId);   // Chat's own options, through Chat: Memory reads no table of Chat's
+      if (own) return own.remember !== false;
     } catch {}
     return true;
   };
@@ -153,7 +151,7 @@ export async function activate(ctx) {
     const started = new Date().toISOString();
     // The nightly run is the desk's own upkeep (quiet: no notice, badge or Home line unless it fails); Run Dream now is the owner's.
     return ctx.jobs.start({ kind: 'memory.dream', title: 'Dream: tidy memories', quiet: source === 'nightly', input: { source, startedBy: STARTERS[source] }, async run(job) {
-      const report = await dream({ store, model: ctx.model, signal: job.signal, progress: (p, d) => job.progress(p, d), log: ctx.log });
+      const report = await dream({ store, model: ctx.model, signal: job.signal, progress: (p, d) => job.progress(p, d), log: ctx.log, timeZone: ctx.settings.get('timeZone'), locale: ctx.settings.get('locale') });
       const rec = { at: started, source, startedBy: STARTERS[source], merged: report.merged, lowered: report.lowered, reviewed: report.reviewed, summary: report.summary?.text || null, label: report.label };
       ctx.kv.set('lastDream', rec);
       ctx.kv.set('dreams', [rec, ...ctx.kv.get('dreams', [])].slice(0, 10));

@@ -79,9 +79,9 @@ export async function activate(ctx) {
     const asked = purposeLine({ query, about, country: askCountry(query), buyerProduct: buyerAsk(query) });
     const forWhat = purposeLine({ query, about }).replace(/^Leads for: /, '').replace(/\.$/, '');
     if (running) return { ok: true, already: true, jobId: running.id, title: running.title, text: `A lead search is already running for this chat: "${running.title}". Its progress and table will appear here; no second search was started.` };
-    const job = await ctx.jobs.start({ kind: 'sales.find', title: `Find ${count} leads: ${cutWords(query, 60)}`, agentId: 'closer', chatId, input: { query, count },
+    const job = await ctx.jobs.start({ kind: 'sales.find', title: `Find ${count} lead${count === 1 ? '' : 's'}: ${cutWords(query, 60)}`, agentId: 'closer', chatId, input: { query, count },
       async run(job) {
-        const card = (detail, progress, status = 'running') => job.card({ kind: 'progress', id: 'sales-find-' + job.id, title: `Finding ${count} leads`, detail, progress, status, jobId: job.id });
+        const card = (detail, progress, status = 'running') => job.card({ kind: 'progress', id: 'sales-find-' + job.id, title: `Finding ${count} lead${count === 1 ? '' : 's'}`, detail, progress, status, jobId: job.id });
         card('Planning searches', 0.02);
         const memKey = 'find:' + companyKey(query).slice(0, 120);
         const mem = more ? ctx.kv.get(memKey, { queries: [], urls: [] }) : { queries: [], urls: [] };
@@ -100,12 +100,12 @@ export async function activate(ctx) {
         const saved = [...saved0.filter(l => !l.unchecked?.length), ...saved0.filter(l => l.unchecked?.length)];   // checked first: "top n" takes them first
         const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
         ctx.kv.set(memKey, { queries: [...mem.queries, ...r.queries].slice(-200), urls: [...mem.urls, ...r.readUrls].slice(-600) });
-        const reason = saved.length < count ? [r.reason || `${r.pagesRead} pages read from ${r.searches} searches`, twice && plural(twice, 'was the same company found twice', 'were the same companies found twice'), wasThere && plural(wasThere, 'was already in your pipeline', 'were already in your pipeline')].filter(Boolean).join('; ') : '';
+        const reason = saved.length < count ? [r.reason || `${plural(r.pagesRead, 'page', 'pages')} read from ${plural(r.searches, 'search', 'searches')}`, twice && plural(twice, 'was the same company found twice', 'were the same companies found twice'), wasThere && plural(wasThere, 'was already in your pipeline', 'were already in your pipeline')].filter(Boolean).join('; ') : '';
         const where = r.country?.label || '';
         const purpose = purposeLine({ query, about, country: r.country, buyerProduct: r.buyerProduct, queries: r.queries });
         const looked = purposeLine({ country: r.country, buyerProduct: r.buyerProduct });
         const cards = leadsCards(saved, { query, reason, asked: count, where, forWhat, looked });
-        card(`read ${r.pagesRead} pages, ${saved.length} leads`, 1, 'done');
+        card(`read ${r.pagesRead} page${r.pagesRead === 1 ? '' : 's'}, ${saved.length} lead${saved.length === 1 ? '' : 's'}`, 1, 'done');
         for (const c of cards) job.card(c);
         // every number in this line is counted over the rows saved and shown now (closingLine), never over candidates checked
         const siteLine = saved.length ? ' ' + closingLine(saved) : '';
@@ -113,11 +113,11 @@ export async function activate(ctx) {
         // two groups: both numbers, never blurred; "places it in" only when every row shown was placed there
         const allPlaced = where && !saved.some(l => l.unchecked?.length);
         const groups = saved.length ? groupLine(saved, { country: r.country, kindAsk: r.kindAsk, asked: count }) : '';
-        const text = purpose + '\n\n' + (saved.length >= count ? `Found ${saved.length} leads, each with a page that names it${allPlaced ? ` and places it in ${where}` : ''}.${groups ? ' ' + groups : ''} They are in the pipeline as New. Nothing is sent.`
+        const text = purpose + '\n\n' + (saved.length >= count ? `Found ${saved.length} lead${saved.length === 1 ? '' : 's'}, each with a page that names it${allPlaced ? ` and places it in ${where}` : ''}.${groups ? ' ' + groups : ''} They are in the pipeline as New. Nothing is sent.`
           : `${saved.length} of ${count} found${allPlaced ? ` that could be placed in ${where}` : ''}: ${reason}.${groups ? ' ' + groups : ''} They are in the pipeline as New. Nothing is sent. Press Find more to keep looking from here.`) + siteLine;
         return { purpose, leadIds: saved.map(l => l.id), sites, searches: r.searches, ms: r.ms, rounds: r.rounds, extraRounds: r.extraRounds, found: saved.length, asked: count, pagesRead: r.pagesRead, queries: r.queries, rejected: r.rejected, reason, label: r.label, text, card: cards[0], tables: cards };
       } });
-    return { ok: true, jobId: job.id, purpose: asked, text: `${asked ? asked + ' ' : ''}Looking for ${count} leads now. Progress and the table will appear here.` };
+    return { ok: true, jobId: job.id, purpose: asked, text: `${asked ? asked + ' ' : ''}Looking for ${count} lead${count === 1 ? '' : 's'} now. Progress and the table will appear here.` };
   }
 
   // ---------------- drafts and the send rule

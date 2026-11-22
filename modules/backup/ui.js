@@ -1,4 +1,5 @@
 // Settings › Backup: back up, restore, activity log, updates and about.
+import { restartHelp } from './ui-restart.js';
 const CORE_WORDS = { settings: 'Settings', agents: 'Agents', jobs: 'Tasks and jobs', approvals: 'Approvals', activity: 'Activity log', secrets: 'Keys and logins', calls: 'Model calls', modules: 'Module switches', kv: 'Module settings', migrations: 'Database versions' };
 const HOW = { level: 'allowed by the level', auto: 'auto-approved', 'owner approve': 'you approved', 'owner deny': 'you denied', owner: 'you', timeout: 'timed out', halted: 'stopped by Panic', aborted: 'cancelled' };
 const ISO = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?Z/g;
@@ -22,7 +23,7 @@ async function waitForRestart(ui, note) {
     try { const r = await fetch('/api/panic', { cache: 'no-store' }); up = r.ok; } catch { up = false; }
     if (!up) wentDown = true;
     if (wentDown && up) { location.reload(); return; }
-    if (Date.now() - t0 > 30000) { note.textContent = 'The desk has not restarted by itself. Close this window, run stop.bat and start.bat, then open the desk again.'; return; }
+    if (Date.now() - t0 > 30000) { note.textContent = restartHelp(navigator.userAgentData?.platform || navigator.platform); return; }
   }
 }
 
@@ -69,15 +70,15 @@ function backupSection(el, ui) {
     const body = h('div', { class: 'stack' }, origin,
       ui.table([{ key: 'label', label: 'Part' }, { key: 'backup', label: 'In the backup' }, { key: 'now', label: 'On the desk now' }], groups),
       h('b', null, p.madeHere ? 'What changes in connections, access and agents' : 'What differs in connections, access and agents (held back unless you tick the box)'), sens,
-      h('p', { class: 'sub' }, `Files: ${p.files.inBackup} in the backup, ${p.files.replace} of them replace a file of the same name.`),
-      p.files.extra.length ? h('label', { class: 'row' }, wipe, `Also move the ${p.files.extra.length} files that are not in the backup to the bin`) : null,
+      h('p', { class: 'sub' }, `Files: ${ui.plural(p.files.inBackup, 'file')} in the backup; ${p.files.replace === 1 ? '1 of them replaces a file' : `${p.files.replace} of them replace a file`} of the same name.`),
+      p.files.extra.length ? h('label', { class: 'row' }, wipe, `Also move the ${p.files.extra.length === 1 ? 'one file that is' : `${p.files.extra.length} files that are`} not in the backup to the bin`) : null,
       h('p', { class: 'sub' }, 'A copy of the desk as it is now is made first. The desk restarts when the restore is done.'));
     modal({ title: 'Restore this backup?', body, wide: true, actions: [{ label: 'Cancel' }, { label: 'Restore', kind: 'stop', onClick: async () => {
       const note = h('p', { class: 'sub' }, 'Restoring…');
       modal({ title: 'Restoring', body: note });
       try {
         const r = await api('m/backup/restore/' + encodeURIComponent(b.name), { body: { wipeExtra: wipe.checked, previewId: p.previewId, trustAll: !p.madeHere && trust.checked } });
-        note.textContent = `Restored ${r.files.copied} files${r.files.movedToBin ? ' and moved ' + r.files.movedToBin + ' to the bin' : ''}.${r.heldBack?.length ? ' Kept as they were here: ' + r.heldBack.join('; ') + '.' : ''} The desk is restarting; this page reloads by itself.`;
+        note.textContent = `Restored ${ui.plural(r.files.copied, 'file')}${r.files.movedToBin ? ' and moved ' + r.files.movedToBin + ' to the bin' : ''}.${r.heldBack?.length ? ' Kept as they were here: ' + r.heldBack.join('; ') + '.' : ''} The desk is restarting; this page reloads by itself.`;
         waitForRestart(ui, note);
       } catch (e) { note.textContent = 'The restore did not happen: ' + e.message; }
       return false;        // keep the Restoring box open (the kit closes the host after onClick otherwise)

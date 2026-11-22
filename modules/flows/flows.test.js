@@ -222,3 +222,29 @@ for (const [name, p] of Object.entries(PLACES)) {
     } finally { await t.close(); }
   });
 }
+
+test('a schedule it cannot put in words says "schedule", the same word as the page and the Tasks list', () => {
+  assert.equal(describeCron('5 4 * * 1#2'), 'On a custom schedule');
+  assert.equal(describeCron('not a cron'), 'On a custom schedule');
+});
+
+test('a schedule of every one minute or every one hour reads right for one', () => {
+  assert.equal(describeCron('*/1 * * * *'), 'Every minute');
+  assert.equal(describeCron('*/5 * * * *'), 'Every 5 minutes');
+  assert.equal(describeCron('0 */1 * * *'), 'Every hour');
+  assert.equal(describeCron('15 */1 * * *'), 'Every hour at 15 past');
+  assert.equal(describeCron('0 */2 * * *'), 'Every 2 hours');
+});
+
+test('a fault inside a schedule route reaches the page as one plain line and a code, never program text', async () => {
+  const t = await testDesk({ modules: ['tasks', 'flows'], script: () => 'Done.' });
+  try {
+    await t.core.modules.set('flows', true);
+    const r = await t.call('/api/m/flows/chains', { body: { steps: [null] } });
+    assert.equal(r.status, 500);
+    assert.doesNotMatch(r.json.error, /Cannot read|null|undefined|TypeError/);
+    assert.equal(r.json.code, 'failed');
+    const w = await t.call('/api/m/flows/schedules', { body: { when: {}, what: 'x' } });
+    assert.equal(w.status, 400); assert.doesNotMatch(w.json.error, /object Object/);
+  } finally { await t.close(); }
+});

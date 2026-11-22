@@ -22,6 +22,7 @@ try {
     const errs = []; p.on('pageerror', e => errs.push(e.message));
     await p.goto(t.base + '/#/home'); await p.waitForTimeout(1200);
     await p.getByText('Skip, show everything').click().catch(() => {}); await p.waitForTimeout(600);
+    await p.locator('#onb .btn:has-text("Skip for now")').click({ timeout: 4000 }).catch(() => {}); await p.waitForTimeout(400);   // step two stays until it is saved or skipped
     const m = await p.evaluate(() => {
       const r = (el) => { const x = el.getBoundingClientRect(); return { l: Math.round(x.left), r: Math.round(x.right), w: Math.round(x.width) }; };
       const name = document.querySelector('.name'), menu = document.getElementById('menu'), panic = document.querySelector('.panic'), bar = document.querySelector('.bar');

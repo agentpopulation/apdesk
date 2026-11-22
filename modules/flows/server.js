@@ -198,7 +198,7 @@ export async function activate(ctx) {
   // ---------- schedules: create and edit
   async function resolveWhen({ cron, at, when }) {
     const tz = zone();
-    if (cron) { const c = validCron(cron, tz); if (!c) throw bad('That timetable is not valid.'); return { cron: c, at: null, words: when || null }; }
+    if (cron) { const c = validCron(cron, tz); if (!c) throw bad('That schedule is not valid.'); return { cron: c, at: null, words: when || null }; }
     if (at) { const t = Date.parse(at); if (Number.isNaN(t)) throw bad('That time is not valid.'); if (t <= Date.now()) throw bad('That time has already passed.'); return { cron: null, at: new Date(t).toISOString(), words: when || null }; }
     const p = parseWhen(when, { timeZone: tz });
     if (p) { if (p.at && Date.parse(p.at) <= Date.now()) throw bad('That time has already passed.'); return { cron: p.cron || null, at: p.at || null, words: when }; }
@@ -208,7 +208,7 @@ export async function activate(ctx) {
       { role: 'system', content: 'Turn the owner\'s words into one five-field cron expression (minute hour day-of-month month day-of-week) in his own local time. Reply with JSON only: {"cron":"..."}. If the words are not a repeating time, reply {"cron":null}.' },
       { role: 'user', content: String(when).slice(0, 300) }] });
     const c = validCron(r.json?.cron, tz);
-    if (!c) throw bad(`I could not read "${String(when).slice(0, 80)}" as a time. Try "every weekday at 9" or "tomorrow at 7".`);
+    if (!c) throw bad(typeof when === 'string' && when.trim() ? `I could not read "${when.trim().slice(0, 80)}" as a time. Try "every weekday at 9" or "tomorrow at 7".` : 'Say when, for example "every weekday at 9" or "tomorrow at 7".');
     return { cron: c, at: null, words: when, by: r.label };
   }
   /** A brief's name fits what it is: "Morning brief" only for a repeating schedule whose every run is in the morning (5 to 11),
@@ -268,7 +268,16 @@ export async function activate(ctx) {
 
   // ---------- routes (writes need the owner's session)
   const owner = (o) => { if (!o) throw bad('Only the owner at this desk can change schedules.', 403); };
-  const wrap = (fn) => async (req, res, a) => { try { ctx.json(res, await fn(a)); } catch (e) { ctx.json(res, { error: e.message }, e.status || (e.code === 'halted' ? 503 : 500)); } };
+  // a refusal (a status under 500) keeps its own sentence; any other fault is one plain line and a short code, the raw text in the log
+  const wrap = (fn) => async (req, res, a) => {
+    try { ctx.json(res, await fn(a)); }
+    catch (e) {
+      const status = e.status || (e.code === 'halted' ? 503 : 500);
+      if (status < 500) return ctx.json(res, { error: e.message }, status);
+      ctx.log('route', req.method, e?.stack || e); const f = ctx.plainFailure(e);
+      ctx.json(res, { error: f.line, code: f.code }, status);
+    }
+  };
   ctx.route('GET', '/schedules', wrap(() => ({ schedules: list(), timeZone: zone(), template: BRIEF_TEMPLATE, searchOn: !!ctx.modules.api('search'), salesOn: !!ctx.modules.api('sales') })));
   ctx.route('POST', '/schedules', wrap(({ body, owner: o }) => { owner(o); return schedule(body || {}); }));
   ctx.route('PATCH', '/schedules/:id', wrap(({ params, body, owner: o }) => { owner(o); return edit(params.id, body || {}); }));

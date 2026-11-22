@@ -2,7 +2,7 @@
   "id": "research",
   "number": 4,
   "name": "Research",
-  "description": "Deep research with numbered sources that were read and checked, the Council, and a swarm of agents working in parallel.",
+  "description": "Deep research with numbered sources that were read and checked, the Council, and a swarm that splits research into parts, a few read at a time.",
   "kind": "core",
   "defaultOn": true,
   "menu": [],

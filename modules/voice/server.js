@@ -5,9 +5,10 @@
 const HOSTED = [{ id: 'elevenlabs', name: 'ElevenLabs', speak: true, listen: true }, { id: 'deepgram', name: 'Deepgram' }, { id: 'cartesia', name: 'Cartesia' }, { id: 'assemblyai', name: 'AssemblyAI' }];
 import fs from 'node:fs';
 import path from 'node:path';
-import { scanFolder, run, killAll, wavSeconds } from './engines.js';
+import { scanFolder, run, killAll, wavSeconds, WHISPER_NAMES, PIPER_NAMES } from './engines.js';
 import { elevenSpeak, elevenTranscribe } from './hosted.js';
 
+const EXAMPLE_FOLDER = process.platform === 'win32' ? 'C:\\voice' : process.platform === 'darwin' ? '/Users/you/voice' : '/home/you/voice';
 const err = (message, status = 400) => Object.assign(new Error(message), { status });
 const stamp = () => new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '').replace('T', '-');
 
@@ -29,14 +30,16 @@ export async function activate(ctx) {
 
   const elevenKey = () => (typeof ctx.serviceKey === 'function' ? ctx.serviceKey('elevenlabs') : null);
   const elevenRefused = (why) => { if (typeof ctx.serviceKeyRefused === 'function') ctx.serviceKeyRefused('elevenlabs', why); };
-  /** Which engine the server uses: the owner's choice, else local when found, else ElevenLabs when its key is there. */
+  /** Which engine the desk's own tools use: the owner's choice, nothing else. Browser is the page's own engine, so the desk
+   *  side has none to run for it, unless an engine on this PC was found. A hosted engine is never used unless it was chosen. */
   const pick = (kind) => {
     const want = kind === 'listen' ? prefs().dictation : prefs().readAloud; const e = engines();
     const local = kind === 'listen' ? !!(e.whisper && e.whisperModel) : !!(e.piper && e.piperVoice);
     if (want === 'elevenlabs') return 'elevenlabs';
     if (want === 'local' || local) return 'local';
-    return elevenKey() ? 'elevenlabs' : 'local';
+    return 'browser';
   };
+  const browserOnly = () => err('Voice is set to Browser, which works only in the page. To use it from an agent, pick On this PC or ElevenLabs in Settings, Voice.', 409);
   const hostedOk = async (what, agentId) => {
     const d = await ctx.approval.request({ agentId, chatId: 'voice', action: 'net.post', title: `Send ${what} to ElevenLabs`, detail: 'Voice · hosted engine you chose' });
     if (!d.ok) throw err(d.reason === 'halted' ? 'Stopped.' : 'Sending audio to ElevenLabs was not allowed.', 403);
@@ -45,7 +48,8 @@ export async function activate(ctx) {
   /** Speech to text: whisper.cpp on this PC, or ElevenLabs. `file` is workspace-relative (or absolute inside the workspace). */
   async function transcribe(file, { signal, language, agentId = null } = {}) {
     const absIn = path.isAbsolute(String(file)) ? path.resolve(file) : ctx.workspacePath(String(file || ''));
-    if (pick('listen') === 'elevenlabs') {
+    const how = pick('listen'); if (how === 'browser') throw browserOnly();
+    if (how === 'elevenlabs') {
       const key = elevenKey(); if (!key) throw err('No ElevenLabs key. Add one on the Models page under service keys.', 409);
       if (!absIn.startsWith(path.resolve(ctx.workspace) + path.sep) || !fs.existsSync(absIn)) throw err('That file is not in the workspace.', 404);
       await hostedOk('a recording', agentId);
@@ -72,7 +76,8 @@ export async function activate(ctx) {
   async function speak(text, { signal, agentId = null, chatId = null } = {}) {
     const t = String(text || '').trim().slice(0, 5000);
     if (!t) throw err('Nothing to read.');
-    if (pick('speak') === 'elevenlabs') {
+    const how = pick('speak'); if (how === 'browser') throw browserOnly();
+    if (how === 'elevenlabs') {
       const key = elevenKey(); if (!key) throw err('No ElevenLabs key. Add one on the Models page under service keys.', 409);
       await hostedOk('text to read aloud', agentId);
       const name = `speech-${stamp()}-${Math.random().toString(36).slice(2, 6)}.mp3`;
@@ -102,6 +107,7 @@ export async function activate(ctx) {
       prefs: p,
       whisper: { found: !!e.whisper, file: e.whisper ? path.basename(e.whisper) : null, models: e.whisperModels.map(m => path.basename(m)), model: e.whisperModel ? path.basename(e.whisperModel) : null },
       piper: { found: !!e.piper, file: e.piper ? path.basename(e.piper) : null, voices: e.piperVoices.map(m => path.basename(m)), voice: e.piperVoice ? path.basename(e.piperVoice) : null },
+      names: { whisper: WHISPER_NAMES[0], piper: PIPER_NAMES[0] }, exampleFolder: EXAMPLE_FOLDER,
       folderExists: !!p.folder && fs.existsSync(p.folder),
       hosted: HOSTED.map(x => ({ id: x.id, name: x.name, hasKey: typeof ctx.serviceKey === 'function' && !!ctx.serviceKey(x.id), built: !!(x.speak || x.listen) })),
       engines: {
@@ -114,11 +120,23 @@ export async function activate(ctx) {
   ctx.route('GET', '/status', (req, res, arg) => ctx.json(res, status(arg.query.fresh === '1')));
   ctx.route('POST', '/settings', (req, res, arg) => {
     owner(arg); const b = arg.body || {};
-    if (b.folder !== undefined) { const f = String(b.folder || '').trim(); if (f && !path.isAbsolute(f)) throw err('Enter the full folder path, for example C:\\voice.'); kv.set('folder', f); cache = null; }
+    const f = b.folder !== undefined ? String(b.folder || '').trim() : undefined;
+    if (f && !path.isAbsolute(f)) throw err('Enter the full folder path, for example ' + EXAMPLE_FOLDER + '.');
+    // An engine that cannot work on this PC is refused with the reason, so the choice kept is always one the desk can use
+    // (the page dims the same choices; an agent, an old page or a restore is refused here too). Checked before anything is kept.
+    const e = f !== undefined ? scanFolder(f) : engines();
+    const cannot = (kind, v) => {
+      if (!['browser', 'local', 'elevenlabs'].includes(v)) return 'Choose Browser, On this PC or ElevenLabs.';
+      if (v === 'elevenlabs' && !elevenKey()) return 'ElevenLabs is not available: there is no ElevenLabs key yet. Add one on the Models page.';
+      if (v === 'local' && kind === 'listen' && !(e.whisper && e.whisperModels?.length)) return e.whisper ? 'On this PC is not available: no whisper model file was found in the folder.' : 'On this PC is not available: whisper.cpp was not found in the folder.';
+      if (v === 'local' && kind === 'speak' && !(e.piper && e.piperVoices?.length)) return e.piper ? 'On this PC is not available: no Piper voice was found in the folder.' : 'On this PC is not available: Piper was not found in the folder.';
+      return '';
+    };
+    for (const [k, kind] of [['dictation', 'listen'], ['readAloud', 'speak']]) if (b[k] !== undefined) { const why = cannot(kind, b[k]); if (why) throw err(why, 409); }
+    if (f !== undefined) { kv.set('folder', f); cache = null; }
     for (const k of ['whisperModel', 'piperVoice', 'language', 'voiceName']) if (b[k] !== undefined) kv.set(k, String(b[k] || ''));
-    const eng = (v) => ['local', 'elevenlabs'].includes(v) ? v : 'browser';
-    if (b.dictation !== undefined) kv.set('dictation', eng(b.dictation));
-    if (b.readAloud !== undefined) kv.set('readAloud', eng(b.readAloud));
+    if (b.dictation !== undefined) kv.set('dictation', b.dictation);
+    if (b.readAloud !== undefined) kv.set('readAloud', b.readAloud);
     ctx.json(res, status(true));
   });
   ctx.route('POST', '/transcribe', async (req, res, arg) => ctx.json(res, await transcribe(arg.body?.path, {})));

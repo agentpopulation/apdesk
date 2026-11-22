@@ -1,1 +1,1 @@
-{ "id": "looks", "number": 30, "name": "Looks", "description": "Festival themes, office scenes and avatar sets. Parked: not built in this version.", "kind": "parked", "defaultOn": false, "status": "stub" }
+{ "id": "looks", "number": 30, "name": "Looks", "description": "Festival themes and office scenes. Parked: not built in this version. The drawn avatars live in Agents.", "kind": "parked", "defaultOn": false, "status": "stub" }

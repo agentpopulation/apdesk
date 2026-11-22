@@ -56,6 +56,12 @@ project.
 - OpenStreetMap (ODbL) https://www.openstreetmap.org: map links in Life.
 - DuckDuckGo (HTML results page) and Hacker News search by Algolia: keyless search providers; a challenge page is never worked around (`modules/search/providers.js`).
 - Serper, Brave Search, Tavily, Exa and Jina (hosted services, only with the owner's own key): keyed search providers (`modules/search/providers.js`).
+- Firecrawl (hosted service, only with the owner's own key) https://firecrawl.dev: an optional second try for a page the desk's own read returned empty, Settings › Page reading (`modules/search/services.js`). Jina Reader (hosted service, https://jina.ai/reader) serves the same purpose, with or without the owner's key (`modules/search/services.js`).
+- RIPEstat (RIPE NCC hosted data service) https://stat.ripe.net: the network and AS name for an address in Network (`modules/network/conn.js`, `modules/network/server.js`).
+- crt.sh (public certificate logs) https://crt.sh: subdomains seen in certificate logs for a domain the owner names (`modules/network/osint.js`).
+- Internet Archive Wayback Machine https://archive.org/help/wayback_api.php: earlier copies of a page for a domain the owner names (`modules/network/osint.js`).
+- Shodan (hosted service, only with the owner's own key) https://developer.shodan.io/api: the subdomain list for a domain the owner names (`modules/network/osint.js`).
+- GitHub (hosted service) https://github.com/agentpopulation/apdesk: the release list and the signed update download, used only when the owner checks for or installs an update (`app/core/update.js`).
 - Cloudflare DNS over HTTPS, rdap.org and the IANA RDAP bootstrap: domain lookups in Network (`modules/network/lookup.js`); speed.cloudflare.com: the speed test (`modules/network/speed.js`).
 - Model providers (hosted services, the owner's own keys) and the no-sign-in upstreams of the built-in Free API by Agent Population Desk (OVH AI Endpoints, Pollinations): called over their public APIs; the list is in `app/core/providers.json`, terms and limits in `modules/models/catalog.js`.
 - llama.cpp (MIT) https://github.com/ggml-org/llama.cpp: the optional local model engine. Its `llama-server` program is downloaded by the owner's choice and run as a separate program on this PC (`modules/models/local-engine.js`); no llama.cpp code is copied.

@@ -62,7 +62,7 @@ export async function activate(ctx) {
   }
 
   ctx.route('GET', '/sites', (req, res) => ctx.json(res, { sites: ctx.db.all('SELECT * FROM m_studio_sites ORDER BY at DESC LIMIT 50').map(siteOut) }));
-  ctx.route('POST', '/sites', async (req, res, { body }) => { try { const j = await startBuild({ brief: body?.brief, name: body?.name }); ctx.json(res, { jobId: j.id }); } catch (e) { ctx.json(res, { error: e.message }, e.status || 500); } });
+  ctx.route('POST', '/sites', async (req, res, { body }) => { try { const j = await startBuild({ brief: body?.brief, name: body?.name }); ctx.json(res, { jobId: j.id }); } catch (e) { ctx.json(res, { error: e.status < 500 ? e.message : ctx.plainFailure(e).line }, e.status || 500); } });
   ctx.route('GET', '/preview/:name/*', (req, res, { params }) => {
     const rel = params.rest || 'index.html';
     let file; try { file = ctx.workspacePath('sites', params.name, rel || 'index.html'); } catch { return ctx.json(res, { error: 'Not found' }, 404); }
@@ -83,7 +83,7 @@ export async function activate(ctx) {
   ctx.route('DELETE', '/asks/:id', (req, res, { params }) => { ctx.db.run('DELETE FROM m_studio_asks WHERE id = ?', params.id); ctx.json(res, { ok: true }); });
   ctx.route('POST', '/replay', async (req, res, { body }) => {
     try { const j = await ctx.jobs.start({ kind: 'studio.replay', title: 'Replay an ask on two models', input: { ask: String(body?.ask || '').slice(0, 200) }, run: async (job) => { jobIds.add(job.id); return replay(body || {}, job); } }); ctx.json(res, { jobId: j.id }); }
-    catch (e) { ctx.json(res, { error: e.message }, e.status || 500); }
+    catch (e) { ctx.json(res, { error: e.status < 500 ? e.message : ctx.plainFailure(e).line }, e.status || 500); }
   });
   ctx.route('GET', '/replays', (req, res) => ctx.json(res, { replays: ctx.db.all('SELECT * FROM m_studio_replays ORDER BY at DESC LIMIT 20').map(r => ({ id: r.id, at: r.at, ask: r.ask, results: JSON.parse(r.results) })) }));
 

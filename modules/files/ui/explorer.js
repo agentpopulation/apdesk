@@ -582,7 +582,7 @@ export function mountFileExplorer(host, deps) {
     if (prefs.view === 'details') {
       row.append(
         nameCell,
-        h('span', 'fx-cell is-mtime', formatDate(item.mtime)),
+        h('span', 'fx-cell is-mtime', formatDate(item.mtime, { fmt: deps.fmt })),
         h('span', 'fx-cell is-type', itemMeta(item)),
         h('span', 'fx-cell is-by', madeBy(item)),
         h('span', 'fx-cell is-bytes', item.kind === 'file' ? formatSize(item.bytes) : ''),
@@ -926,7 +926,7 @@ export function mountFileExplorer(host, deps) {
     const props = h('div', 'fx-props');
     props.append(paneRow('Type', typeLabel(item)));
     if (item.kind === 'file') props.append(paneRow('Size', formatSize(item.bytes)));
-    props.append(paneRow(item.source === 'bin' ? 'Deleted' : 'Modified', formatDate(item.mtime)));
+    props.append(paneRow(item.source === 'bin' ? 'Deleted' : 'Modified', formatDate(item.mtime, { fmt: deps.fmt, full: true })));
     if (stat && stat.location) props.append(paneRow('Location', stat.location));
     if (item.source === 'bin' && item.from) props.append(paneRow('From', item.from));
     if (item.source !== 'bin' && item.source !== 'root') {

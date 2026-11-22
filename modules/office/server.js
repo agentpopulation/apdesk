@@ -67,7 +67,7 @@ export async function activate(ctx) {
     async run(args, call) {
       try {
         const r = await makeTable(args, whoOf(call));
-        const c = card(r, `${r.rows} rows, ${r.columns} columns`); call?.emitCard?.(c);
+        const c = card(r, `${r.rows} row${r.rows === 1 ? '' : 's'}, ${r.columns} column${r.columns === 1 ? '' : 's'}`); call?.emitCard?.(c);
         return { ok: true, path: r.path, name: r.name, rows: r.rows, cards: [c] };
       } catch (e) { return { ok: false, error: e.message }; }
     },

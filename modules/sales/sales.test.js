@@ -937,7 +937,7 @@ test('purpose line: "Leads for" names the owner\'s saved text or quotes his word
     t.core.settings.set('business.about', about);
     stubSearch(t, { 'https://list.example/a': 'Quillpay is a Pune-based payroll software company.' + pad5 }, (q) => /official website/.test(q) ? [] : [{ url: 'https://list.example/a' }]);
     const s = await t.core.modules.runTool('leads_find', { query: ABOUT_QUERY(about), count: 1 }, { chatId: 'c1' });
-    assert.match(s.text, /^Leads for: Payroll software for small firms .* \(from what you told me you sell\)\. I looked for: companies in India\. Looking for 1 leads now/, s.text);
+    assert.match(s.text, /^Leads for: Payroll software for small firms .* \(from what you told me you sell\)\. I looked for: companies in India\. Looking for 1 lead now/, s.text);
     const out = (await t.core.jobs.wait(s.jobId, 60000)).output;
     assert.match(out.text, /^Leads for: Payroll software .*\(from what you told me you sell\)\. I looked for: companies in India\. Searches I ran: "/, out.text);
     assert.match(out.card.title, /for Payroll software for small firms .*\(from what you told me you sell\)/, out.card.title);

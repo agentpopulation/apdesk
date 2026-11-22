@@ -48,12 +48,21 @@ if node setup/check.mjs running >/dev/null 2>&1; then
   exit 0
 fi
 
+# A proxy set in HTTPS_PROXY or HTTP_PROXY (any case) is used for the desk's own web calls (Node reads it when
+# NODE_USE_ENV_PROXY is 1). This computer itself never goes through the proxy; Node reads no_proxy before NO_PROXY.
+if [ -z "${NODE_USE_ENV_PROXY:-}" ] && [ -n "${HTTPS_PROXY:-}${https_proxy:-}${HTTP_PROXY:-}${http_proxy:-}" ]; then
+  NODE_USE_ENV_PROXY=1
+  NO_PROXY="127.0.0.1,localhost,::1${no_proxy:+,$no_proxy}${NO_PROXY:+,$NO_PROXY}"
+  no_proxy="$NO_PROXY"
+  export NODE_USE_ENV_PROXY NO_PROXY no_proxy
+fi
+
 # 5. Open the browser once the desk answers, and run the desk in this window.
 (node setup/check.mjs wait >/dev/null 2>&1 && open_desk) &
 echo "AP Desk is starting at $URL"
 echo "Press Ctrl+C in this window to stop it."
 while :; do
-  [ -f setup/apply-update.mjs ] && node setup/apply-update.mjs
+  [ -f setup/apply-update.mjs ] && node --no-warnings setup/apply-update.mjs
   node --no-warnings app/server.js
   code=$?
   [ "$code" = 75 ] || break   # 75 means the desk asked to be restarted

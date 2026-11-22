@@ -103,7 +103,7 @@ export async function activate(ctx) {
   ctx.route('GET', '/runs/:id', (req, res, { params }) => { const r = get(params.id); r ? ctx.json(res, r) : ctx.json(res, { error: 'Not found' }, 404); });
   ctx.route('POST', '/run', async (req, res, { body, owner }) => {
     if (!owner) return ctx.json(res, { error: 'Runs start from the Code page on this desk.' }, 403);
-    try { ctx.json(res, await start({ ...body, agentId: null })); } catch (e) { ctx.json(res, { error: e.message }, e.status || 500); }
+    try { ctx.json(res, await start({ ...body, agentId: null })); } catch (e) { ctx.json(res, { error: e.status < 500 ? e.message : ctx.plainFailure(e).line }, e.status || 500); }
   });
   ctx.route('POST', '/image', async (req, res, { body, owner }) => {
     if (!owner) return ctx.json(res, { error: 'Only the owner can get images.' }, 403);

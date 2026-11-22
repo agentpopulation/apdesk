@@ -722,6 +722,10 @@ export async function activate(ctx) {
   ctx.route('POST', '/spendgate', (req, res, { body, owner }) => {
     if (ownerOnly(res, owner)) return;
     if (body?.option != null && !OPTIONS.includes(body.option)) return ctx.json(res, { error: 'Choose Local only, Free, or Paid, capped.' }, 400);
+    // a cap is a number, zero or more: an empty box, a word or true is refused, so a typo never turns a cap off
+    const amount = (v) => (typeof v === 'number' || (typeof v === 'string' && v.trim() !== '')) && Number.isFinite(Number(v)) ? Number(v) : NaN;
+    for (const k of ['capSessionMinor', 'capDayMinor']) if (body?.[k] != null && !(amount(body[k]) >= 0)) return ctx.json(res, { error: 'A cap must be a number, zero or more. Zero means no cap.' }, 400);
+    if (body?.limits != null && (typeof body.limits !== 'object' || Object.entries(body.limits).some(([k, v]) => Object.hasOwn(LIMITS, k) && !(amount(v) >= 1)))) return ctx.json(res, { error: 'A limit must be a whole number, 1 or more.' }, 400);
     const patch = {};
     if (OPTIONS.includes(body?.option)) patch.option = body.option;
     if (body?.capSessionMinor != null) patch.capSessionMinor = body.capSessionMinor;

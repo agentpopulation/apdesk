@@ -71,8 +71,8 @@ export function modelOrder(active, { mode = 'free', tiers = {}, paidAllowed = ()
 /** "2 hours 10 minutes" */
 export function span(ms) {
   const m = Math.max(0, Math.round(ms / 60000)); const h = Math.floor(m / 60); const d = Math.floor(h / 24);
-  if (d >= 2) return `${d} days ${h % 24} hours`;
-  if (h) return `${h} hour${h === 1 ? '' : 's'}${m % 60 ? ` ${m % 60} minutes` : ''}`;
+  if (d >= 2) return `${d} days ${h % 24} ${h % 24 === 1 ? 'hour' : 'hours'}`;
+  if (h) return `${h} hour${h === 1 ? '' : 's'}${m % 60 ? ` ${m % 60} ${m % 60 === 1 ? 'minute' : 'minutes'}` : ''}`;
   return `${m} minute${m === 1 ? '' : 's'}`;
 }
 

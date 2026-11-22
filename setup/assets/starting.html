@@ -30,7 +30,8 @@ h1 { font-size: 24px; line-height: 1.2; margin: 0 0 6px; font-weight: 800; lette
 .help b { color: var(--fg); font-weight: 600; }
 .help a { color: var(--brand); }
 [hidden] { display: none !important; }
-.done .bar { visibility: hidden; }
+.done .bar, .stopped .bar { visibility: hidden; }
+.stopped #status { color: var(--fg); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -44,6 +45,10 @@ h1 { font-size: 24px; line-height: 1.2; margin: 0 0 6px; font-weight: 800; lette
     <p>To see what the desk is doing, or what went wrong, open <b>AP Desk log</b> in the Start menu (the file data\desk.log in the AP Desk folder). If you started it with start.bat, the same lines are in its window.</p>
     <p>If the desk has stopped, start it again from the Start menu.</p>
   </div>
+  <div class="help" id="stopped" hidden>
+    <p id="todo"></p>
+    <p>What the desk wrote is in <b>AP Desk log</b> in the Start menu (the file data\desk.log in the AP Desk folder).</p>
+  </div>
 </main>
 <script>
 // Waits for the desk on this PC and closes itself once the desk answers; the start file then opens the desk in
@@ -51,14 +56,49 @@ h1 { font-size: 24px; line-height: 1.2; margin: 0 0 6px; font-weight: 800; lette
 // browser would not send the cookie that tells the desk this is your browser, and you would be asked for the code.
 // A page from a file cannot read the desk's answers either, but it may load one of the desk's own small files:
 // when that loads, the desk is up. The port is 3445 unless "?port=" says otherwise.
+// It may also load a script file: the start writes data\start-state.js (setup\background.mjs), and when that says the
+// desk stopped, or did not answer in time, this page says so, with what to do, instead of waiting on.
+// The words are all here; the file carries only a word for why.
 (function () {
   var port = Number(new URLSearchParams(location.search).get('port')) || 3445;
   var desk = 'http://127.0.0.1:' + port + '/';
   var status = document.getElementById('status');
   var started = Date.now();
+  var stateUrl = new URL('../../data/start-state.js', location.href).href;
+  var WHY = {
+    port: ['The desk did not start: another program is using its port.', 'Stop the other copy with Stop AP Desk in the Start menu, or restart the PC. Then start AP Desk again.'],
+    missing: ['The desk did not start: some of its program files are missing.', 'An install or update did not finish. Run install.bat from the AP Desk download again; your data is kept. Then start AP Desk again.'],
+    disk: ['The desk stopped: the disk is full.', 'Free some space on the disk, then start AP Desk again.'],
+    error: ['The desk stopped because of an error.', 'Start AP Desk again. If it stops again, the log below says why.'],
+    asked: ['The desk was stopped.', 'Start AP Desk again when you want it.'],
+    noanswer: ['The desk has not answered for two minutes.', 'It may still be starting. If this page does not change soon, open the log below to see what it is doing, or restart the PC and start AP Desk again.']
+  };
+  var shown = '';
+  function stopped(s) {
+    var w = WHY[s.state === 'noanswer' ? 'noanswer' : s.why] || WHY.error;
+    if (shown === w[0]) return;
+    shown = w[0];
+    status.textContent = w[0];
+    document.getElementById('todo').textContent = w[1];
+    document.getElementById('help').hidden = true;
+    document.getElementById('stopped').hidden = false;
+    document.body.classList.add('stopped');
+  }
+  function readState() {
+    var s = document.createElement('script');
+    s.src = stateUrl + '?t=' + Date.now();
+    s.onload = s.onerror = function () {
+      s.remove();
+      var st = window.APD_START;
+      if (st && (st.state === 'stopped' || st.state === 'noanswer') && st.at >= started - 60000) stopped(st);
+    };
+    document.head.appendChild(s);
+  }
   function ready() {
     status.textContent = 'Your desk is ready. It opens in its own window.';
     document.getElementById('help').hidden = true;
+    document.getElementById('stopped').hidden = true;
+    document.body.classList.remove('stopped');
     document.body.classList.add('done');
     setTimeout(function () {
       window.close();
@@ -72,7 +112,8 @@ h1 { font-size: 24px; line-height: 1.2; margin: 0 0 6px; font-weight: 800; lette
     s.onload = function () { s.remove(); ready(); };
     s.onerror = function () {
       s.remove();
-      if (Date.now() - started >= 60000) document.getElementById('help').hidden = false;
+      if (Date.now() - started >= 60000 && !shown) document.getElementById('help').hidden = false;
+      readState();
       setTimeout(probe, 700);
     };
     document.head.appendChild(s);

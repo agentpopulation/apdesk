@@ -20,7 +20,7 @@ export async function activate(ctx) {
   const readCache = new Map();            // normUrl -> { at, value | error } 15 minutes, newest 300
   let sidecar = { url: null, at: 0 };
   const outcomes = new Map();             // provider id -> { ok, at, note, since }: the last REAL outcome of each provider
-  const record = (attempts) => { for (const a of attempts || []) { if (a.notTried) continue; const prev = outcomes.get(a.provider); const at = new Date().toISOString(); outcomes.set(a.provider, a.ok ? { ok: true, at, note: a.n ? `answered with ${a.n} results` : 'answered with no results' } : { ok: false, at, note: a.note, since: prev && !prev.ok ? prev.since : at }); } };
+  const record = (attempts) => { for (const a of attempts || []) { if (a.notTried) continue; const prev = outcomes.get(a.provider); const at = new Date().toISOString(); outcomes.set(a.provider, a.ok ? { ok: true, at, note: a.n ? `answered with ${a.n} result${a.n === 1 ? '' : 's'}` : 'answered with no results' } : { ok: false, at, note: a.note, since: prev && !prev.ok ? prev.since : at }); } };
   const OFFLINE_LINE = 'The desk is offline. Search and reading need the internet.';
   const offline = () => ctx.settings.get('online') === false;
   const refuseOffline = () => { if (offline()) throw Object.assign(new Error(OFFLINE_LINE), { code: 'offline' }); };

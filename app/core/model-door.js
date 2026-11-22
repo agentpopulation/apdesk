@@ -68,6 +68,12 @@ export function smallModel({ params, bytes, name } = {}) {
 const ENV_KEYS = ['OPENROUTER_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GROQ_API_KEY', 'GEMINI_API_KEY', 'MISTRAL_API_KEY', 'DEEPSEEK_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'CEREBRAS_API_KEY', 'XAI_API_KEY'];
 
 const BIG = { input: 1e6, output: 1e6 };
+// A day or month spend limit of 0: the owner has set no limits (a currency with no usual amounts, or a new currency).
+// A payment then asks every time (approval door); a model call cannot be asked about before its cost is known, so a paid
+// one is not made. The same words are on first start, after a currency change and in Payments.
+export const NO_LIMITS = 'no limits';
+export const PAID_OFF = 'paid model calls are off until you set limits in Settings › Payments and spend. Free and local models work.';
+export const zeroLimit = (v) => v != null && v !== '' && Number(v) === 0;
 const KV_NS = 'core.model';
 /** Midnight at the start of the day (or of the month) that holds `ms`, in the owner's zone, as a Date. A zone this
  *  computer does not know falls back to the computer's own midnight. */
@@ -82,9 +88,94 @@ export function dayStart(ms, timeZone, month = false) {
 }   // a stand-in token count: does this route charge at all?
 export class ModelError extends Error { constructor(code, message, extra = {}) { super(message); this.code = code; Object.assign(this, extra); } }
 
+// ---------- a failure, as a person reads it
+// Network codes that mean the request never left this PC (no network, no name lookup): the PC is not online.
+const NOT_ONLINE = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'ENETDOWN', 'EHOSTUNREACH', 'EHOSTDOWN']);
+/** The one plain line per kind of failure. The raw text goes to the desk's log only. */
+export const FAILURE_LINES = Object.freeze({
+  not_online: 'This PC is not online. Local models still work.',
+  refused: 'The provider refused the request. Check the key in Models.',
+  busy: 'The provider is busy right now. Try again in a minute.',
+  no_credit: 'The provider wants payment: the key is out of credit. Check the key and its credit in Models.',
+  timeout: 'No answer in time. Try again in a minute.',
+  not_found: 'The provider does not have that. Pick another model in Models.',
+  no_answer: 'Nothing answers at that address. Check that the program there is running.',
+  broke: 'The connection broke. Try again.',
+  provider_fault: 'The provider had a problem on its side. Try again later.',
+  halted: 'Everything is stopped. Press Resume first.',
+  stopped: 'Stopped.',
+  offline: 'The desk is offline. Go online, or use a local model.',
+  failed: 'Something went wrong on this PC. The details are in the desk\'s log.',
+});
+/** What kind of failure this is: one of the keys of FAILURE_LINES. Read from codes and statuses, never from the words. */
+export function failureKind(e) {
+  if (!e || typeof e !== 'object') return 'failed';
+  if (e.why && Object.hasOwn(FAILURE_LINES, e.why)) return e.why;
+  if (e.code === 'halted') return 'halted';
+  if (e.code === 'aborted' || e.name === 'AbortError') return 'stopped';
+  if (e.code === 'offline') return 'offline';
+  const codes = [e.code, e.cause?.code, e.cause?.cause?.code, ...(Array.isArray(e.cause?.errors) ? e.cause.errors.map(x => x?.code) : [])].filter(Boolean).map(String);
+  if (codes.some(c => NOT_ONLINE.has(c))) return 'not_online';
+  if (codes.includes('ECONNREFUSED')) return 'no_answer';
+  if (e.name === 'TimeoutError' || e.code === 'timeout' || e.code === 'stalled' || codes.some(c => /^(ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_BODY_TIMEOUT)$/.test(c))) return 'timeout';
+  if (codes.some(c => /^(ECONNRESET|EPIPE|UND_ERR_SOCKET|UND_ERR_CLOSED)$/.test(c))) return 'broke';
+  const s = Number(e.status);
+  if (s === 401 || s === 403) return 'refused';
+  if (s === 402) return 'no_credit';
+  if (s === 429 || s === 503 || s === 529) return 'busy';
+  if (s === 404) return 'not_found';
+  if (s >= 500) return 'provider_fault';
+  return 'failed';
+}
+/** A failure as one plain line plus a short code: { code, line }. The door's own errors and the desk's own plain
+ *  sentences keep their words; anything else (a raw Node, fetch or database message) gets the line for its kind. */
+export function plainFailure(e) {
+  const code = failureKind(e);
+  if (e instanceof ModelError) return { code: e.why || code, line: String(e.message) };
+  if (code !== 'failed') return { code, line: FAILURE_LINES[code] };
+  return { code, line: ownWords(e) ? String(e.message) : FAILURE_LINES.failed };
+}
+/** Is this the desk's own hand-written sentence? A plain Error with no cause, no system code (ENOENT, ERR_...) and no
+ *  file-system fields, whose message holds no path or program text. Anything else is not shown. */
+function ownWords(e) {
+  if (!(e instanceof Error) || e.constructor !== Error || e.cause || !e.message) return false;
+  if (e.code != null && !/^[a-z_]+$/.test(String(e.code))) return false;
+  if (e.errno != null || e.syscall != null || e.path != null) return false;
+  const m = String(e.message);
+  return !/[\\/][\w.-]+[\\/]|[A-Za-z]:\\|\b(undefined|null|NaN)\b|[{}<>`]|\bE[A-Z]{3,}\b|\n/.test(m);
+}
+/** Why a whole call failed, from the kinds of its real tries (skipped steps are not tries). */
+function callWhy(attempts, { late, busy }) {
+  const real = attempts.filter(a => !a.skipped); const kinds = real.map(a => a.kind);
+  const all = (k) => kinds.length > 0 && kinds.every(x => x === k);
+  if (late) return 'timeout';
+  if (all('not_online')) return 'not_online';
+  if (busy || kinds.includes('busy')) return 'busy';
+  if (all('no_credit')) return 'no_credit';
+  for (const k of ['refused', 'timeout', 'not_found']) if (all(k)) return k;
+  if (!real.length && attempts.some(a => a.kind === 'spend_limit')) return 'spend_limit';
+  if (!real.length && attempts.some(a => a.kind === 'no_tools')) return 'no_tools';
+  return real.length ? 'failed' : 'not_available';
+}
+/** The door's own reason for skipping a local model on a turn with tools. */
+const NO_TOOLS = 'this local model cannot use tools';
+const CALL_LINES = {
+  not_online: FAILURE_LINES.not_online,
+  busy: 'No model answered: the providers are busy. Try again in a minute, or add a free key or a local model in Models.',
+  refused: 'No model answered: the provider refused the key. Check your keys in Models.',
+  no_credit: 'No model answered: the key is out of credit or needs payment. Check the key and its credit in Models.',
+  timeout: 'No model answered in time. Try again in a minute.',
+  not_found: 'No model answered: the model was not found. Pick another one in Models.',
+  no_tools: 'No model answered: this local model cannot use tools, and this needs them. Add a free key, or pick a local model that can use tools in Models.',
+  not_available: 'No model is available right now. Add a free key or start a local model in Models.',
+  failed: 'No model answered. Try again in a minute, or check your keys in Models.',
+};
+
 export class ModelDoor {
-  constructor({ storage, settings, panic, agents, events, log = () => {}, fetchImpl = globalThis.fetch }) {
-    this.s = storage; this.settings = settings; this.panic = panic; this.agents = agents; this.events = events; this.log = log; this.fetch = fetchImpl;
+  constructor({ storage, settings, panic, agents, events, log = () => {}, fetchImpl = null }) {
+    // no fetch given: the global one at the time of each call, so the Offline guard and its data-use count installed after
+    // this door was made still see every call
+    this.s = storage; this.settings = settings; this.panic = panic; this.agents = agents; this.events = events; this.log = log; this.fetch = fetchImpl || ((url, init) => globalThis.fetch(url, init));
     this.envKeys = [];            // { id, provider, label, value, baseUrl? } not persisted
     this.cooldown = new Map();    // provider|keyId -> until ms
     this.coolWhy = new Map();     // builtin router keyId -> { why: 'busy'|'unavailable'|'timeout'|'other', until }
@@ -261,6 +352,9 @@ export class ModelDoor {
   async chat(opts) {
     if (this.panic.halted) throw new ModelError('halted', 'Everything is stopped. Press Resume first.');
     const signal = this.panic.child(opts.signal);
+    try { return await this.chatOn(opts, signal); } finally { signal.release?.(); }   // the call is over: Panic lets go of it
+  }
+  async chatOn(opts, signal) {
     const online = this.online;
     let chain = opts.model?.provider ? [{ ...opts.model, why: 'explicit' }] : await this.chainFor(opts.agentId, opts);
     if (!online) chain = chain.filter(c => this.isLocal(c.provider));   // an explicit pick of an online model is refused offline too
@@ -283,14 +377,14 @@ export class ModelDoor {
       if (!targets.length) {
         const until = step.provider === 'router' ? this.routerBusyUntil(!!opts.tools?.length) : 0;
         if (until) busyUntil = busyUntil ? Math.min(busyUntil, until) : until;   // skipped, not tried: no attempt, no waiting
-        else attempts.push({ provider: step.provider, model: step.model, ok: false, skipped: true, error: (step.provider === 'llama' && this.llamaWhy) || (step.provider === 'ollama' && this.ollamaWhy) || 'not available' });
+        else { const why = (step.provider === 'llama' && this.llamaWhy) || (step.provider === 'ollama' && this.ollamaWhy) || 'not available'; attempts.push({ provider: step.provider, model: step.model, ok: false, skipped: true, error: why, kind: why === NO_TOOLS ? 'no_tools' : 'not_available' }); }
         continue;
       }
       for (const t of targets) {
         if (tried() >= MAX_ATTEMPTS) break;
         if (Date.now() >= deadline) { late = true; break; }
         // a paid model is not called once today's or this month's spend has reached the owner's limit
-        if (t.key && this.estimate(t.provider, t.model, BIG, t.keyId) !== 0) { const over = this.overLimit(); if (over) { attempts.push({ provider: t.provider, model: t.model, ok: false, skipped: true, error: `not called: your ${over} is reached` }); continue; } }
+        if (t.key && this.estimate(t.provider, t.model, BIG, t.keyId) !== 0) { const over = this.overLimit(); if (over) { attempts.push({ provider: t.provider, model: t.model, ok: false, skipped: true, kind: 'spend_limit', limit: over, error: over === NO_LIMITS ? 'not called: paid model calls are off until you set spend limits' : `not called: your ${over} is reached` }); continue; } }
         const t0 = Date.now();
         if (t.via) this.lastPick.set(t.keyId, t0);
         try {
@@ -305,7 +399,7 @@ export class ModelDoor {
         } catch (e) {
           const ms = Date.now() - t0;
           if (signal.aborted || e.name === 'AbortError' || e.code === 'aborted') throw new ModelError('aborted', 'Stopped.', { attempts });
-          attempts.push({ provider: t.provider, model: t.model, ok: false, error: e.message, ms });
+          attempts.push({ provider: t.provider, model: t.model, ok: false, error: e.message, kind: failureKind(e), ms });
           if (!this.last.get(t.provider)?.ok || this.last.get(t.provider).model === t.model) this.last.set(t.provider, { ok: false, at: now(), model: t.model, error: short(e.message) });
           if (e.freeTier && t.keyId) this.reported(t.keyId, true);   // the provider said this key is on its free tier
           this.record({ ...opts, provider: t.provider, model: t.model, keyId: t.keyId, ok: false, ms, error: e.message });
@@ -317,15 +411,31 @@ export class ModelDoor {
       }
       if (late) break;
     }
-    if (busyUntil && !tried()) throw new ModelError('all_failed', busyLine(busyUntil), { attempts, retryAt: new Date(busyUntil).toISOString() });
-    throw new ModelError('all_failed', (busyUntil ? busyLine(busyUntil) + ' ' : '') + (late ? `No model answered within ${limit / 1000} seconds. ` : 'No model answered. ') + attempts.map(a => `${this.label(a.provider, a.model)}: ${a.error}`).join('; '), { attempts, ...(busyUntil ? { retryAt: new Date(busyUntil).toISOString() } : {}) });
+    // The person gets one plain line; the raw list of what was tried goes to the desk's log (and stays in attempts).
+    const raw = attempts.map(a => `${this.label(a.provider, a.model)}: ${a.error}`).join('; ');
+    if (raw) this.log('model', 'no model answered:', raw);
+    const retry = busyUntil ? { retryAt: new Date(busyUntil).toISOString() } : {};
+    // free targets that are only cooling down after this PC could not reach them are not "busy": the PC is not online
+    if (busyUntil && !tried()) {
+      const whys = this.routerCoolingWhys();
+      if (whys.length && whys.every(w => w === 'not_online')) throw new ModelError('all_failed', CALL_LINES.not_online, { why: 'not_online', attempts });
+      throw new ModelError('all_failed', busyLine(busyUntil), { why: 'busy', attempts, ...retry });
+    }
+    const why = callWhy(attempts, { late, busy: false });
+    const limitHit = attempts.find(a => a.kind === 'spend_limit')?.limit;
+    const line = why === 'spend_limit' && limitHit === NO_LIMITS ? `No model answered: ${PAID_OFF}` : why === 'spend_limit' ? `No model answered: your ${limitHit} is reached, so no paid model was called. Use a free or local model, or change the limit in Settings.` : why === 'timeout' && late ? `No model answered within ${limit / 1000} seconds. Try again in a minute.` : why === 'busy' && busyUntil ? busyLine(busyUntil) : CALL_LINES[why];
+    throw new ModelError('all_failed', line, { why, attempts, ...retry });
   }
+  /** Why each cooling free target is cooling ('busy', 'not_online', ...): the router's step that was skipped. */
+  routerCoolingWhys() { const t = Date.now(); return [...this.coolWhy.values()].filter(v => v.until > t).map(v => v.why); }
   /** How long a free host-and-model is skipped after this failure, and why. */
   backoffFor(e) {
     const B = this.backoff; const m = String(e?.message || '');
+    if (failureKind(e) === 'not_online') return { ms: B.otherMs, why: 'not_online' };
     if (e?.hostCode === 'model_unavailable' || /model\b[^.]{0,80}\b(unavailable|not found|does not exist|not available|not supported)/i.test(m) || e?.status === 404) return { ms: B.unavailableMs, why: 'unavailable' };
     const named = Number(e?.retryAfter) > 0 ? Number(e.retryAfter) * 1000 : retryAfterMs(m);
-    if (e?.status === 429 || e?.status === 402 || named || /rate limit|quota|budget|limit/i.test(m)) return { ms: Math.min(named || B.busyMs, B.maxMs), why: 'busy' };
+    if (e?.status === 402) return { ms: B.busyMs, why: 'no_credit' };
+    if (e?.status === 429 || named || /rate limit|quota|budget|limit/i.test(m)) return { ms: Math.min(named || B.busyMs, B.maxMs), why: 'busy' };
     if (/No answer within|stopped coming|stalled/i.test(m)) return { ms: B.timeoutMs, why: 'timeout' };
     return { ms: B.otherMs, why: 'other' };
   }
@@ -373,7 +483,7 @@ export class ModelDoor {
       const e = this.localEngine; if (!e || !e.usable()) return [];
       // a model whose template cannot call tools is skipped for a turn with tools; the message says so, which is what
       // sends the Coordinator to its JSON decisions (same as a free host's noTools)
-      if (opts.tools?.length && !e.toolsOk()) { this.llamaWhy = 'this local model cannot use tools'; return []; }
+      if (opts.tools?.length && !e.toolsOk()) { this.llamaWhy = NO_TOOLS; return []; }
       try {
         const t = await e.target({ signal: call.signal, waitMs: Math.max(1000, Math.min(LOCAL_FIRST_MS, call.leftMs ?? LOCAL_FIRST_MS)) });
         if (!t) return [];
@@ -397,7 +507,7 @@ export class ModelDoor {
       const r = await this.ollamaModels(); if (!r.ok) return [];
       const model = step.model || this.ollamaDefault(r.models); if (!model) return [];
       // a model Ollama says cannot call tools is skipped for a turn with tools, as the llama step does
-      if (opts.tools?.length) { const caps = await this.ollamaCaps(model); if (caps && !caps.includes('tools')) { this.ollamaWhy = 'this local model cannot use tools'; return []; } }
+      if (opts.tools?.length) { const caps = await this.ollamaCaps(model); if (caps && !caps.includes('tools')) { this.ollamaWhy = NO_TOOLS; return []; } }
       const m = (r.models || []).find(x => x.name === model);
       return [{ provider: 'ollama', api: 'openai', baseUrl: this.settings.get('ollama.baseUrl') + '/v1', model, headers: {}, local: true, ...(smallModel({ params: m?.parameters, name: model }) ? { small: true } : {}) }];
     }
@@ -542,20 +652,40 @@ export class ModelDoor {
     if (opts.json) out.json = extractJson(text);
     return out;
   }
-  async embed({ texts, agentId, model }) {
+  /** Embeddings go through the same door as a chat: Panic cuts them, a key that may cost money is not called once the
+   *  owner's spend limit is reached, and every call to a provider is written to the call log (purpose 'embed'). */
+  async embed({ texts, agentId, model, signal: callerSignal } = {}) {
     if (this.panic.halted) throw new ModelError('halted', 'Everything is stopped.');
+    const signal = this.panic.child(callerSignal);
+    try { return await this.embedOn({ texts, agentId, model }, signal); } finally { signal.release?.(); }
+  }
+  async embedOn({ texts, agentId, model }, signal) {
     const list = Array.isArray(texts) ? texts : [texts];
     const o = await this.ollamaModels();
     const emb = model || (o.models || []).map(m => m.name).find(n => /embed|bge|minilm|nomic/i.test(n));
     if (o.ok && emb) {
-      const r = await this.http(this.settings.get('ollama.baseUrl') + '/api/embed', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: emb, input: list }) }, 60000);
-      if (r.ok) { const j = await r.json(); return { vectors: j.embeddings, model: emb, provider: 'ollama' }; }
+      const t0 = Date.now();
+      try {
+        const r = await this.http(this.settings.get('ollama.baseUrl') + '/api/embed', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: emb, input: list }), signal }, 60000);
+        if (r.ok) { const j = await r.json(); this.record({ agentId, purpose: 'embed', provider: 'ollama', model: emb, ok: true, ms: Date.now() - t0 }); return { vectors: j.embeddings, model: emb, provider: 'ollama' }; }
+        this.record({ agentId, purpose: 'embed', provider: 'ollama', model: emb, ok: false, ms: Date.now() - t0, error: `HTTP ${r.status}` });
+      } catch (e) { if (signal.aborted) throw new ModelError('aborted', 'Stopped.'); this.record({ agentId, purpose: 'embed', provider: 'ollama', model: emb, ok: false, ms: Date.now() - t0, error: e.message }); }
     }
     if (this.online) for (const pid of ['openai', 'gemini', 'mistral', 'together']) {
       const k = this.liveKeys(pid)[0]; if (!k) continue;
       const m = pid === 'openai' ? 'text-embedding-3-small' : pid === 'gemini' ? 'text-embedding-004' : pid === 'mistral' ? 'mistral-embed' : 'togethercomputer/m2-bert-80M-8k-retrieval';
-      const r = await this.http(PROVIDERS[pid].baseUrl + '/embeddings', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + k.value }, body: JSON.stringify({ model: m, input: list }) }, 60000);
-      if (r.ok) { const j = await r.json(); return { vectors: (j.data || []).map(d => d.embedding), model: m, provider: pid }; }
+      // the same gate as a chat: a key that is not known to be free is not called past the owner's limit
+      if (this.estimate(pid, m, BIG, k.id) !== 0 && this.overLimit()) continue;
+      if (signal.aborted) throw new ModelError('aborted', 'Stopped.');
+      const t0 = Date.now();
+      try {
+        const r = await this.http((k.meta?.baseUrl || PROVIDERS[pid].baseUrl).replace(/\/$/, '') + '/embeddings', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + k.value }, body: JSON.stringify({ model: m, input: list }), signal }, 60000);
+        if (!r.ok) { const e = await httpError(r); this.record({ agentId, purpose: 'embed', provider: pid, model: m, keyId: k.id, ok: false, ms: Date.now() - t0, error: e.message }); continue; }
+        const j = await r.json();
+        const usage = { input: Number(j.usage?.prompt_tokens ?? j.usage?.total_tokens) || 0, output: 0 };
+        this.record({ agentId, purpose: 'embed', provider: pid, model: m, keyId: k.id, ok: true, ms: Date.now() - t0, usage });
+        return { vectors: (j.data || []).map(d => d.embedding), model: m, provider: pid };
+      } catch (e) { if (signal.aborted) throw new ModelError('aborted', 'Stopped.'); this.record({ agentId, purpose: 'embed', provider: pid, model: m, keyId: k.id, ok: false, ms: Date.now() - t0, error: e.message }); }
     }
     throw new ModelError('unavailable', 'No embedding model is available. Pull one in Ollama (for example nomic-embed-text).');
   }
@@ -671,10 +801,11 @@ export class ModelDoor {
     rows.sort((a, b) => a.purpose.localeCompare(b.purpose) || b.calls - a.calls);
     return { days: LEARN.days, minCalls: LEARN.minCalls, rule: `Among the free and local models it would try anyway, the desk tries first the one that answered most often for that kind of ask in the last ${LEARN.days} days (at least ${LEARN.minCalls} calls), then the faster one.`, rows };
   }
-  /** provider -> its latest call: { at, ok, model, error } (error cut to one short line; no key is ever in it). */
+  /** provider -> its latest call: { at, ok, model, error } (error cut to one short line; no key is ever in it). Embedding
+   *  calls are left out: they count for spend, but a failed embed does not say a provider's chat is failing. */
   lastCalls() {
     const out = {};
-    try { for (const r of this.s.all('SELECT provider, model, ok, at, error FROM calls WHERE id IN (SELECT MAX(id) FROM calls GROUP BY provider)')) out[r.provider] = { at: r.at, ok: !!r.ok, model: r.model, error: r.error ? short(firstSentence(r.error)) : null }; } catch (e) { this.log('last calls read failed', e.message); }
+    try { for (const r of this.s.all('SELECT provider, model, ok, at, error FROM calls WHERE id IN (SELECT MAX(id) FROM calls WHERE purpose IS NOT \'embed\' GROUP BY provider)')) out[r.provider] = { at: r.at, ok: !!r.ok, model: r.model, error: r.error ? short(firstSentence(r.error)) : null }; } catch (e) { this.log('last calls read failed', e.message); }
     return out;
   }
   /** The list price of this model (USD per million tokens), or null when the list has none. */
@@ -714,6 +845,7 @@ export class ModelDoor {
    *  every unknown cost counted at its list price, so "not known" can never carry spend past a limit. */
   overLimit() {
     const g = this.spendGuard?.(); if (g) return g;
+    if (zeroLimit(this.settings.get('spend.perDay')) || zeroLimit(this.settings.get('spend.perMonth'))) return NO_LIMITS;   // 0: no paid calls, not "reached"
     const zone = this.settings.get('timeZone'); const day = dayStart(Date.now(), zone), month = dayStart(Date.now(), zone, true);
     const spent = (d) => (this.s.get('SELECT COALESCE(SUM(cost_minor), 0) AS t FROM calls WHERE at >= ?', d.toISOString())?.t || 0) + this.unknownAtList(d.toISOString());
     const lim = (k) => { const v = this.settings.get(k); return v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v); };
@@ -737,7 +869,7 @@ export class ModelDoor {
     try { return await this.fetch(url, { ...init, signal: ac.signal }); }
     catch (e) {
       if (init.signal?.aborted) throw Object.assign(new Error('Stopped'), { code: 'aborted', name: 'AbortError' });
-      if (ac.signal.reason === 'timeout') throw new Error(`No answer within ${Math.round(timeoutMs / 100) / 10} seconds`);
+      if (ac.signal.reason === 'timeout') throw Object.assign(new Error(`No answer within ${Math.round(timeoutMs / 100) / 10} seconds`), { code: 'timeout' });
       throw e;
     }
     finally { clearTimeout(t); }

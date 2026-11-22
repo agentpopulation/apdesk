@@ -11,6 +11,8 @@ export function wikiText(raw) {
   t = t.replace(/<ref[^>]*\/>|<ref[\s\S]*?<\/ref>/gi, '').replace(/<[^>]+>/g, '').replace(/\[\[(?:File|Image|Category):[^\]]*\]\]/gi, '').replace(/\[\[([^\]|]*\|)?([^\]]*)\]\]/g, '$2').replace(/\[https?:\/\/\S+\s([^\]]*)\]/g, '$1').replace(/'{2,}/g, '').replace(/^=+\s*(.*?)\s*=+$/gm, '\n$1:').replace(/\{\|[\s\S]*?\|\}/g, '').replace(/\n{3,}/g, '\n\n');
   return t.trim();
 }
+/** What the page shows when an outside service cannot be reached: plain words, never the program's own error text. */
+export const unreachableAnswer = (what) => ({ ok: false, unreachable: true, error: `Could not reach ${what} just now. Try again in a minute.` });
 const UA = { 'user-agent': 'AgentPopulationDesk/0.1 (local desktop app)' };
 
 export async function activate(ctx) {
@@ -109,7 +111,7 @@ export async function activate(ctx) {
 
   ctx.route('GET', '/place', (req, res) => ctx.json(res, { city: ctx.settings.get('city') || null, place: savedPlace() }));
   // GET routes answer 200 with a plain state when an outside service is slow or down, so no screen logs an error
-  const unreachable = (what, e) => ({ ok: false, unreachable: true, error: `Could not reach ${what} just now${e?.message ? ` (${e.message})` : ''}. Try again in a minute.` });
+  const unreachable = (what, e) => { if (e?.message) ctx.log?.(`${what}: ${e.message}`); return unreachableAnswer(what); };
   ctx.route('GET', '/places', async (req, res, { query }) => { try { ctx.json(res, { places: await geocode(f(), query.q) }); } catch (e) { ctx.json(res, e.status === 400 ? { ok: false, error: e.message, places: [] } : { ...unreachable('the place search (Open-Meteo)', e), places: [] }); } });
   ctx.route('POST', '/place', (req, res, { body, owner }) => {
     if (!owner) return ctx.json(res, { error: 'Only the owner sets the city.' }, 403);
@@ -118,7 +120,7 @@ export async function activate(ctx) {
     ctx.json(res, { place: savedPlace() });
   });
   ctx.route('GET', '/weather', async (req, res) => { try { ctx.json(res, await weatherFor({})); } catch (e) { ctx.json(res, unreachable('the forecast service (Open-Meteo)', e)); } });
-  ctx.route('POST', '/plan', async (req, res, { body }) => { try { const j = await startPlan({ where: body?.where, interests: body?.interests }); ctx.json(res, { jobId: j.id }); } catch (e) { ctx.json(res, { error: e.message }, e.status || 500); } });
+  ctx.route('POST', '/plan', async (req, res, { body }) => { try { const j = await startPlan({ where: body?.where, interests: body?.interests }); ctx.json(res, { jobId: j.id }); } catch (e) { if (!(e.status < 500)) ctx.log?.('plan', e?.stack || e); ctx.json(res, { error: e.status < 500 ? e.message : ctx.plainFailure(e).line }, e.status || 500); } });
   ctx.route('GET', '/plans', (req, res) => ctx.json(res, { plans: ctx.db.all('SELECT * FROM m_life_plans ORDER BY at DESC LIMIT 20').map(planOut) }));
   ctx.route('GET', '/plans/:id', (req, res, { params }) => { const p = getPlan(params.id); p ? ctx.json(res, p) : ctx.json(res, { error: 'Not found' }, 404); });
   ctx.route('GET', '/rates', async (req, res, { query }) => { try { ctx.json(res, await rates(query.base)); } catch (e) { ctx.json(res, unreachable('the exchange rate service (Frankfurter)', e)); } });

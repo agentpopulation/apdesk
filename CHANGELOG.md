@@ -260,24 +260,81 @@ Corrections after an independent test of this build on real free models (22 Nov 
 - This changelog now files each day's work under its own date.
 - Still not right after these corrections (seen in the builder's own runs on free models, 22 Nov 2026): two agents can still write overlapping plans in a group; free models still convert currencies by guess (the amounts are marked, but shown); a long reply cut off by a provider is trimmed only when the provider reports the cut.
 
+## 0.1.2 (22 Nov 2026)
+
+Corrections after a full review of 0.1.1 on 22 Nov 2026: six reviewers read the published build and found 93 faults, of which 90 stood after a second check (6 serious, 29 medium, 55 small). Seven builders corrected them, three reviewers then tried to break the corrections and found 25 more faults, and those were corrected and checked again before this version. Built and tested on Linux; nothing in this version was run on Windows.
+
+### Your place, money and settings
+- Country, currency, time zone and number and date style are picked from lists, in Settings and on first start. A value the computer cannot use is refused with a plain reason, and a bad value saved before is replaced by the computer's own at start, with one notice.
+- First start shows the country, currency and time zone it found, asks "Is this right?", and lets you change them before anything is saved. Picking a role and restarting no longer moves a desk to India, rupees and Kolkata time.
+- Spend limits match your currency (for example 25, 50 and 200 for dollars and euros; 2,000, 5,000 and 20,000 for rupees). Where there is no usual amount, or after you change currency, no limits are set: paid model calls are off until you set limits, payments ask you every time, and free and local models work as before. Every screen says so in the same words.
+- Times, dates and money never break a screen when a setting is wrong; small amounts show their cents instead of 0.
+- Settings that nothing uses are refused instead of stored; options that save by themselves answer with a tick or a reason; a tick shows only when the desk really saved.
+- First-start step two survives a reload; "Open Models" keeps the ticked local model or says none was started.
+
+### Locks, keys and backups
+- While a window is locked nothing private leaves the desk: no waiting approvals, agents or tools, and the live stream carries only the lock and Panic.
+- A backup made without keys also leaves out the router key and the keys of model nodes on your network; restoring such a backup leaves the keys on the desk untouched.
+- A module can no longer change another module's data.
+- Memory embeddings follow the spend limit like any model call, appear in usage, and stop on Panic.
+- Only the keeper sets the addresses of local model servers, and Offline lets through only addresses on this computer or your own network (home and mesh VPN ranges included); a saved address that is not local says so beside the field.
+- A desk with a lock PIN, your own PIN, or both opens properly after a restart; each box says which PIN it wants. A desk that starts locked draws nothing behind the lock until it is opened.
+- Panic stays quick on a desk that runs for days; switching Mail off takes back its Panic hook.
+
+### Plain words in place of raw errors
+- With no internet, chat says "This PC is not online. Local models still work." A model error is one plain line: not online, busy, key refused, out of credit, no answer in time, or model not found. The detail goes to the desk's log.
+- An unexpected fault on any screen shows one plain line, never program text or a file path.
+- The update check and a stopped download say what really went wrong and what to do next. Download approval cards show the file, a readable size and where it comes from.
+- The word "null" is gone from the Waiting for you pop-up, first start, and Keys and logins.
+- Counts read right for one (1 source, 1 model, 1 page); words for your own system (Windows, macOS or Linux) are used on the pairing page, restore note, PIN warning and Voice settings; examples no longer name Indian cities.
+
+### Chat
+- A greeting, thanks or a remark about you or your business is answered in words, with no tool steps.
+- In a group each agent keeps to its own role; an agent that only looked things up shows one quiet line; when nobody has something to add, the Coordinator still answers.
+- A card's button no longer runs a tool that is switched off for that agent.
+- Agents know your business name from Settings.
+- Switching auto-approve on asks once, saying what is approved and for how long.
+- At phone width each chat in the list shows its name; the "is writing" line ends with every finished turn.
+
+### Pages
+- Models: a provider that could not be reached says so, and only a real refusal says "Key refused"; Ollama is under Active now only when it answers.
+- Files at phone width shows the file list again. The mic and speaker buttons no longer cover the last control on a page.
+- Voice settings dim the engines that cannot work on this PC and say why. Keys and logins no longer shows key boxes for services this version does not use.
+- An empty Save or Add answers beside the box and sends nothing. Saving an empty Telegram token no longer wipes the saved one.
+- The agent's Computer tab has a box to allow a page on your own network, and the refusal points to it.
+- Sales shows Leads once; Bench refuses a spend cap that is not a number of 0 or more; the Module Store counts its modules from the module folders.
+
+### Windows scripts (checked by static tests and on Linux only)
+- Installing again into the folder AP Desk was removed from works: the installer finds the data the uninstall kept and keeps it.
+- An install or upgrade copies the new program into a folder of its own and swaps it in at the end; if a file is in use or the disk is full the desk that was there is left as it was, and Try again works.
+- Uninstall asks one question first, saying what goes and what stays; it removes nothing when the desk does not stop. `stop.bat` says when the desk did not stop.
+- The start page says when the desk did not start or stopped, with the reason and what to do. `start.bat` keeps its window open after an error.
+- Getting Node.js on first start goes through the proxy set in Windows for this user.
+
+### Records
+- The test command also runs the tests under `app/` and `docs/`.
+- README, the zip page and the contracts say what the code does today: the module count, what was run on Windows and when, the installer that opens in the browser, spend limits in your own currency. A test checks the records against the version, the module folders and the dates.
+- `ATTRIBUTION.md` credits the outside services the desk can call.
+
 ### Known weak points
+Each line that names a result carries the date it was measured. A line without a date is a limit of the design or of the code as of 22 Nov 2026.
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.
 - Phone notices for watched websites use ntfy only, not Telegram.
+- Windows, as of 22 Nov 2026: the one-line install was run by the project owner on Windows 11 on 20 Nov 2026, and `install.bat` with its console questions on Windows 11 ARM64 on 22 Nov 2026 (Node.js 22 for ARM64 fetched, packages installed, the desk opened). The visual installer in the browser, the hidden start, the background mode, the start page and the update step have been tested on Linux and by static checks only; none of them has been run on Windows.
+- macOS has not been run at all.
+- Behind a proxy (an office network), the desk's own web calls (updates, downloads, model calls) and the Windows step that fetches Node.js do not read a proxy setting, and their messages can point at the internet although it works in the browser. Found in a code review on 22 Nov 2026; not tried on a proxied network.
+- Some chat behaviour still follows patterns over the owner's words: which tools the model is offered, which channel, top count or language a draft is given, and whether a reply claiming work is replaced. An unusual ask can be misjudged. Found in a code review on 22 Nov 2026.
 - The local model engine was run for real on Linux only (a 1 GB model answered through the desk on 21 Nov 2026). Windows and macOS builds are chosen by rule and have not been run.
-- The Windows installer, the background mode, the start page and the update step have been tested on Linux and by static checks only; none has run on Windows yet.
-- Bench mode's later stages (customers, funding, market report) have not been run with a real model, and its early findings are of mixed quality.
+- Bench mode's later stages (customers, funding, market report) have not been run with a real model, and its early findings are of mixed quality, as of 22 Nov 2026.
 - With no key and no local model, the free hosts are often busy: on 20 Nov 2026 a first "Hello" got no answer within 150 seconds in one test run. A free key or a local model in Models avoids this.
-- A real local Ollama model has still not been run through the full set of checks.
-- No run of the 17 acceptance asks has passed every ask. Results vary with the free model that answers.
-- In the run on this code (15 Nov 2026) 13 asks passed, 3 failed and 1 was not checked. The three: the research report quoted one sentence about a different technology as on-topic; the compare table got no model answer within 150 seconds on its first run, and on its second run confirmed 5 of 12 cells; the lead search listed 20 leads (13 checked, 7 labelled "not checked") and the runner counted only one of its two tables.
+- A real local Ollama model has not been run through the full set of checks, and no test run so far had Ollama installed. Small local models (4B, 8B) are not checked either.
+- No run of the 17 acceptance asks has passed every ask, and the asks have not been re-run since 15 Nov 2026. Results vary with the free model that answers.
+- The run of 15 Nov 2026, on the code of that day: 13 asks passed, 3 failed and 1 was not checked (the local-model ask). The three: the research report quoted one sentence about a different technology as on-topic; the compare table got no model answer within 150 seconds on its first run, and on its second run confirmed 5 of 12 cells; the lead search listed 20 leads (13 checked, 7 labelled "not checked") and the runner counted only one of its two tables.
 - An ask to research something "in the background" can start two jobs for the same work (seen 15 Nov 2026).
 - A research report's quotes are checked word for word against their pages, but not for being about the topic.
 - PDF documents made by the Office module leave out Hindi and other Indian-script text: the built-in PDF font has no such letters (seen 15 Nov 2026).
 - A lead search lists some leads as "not checked" when no page it read said where the company is or what it sells; some of those will be real fits.
 - Code you approve in the Code module runs without isolation unless Docker is installed: it can read files on this PC, including the desk's own database.
-- Ask 2 (offline with a local model) has never been checked: no test run so far had Ollama installed.
-- Small local models (4B, 8B): not checked.
 - Offline does not cover programs the desk starts as separate processes, mail servers, or DNS lookups.
-- The process sandbox for code is not isolation.
 - A module timer that ignores Panic keeps running after Panic; everything it tries through the desk's doors is refused
   while halted (`tools/safety/05_panic.js`, 14 Nov 2026).

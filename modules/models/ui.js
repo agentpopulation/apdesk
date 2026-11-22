@@ -8,6 +8,33 @@ function css() {
 }
 const initials = (s) => String(s || '?').replace(/[^A-Za-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean).map(w => w[0]).join('').slice(0, 2).toUpperCase();
 const secs = (ms) => (Math.max(0, Number(ms) || 0) / 1000).toFixed(1) + ' s';
+// Why a test failed: the provider could not be reached (network, offline, no answer in time), or it answered and refused the key.
+// Only a real refusal is called refused. Anything else is left unnamed.
+// The desk's failure kind decides when the test carries one (why, or a code that names a kind); the words of the desk's
+// own lines are read only for a test saved before it carried one. "Not available" (no working key, or one cooling down)
+// is neither: nothing was tried.
+const UNREACHED_KINDS = new Set(['not_online', 'offline', 'no_answer', 'timeout', 'broke', 'stalled']);
+const OTHER_KINDS = new Set(['busy', 'no_credit', 'not_found', 'provider_fault', 'failed', 'not_available', 'spend_limit', 'no_tools', 'halted', 'stopped']);
+const UNREACHED = /nothing answers|no answer|could not reach|not online|connection broke|fetch failed|offline|ECONN|ENOTFOUND|EAI_AGAIN|timed? ?out/i;
+const REFUSED = /refused|HTTP 40[13]/i;
+export const failKind = (t) => {
+  if (!t || t.ok || t.skipped) return null;
+  const kind = String(t.why || t.code || ''); const words = String(t.error || '');
+  if (UNREACHED_KINDS.has(kind)) return 'unreached';
+  if (kind === 'refused') return 'refused';
+  if (OTHER_KINDS.has(kind)) return 'other';
+  if (/^not available\b/i.test(words)) return 'other';
+  return UNREACHED.test(words) ? 'unreached' : REFUSED.test(words) ? 'refused' : 'other';
+};
+/** The chip on a provider's row: its key count, or what the last tests of every key in use say. */
+export function keyChipWords(keys) {
+  if (!keys.length) return ['No key', ''];
+  const on = keys.filter(k => k.enabled); const good = on.some(k => k.test?.ok);
+  const kinds = on.map(k => failKind(k.test));
+  if (on.length && kinds.every(k => k === 'refused')) return ['Key refused', 'stop'];
+  if (on.length && kinds.every(k => k === 'unreached')) return ['Could not be reached', 'wait'];
+  return [`${keys.length} key${keys.length > 1 ? 's' : ''}`, good || !on.length ? (on.length ? 'ok' : '') : ''];
+}
 /** The last Test: a pill, and under it why it failed (or what a local model said), with the time of the test. */
 function testLine(t, ui) {
   if (!t) return null;
@@ -17,7 +44,7 @@ function testLine(t, ui) {
     return ui.h('span', { class: 'mdl-test' }, ui.h('span', { class: 'pill ok', title: `${text} · ${when}` }, text),
       t.said ? ui.h('span', { class: 'sub mdl-reason', 'data-apd': 'test-said' }, `It said: "${t.said}" · ${when}`) : null);
   }
-  return ui.h('span', { class: 'mdl-test' }, ui.h('span', { class: 'pill stop' }, 'Does not answer'),
+  return ui.h('span', { class: 'mdl-test' }, ui.h('span', { class: 'pill stop' }, failKind(t) === 'unreached' ? 'Could not be reached' : 'Does not answer'),
     ui.h('span', { class: 'sub mdl-reason', 'data-apd': 'test-reason' }, `${t.error || 'No reason was given.'} · ${when}`));
 }
 
@@ -81,7 +108,7 @@ export const agentTabs = {
       const test = ui.btn('Test this agent', { kind: 'ghost sm', onClick: async () => {
         test.disabled = true; out.textContent = 'Asking…';
         try { const t = await ui.api(API + 'test-agent', { body: { agentId: agent.id } }); out.textContent = t.ok ? `${t.label} answered in ${secs(t.ms)}${t.fallbackUsed ? ' (after a fallback)' : ''}.` : t.error; }
-        catch (e) { out.textContent = e.message; } finally { test.disabled = false; }
+        catch (e) { out.textContent = ui.plainError(e); } finally { test.disabled = false; }
       } });
       el.replaceChildren(ui.card({ class: 'mdl-tab' },
         ui.h('h3', null, 'Model'),
@@ -215,15 +242,17 @@ export const pages = {
       const act = ui.h('div', { class: 'mdl-cards', 'data-apd': 'active-cards' });
       const body = ui.h('div', { class: 'mdl-tabbody' });
       body.addEventListener('focusout', () => setTimeout(() => { if (st.dirty && st.tab === 0 && !body.contains(document.activeElement)) { st.dirty = false; drawProviders(); } }, 0));
+      const TAB_HELP = { Router: 'The free models the desk uses when you have no key of your own', LoRAs: 'Small add-on files that change how a local model answers', Nodes: 'Other PCs on your network that run models' };
       const TABS = ['Providers and keys', 'Per agent', 'Router', 'Local models', 'LoRAs', 'Nodes', 'Usage'];
-      const tabs = ui.h('div', { class: 'tabbar', role: 'tablist' }, TABS.map((t, i) => ui.h('button', { type: 'button', role: 'tab', 'aria-selected': String(i === 0), onclick: () => goTab(i) }, t)));
+      const tabs = ui.h('div', { class: 'tabbar', role: 'tablist' }, TABS.map((t, i) => ui.h('button', { type: 'button', role: 'tab', 'aria-selected': String(i === 0), onclick: () => goTab(i), title: TAB_HELP[t] || null }, t)));
       const goTab = (i) => { st.tab = i; [...tabs.children].forEach((b, k) => b.setAttribute('aria-selected', String(k === i))); drawTab(); };
       el.replaceChildren(head, ui.h('div', { class: 'lbl' }, 'Active now'), act, ui.card({ class: 'mdl-area' }, tabs, body));
 
-      const set = async (patch) => { await ui.api('settings', { body: patch }); Object.assign(ui.state.settings, patch); };
+      const set = async (patch) => { const r = await ui.api('settings', { body: patch }); Object.assign(ui.state.settings, patch); return r; };
       async function load() {
         const [d, g, sv] = await Promise.all([ui.api(API + 'overview'), availableGroups(ui), ui.api(API + 'services').catch(() => ({ services: [], many: false }))]);
-        st.data = d; st.groups = g; st.services = sv.services || []; st.many = !!sv.many;
+        // a service no part of this version uses gets no key box, unless a key is already saved (so it can be removed)
+        st.data = d; st.groups = g; st.services = (sv.services || []).filter(v => v.built !== false || v.hasKey); st.many = !!sv.many;
         if (!st.open) st.open = d.providers.find(p => p.keys.length)?.id || 'openrouter';
         drawHead(); drawActive();
         // never redraw under the owner's typing: a field being filled in waits until he leaves it
@@ -275,7 +304,8 @@ export const pages = {
       // ----- Active now: one card each, the answer time large, a speed bar, slow shown apart from fast
       function drawActive() {
         const d = st.data; const rs = d.router;
-        const cards = d.active.filter(a => !a.refused);
+        // Ollama is listed here only while it answers. Not running, it is one of the ways to add a model (Providers and keys).
+        const cards = d.active.filter(a => !a.refused && !(a.provider === 'ollama' && !a.ok));
         const noAnswer = d.active.filter(a => a.refused);
         act.replaceChildren(...cards.map(a => {
           let sub;
@@ -287,7 +317,7 @@ export const pages = {
           if (!d.online && a.kind !== 'local' && a.kind !== 'lan') sub = 'Off while the desk is offline';
           const t = a.test; const slow = t?.ok && t.ms >= SLOW_MS;
           const kind = !a.ok ? 'off' : !t ? 'off' : !t.ok ? (t.skipped ? 'off' : 'fail') : slow ? 'slow' : 'live';
-          const word = !a.ok ? 'Not available now' : !t ? 'Not tested yet' : t.ok ? (slow ? 'Answers · slow' : 'Answers') : t.skipped ? 'Not tested' : 'Does not answer';
+          const word = !a.ok ? 'Not available now' : !t ? 'Not tested yet' : t.ok ? (slow ? 'Answers · slow' : 'Answers') : t.skipped ? 'Not tested' : failKind(t) === 'unreached' ? 'Could not be reached' : 'Does not answer';
           const name = a.provider === 'ollama' ? 'Ollama on this PC' : a.label;
           const foot = t?.ok ? (t.said ? ui.h('span', { class: 'said', 'data-apd': 'test-said' }, 'It said: ', ui.h('q', null, t.said)) : ui.h('code', null, t.model || a.model || ''))
             : t ? ui.h('span', { class: t.skipped ? '' : 'why', 'data-apd': 'test-reason' }, t.error || 'No reason was given.') : ui.h('code', null, a.model || '');
@@ -315,8 +345,7 @@ export const pages = {
             mono(ui, id, name, true), ui.h('span', { class: 'n' }, name, small ? ui.h('small', null, small) : null), chip, open ? chev() : null);
           return open && narrow && work ? [b, ui.h('div', { class: 'mdl-inrow', style: { padding: '10px', background: 'var(--work)' } }, work)] : [b];
         };
-        const keyChip = (keys) => { const on = keys.filter(k => k.enabled); const good = on.some(k => k.test?.ok); const bad = on.length && on.every(k => k.test && !k.test.ok && !k.test.skipped);
-          return !keys.length ? ui.pill('No key') : bad ? ui.pill('Key refused', 'stop') : ui.pill(`${keys.length} key${keys.length > 1 ? 's' : ''}`, good || !on.length ? (on.length ? 'ok' : '') : ''); };
+        const keyChip = (keys) => ui.pill(...keyChipWords(keys));
         const provRow = (p) => row(p.id, p.id, p.name, p.paidOn ? 'Paid models are on' : p.paid === 'always' ? 'Paid API' : null, keyChip(p.keys));
         const svcRow = (v) => row('svc:' + v.id, v.id, v.name, null, v.keys?.length ? keyChip(v.keys) : ui.pill(v.fromEnvironment ? 'From environment' : 'No key', v.fromEnvironment ? 'ok' : ''));
         const grp = (title, rows) => rows.length ? ui.h('div', { class: 'mdl-grp' }, ui.h('h4', null, title), ui.h('div', { class: 'group' }, ...rows)) : null;
@@ -325,6 +354,9 @@ export const pages = {
           grp('Free, no sign-in', [ui.h('div', { class: 'mdl-pv' }, mono(ui, 'router', 'AP', true), ui.h('span', { class: 'n' }, rs.shortName || 'Free API', ui.h('small', null, rs.mode === 'owner' ? 'your own router' : rs.mode === 'builtin' ? 'built-in free hosts' : 'off')),
             ui.btn('Settings', { kind: 'ghost sm', onClick: () => goTab(2) }), ui.sw(rs.enabled, 'Free models', async (on) => { await set({ 'router.enabled': on }); await load(); }))]),
           grp('Free with sign-up', free.flatMap(provRow)),
+          grp('On this PC', d.active.some(a => a.provider === 'ollama' && !a.ok) ? [ui.h('div', { class: 'mdl-pv', 'data-apd': 'ollama-offer' }, mono(ui, 'ollama', 'Ollama', true),
+            ui.h('span', { class: 'n' }, 'Ollama', ui.h('small', null, 'Optional. Not running here. A free program that runs models on this PC.')),
+            ui.btn('How to get it', { kind: 'ghost sm', onClick: () => goTab(3) }))] : []),
           grp('Paid', paid.flatMap(provRow)),
           grp('Search and reading', svcs.filter(v => v.kind === 'search').flatMap(svcRow)),
           grp('Voice and audio', svcs.filter(v => v.kind !== 'search').flatMap(svcRow)));
@@ -351,7 +383,7 @@ export const pages = {
       }
       // the head says whether the provider answers: any key that works says yes; else the newest result
       const headChip = (keys) => { const all = keys.filter(k => k.enabled && k.test).map(k => k.test).sort((a, b) => String(b.at).localeCompare(String(a.at))); const t = all.find(x => x.ok) || all[0];
-        return !t ? null : t.ok ? ui.statusChip(`Answers · ${secs(t.ms)}`, t.ms >= SLOW_MS ? 'slow' : 'live') : t.skipped ? ui.statusChip('Not tested', 'off') : ui.statusChip('Does not answer', 'fail'); };
+        return !t ? null : t.ok ? ui.statusChip(`Answers · ${secs(t.ms)}`, t.ms >= SLOW_MS ? 'slow' : 'live') : t.skipped ? ui.statusChip('Not tested', 'off') : ui.statusChip(failKind(t) === 'unreached' ? 'Could not be reached' : 'Does not answer', 'fail'); };
       function providerWork(p) {
         if (!p) return null;
         const label = ui.h('input', { type: 'text', placeholder: 'Work key', 'aria-label': 'Label' });
@@ -417,7 +449,7 @@ export const pages = {
             ui.h('div', { class: 'mdl-save' }, mark),
             st.many ? ui.h('p', { class: 'mdl-note', 'data-apd': 'several-keys' }, 'Several keys help when they come from accounts or plans you are allowed to hold; a provider\'s terms may forbid extra free accounts.') : null),
           ui.h('div', { class: 'box' }, ui.h('h5', null, 'About'),
-            ui.h('p', { class: 'mdl-note' }, v.kind === 'search' ? 'Used by search and page reading, not by chat. Search works without it.' : 'Used by the voice module, not by chat.'),
+            ui.h('p', { class: 'mdl-note' }, v.built === false ? 'Not used by this version. The saved key is kept until you remove it.' : v.kind === 'search' ? 'Used by search and page reading, not by chat. Search works without it.' : 'Used by the voice module, not by chat.'),
             v.free ? ui.h('p', { class: 'mdl-note' }, 'Free allowance: ', v.free, '.') : null,
             st.many && v.spends ? ui.h('p', { class: 'mdl-note', 'data-apd': 'test-spends' }, v.spends, ' When a key is refused or its allowance runs out, the next key is used.') : null,
             st.many ? null : ui.h('p', { class: 'mdl-note' }, 'One key per service on this desk.'),
@@ -446,11 +478,11 @@ export const pages = {
         ui.api(API + 'catalog/' + encodeURIComponent(p.id)).then(c => {
           all = c.models || [];
           info.textContent = c.source === 'live'
-            ? `${c.total} models from ${p.name}, read ${ui.fmt.when(c.at)}${c.hiddenPaid ? ` · ${c.hiddenPaid} paid ones hidden while Paid models is off` : ''}.`
+            ? `${ui.plural(c.total, 'model')} from ${p.name}, read ${ui.fmt.when(c.at)}${c.hiddenPaid ? ` · ${c.hiddenPaid} paid ones hidden while Paid models is off` : ''}.`
             : c.needsKey ? `Suggested default only. Add a key to see every model.` : `Suggested models only. ${c.error || 'The list did not answer.'}`;
           if (c.needsKey) info.classList.add('mdl-needkey');
           paint();
-        }).catch(e => { info.textContent = e.message; });
+        }).catch(e => { info.textContent = ui.plainError(e); });
         return ui.h('div', { class: 'mdl-mbox' }, ui.h('div', { class: 'well mdl-def' }, ui.h('span', null, 'Default model'), ui.h('span', { class: 'row', style: { gap: '8px' } }, cur, mark)), info, q, list);
       }
 
@@ -462,7 +494,7 @@ export const pages = {
         try {
           const el2 = await [null, tabAgents, tabRouter, tabLocal, tabLoras, tabNodes, tabUsage][i]();
           if (st.tab === i) body.replaceChildren(...[].concat(el2));
-        } catch (e) { body.replaceChildren(ui.empty(e.message)); }
+        } catch (e) { body.replaceChildren(ui.empty(ui.plainError(e))); }
       }
       let wasNarrow = window.matchMedia('(max-width:820px)').matches;
       const onResize = () => { if (!el.isConnected) return window.removeEventListener('resize', onResize); const n = window.matchMedia('(max-width:820px)').matches; if (n !== wasNarrow) { wasNarrow = n; if (st.tab === 0 && st.data) drawProviders(); } };
@@ -475,15 +507,16 @@ export const pages = {
           ui.h('p', { class: 'mdl-note', 'data-apd': 'saved-as-made', style: { marginTop: '8px' } }, 'Each choice is saved as you make it.'),
           ui.h('p', { class: 'sub', style: { marginTop: '4px' } }, `Main model, then fallback, then the ${(st.groups.defaultLabel || 'desk default').replace(/^Desk default/, 'desk default')}. Only models that answer or are installed now are offered.`)];
       }
-      const coolWords = (c) => c.why === 'unavailable' ? 'Unavailable at the host' : c.why === 'busy' ? `busy, tried again after ${ui.fmt.time(c.until)}` : c.why === 'timeout' ? `slow, tried again after ${ui.fmt.time(c.until)}` : `skipped until ${ui.fmt.time(c.until)}`;
+      const coolWords = (c) => c.why === 'not_online' ? 'not reached: this PC is not online' : c.why === 'unavailable' ? 'Unavailable at the host' : c.why === 'busy' ? `busy, tried again after ${ui.fmt.time(c.until)}` : c.why === 'timeout' ? `slow, tried again after ${ui.fmt.time(c.until)}` : `skipped until ${ui.fmt.time(c.until)}`;
       async function tabRouter() {
         const rs = await ui.api(API + 'router');
         const url = ui.h('input', { type: 'text', value: rs.baseUrl, style: { width: '260px' }, 'aria-label': 'Router address' });
-        const saveUrl = ui.btn('Save', { kind: 'ghost sm', onClick: async () => { await set({ 'router.baseUrl': url.value.trim().replace(/\/$/, '') }); await load(); drawTab(); } });
+        const saveUrl = ui.btn('Save', { kind: 'ghost sm', onClick: async () => { try { await set({ 'router.baseUrl': url.value.trim().replace(/\/$/, '') }); await load(); drawTab(); ui.toast('Saved.', 'ok'); } catch (e) { ui.toast(e.message, 'err'); } } });
         const raw = rs.raw;
         return [
+          ui.h('p', { class: 'sub', 'data-apd': 'router-what' }, 'The router is the part of the desk that passes a question to a free model and tries the next one when a model is busy.'),
           ui.line(rs.name, 'Free models that need no sign-in. On by default. Off means none of these is used.', ui.sw(rs.enabled, 'Free models', async (on) => { await set({ 'router.enabled': on }); await load(); drawTab(); })),
-          ui.line('Your own router', (rs.ownerAnswers ? `Answers with ${rs.models.length} models. ` : 'Nothing answers at this address now. ') + 'Only if you run a router program on this PC: the desk uses it first, then the built-in free hosts below.', url, saveUrl),
+          ui.line('Your own router', (rs.ownerAnswers ? `Answers with ${ui.plural(rs.models.length, 'model')}. ` : 'Nothing answers at this address now. ') + 'Only if you run a router program on this PC: the desk uses it first, then the built-in free hosts below.', url, saveUrl),
           ui.line('Built-in free hosts', 'Used when no router of your own answers: free hosts that need no sign-in', ui.sw(rs.builtin, 'Built-in free hosts', async (on) => { await set({ 'router.builtin': on }); await load(); drawTab(); })),
           ui.h('p', { class: 'sub' }, rs.line),
           ui.h('h6', { style: { marginLeft: 0 } }, 'Built-in free hosts'),
@@ -507,6 +540,7 @@ export const pages = {
           st.engineEl,
           ui.h('h6', { style: { marginLeft: 0 } }, 'Ollama'),
           ui.h('p', { class: o.ok ? 'sub' : 'mdl-warn' }, o.line),
+          o.ok ? null : ui.h('p', { class: 'sub', 'data-apd': 'ollama-get' }, 'Ollama is optional. It is a free program that runs models on this PC. Get it from ', ui.h('a', { href: 'https://ollama.com/download', target: '_blank', rel: 'noopener' }, 'ollama.com'), ', start it, and its models show here.'),
           ...o.models.map(m => ui.line(m.name, [ui.fmt.bytes(m.size), m.parameters, m.quant, UNSAFE.test(m.name) ? 'never picked by default' : null].filter(Boolean).join(' · '), ui.pill('Installed', 'ok'),
             ui.btn('Remove', { kind: 'ghost sm', onClick: async () => { await ui.api(API + 'ollama/delete', { body: { model: m.name } }); ui.toast('Removal is waiting for your approval.'); } }))),
           ui.h('h6', { style: { marginLeft: 0 } }, 'Download for this PC'),
@@ -567,13 +601,14 @@ export const pages = {
             here && e.on ? testBtn({ provider: 'llama' }, async () => { await drawEngine(); await load(); }) : null,
             e.phase === 'running' ? ui.btn('Stop', { kind: 'ghost sm', onClick: act('stop', null, 'Stopped. It starts again when a local model is needed.') }) : null,
             here || e.downloads?.length || e.used ? ui.btn('Remove', { kind: 'ghost sm', 'data-apd': 'engine-remove', onClick: async () => { if (!await ui.confirm(`Remove the local model and its program from this PC? This frees ${ui.fmt.bytes(e.used || 0)}. It can be downloaded again.`, { title: 'Remove the local model?', ok: 'Remove' })) return; await act('remove', null, (r) => `Removed. ${r.freedText} freed.`)(); } }) : null),
-          here ? ui.line('Keep the local model loaded', `Start it when the desk starts and keep it in memory. Off: it starts when needed and stops after ${e.idleMinutes} minutes without use.`, ui.sw(e.keepLoaded, 'Keep the local model loaded', (on) => act('keep-loaded', { on })())) : null,
-          ui.h('p', { class: 'sub' }, 'Runs only on this PC, on its own address 127.0.0.1, and works while the desk is offline. Each download asks you first, is checked against its SHA-256 before use, and stops with Panic.'));
+          here ? ui.line('Keep the local model loaded', `Start it when the desk starts and keep it in memory. Off: it starts when needed and stops after ${ui.plural(e.idleMinutes, 'minute')} without use.`, ui.sw(e.keepLoaded, 'Keep the local model loaded', (on) => act('keep-loaded', { on })())) : null,
+          ui.h('p', { class: 'sub' }, 'Runs only on this PC, on this PC only, and works while the desk is offline. Each download asks you first, is checked against its published fingerprint (SHA-256) before use, and stops with Panic.'));
       }
       async function tabLoras() {
         const l = await ui.api(API + 'loras');
         const folder = ui.h('input', { type: 'text', value: l.folder?.folder || '', placeholder: 'A folder with adapters, for example D:\\Models\\loras', style: { flex: 1 } });
         return [
+          ui.h('p', { class: 'sub', 'data-apd': 'lora-what' }, 'A LoRA is a small add-on file that changes how a local model answers. Most people never need one.'),
           ui.h('h6', { style: { marginLeft: 0 } }, 'Adapters inside Ollama models'),
           ...(l.ollama.ok ? (l.ollama.items.length ? l.ollama.items.map(x => ui.line(x.adapter, `Built into ${x.model} (Modelfile ADAPTER)`, ui.pill('In use', 'ok'))) : [ui.h('p', { class: 'sub' }, 'None of the installed Ollama models has an adapter.')]) : [ui.h('p', { class: 'sub' }, 'Ollama is not running, so its models cannot be read.')]),
           ui.h('h6', { style: { marginLeft: 0 } }, 'A folder you pick'),
@@ -586,7 +621,12 @@ export const pages = {
         const [hw, ll] = await Promise.all([st.hw ? st.hw : ui.api(API + 'hardware'), ui.api(API + 'litellm')]);
         st.hw = hw;
         const nodes = ui.state.settings['network.lanNodes'] || (await ui.api('settings'))['network.lanNodes'] || [];
-        const saveNodes = async (list) => { await set({ 'network.lanNodes': list }); await load(); drawTab(); };
+        // a refused save (a person who is not the keeper, a bad address) says why and changes nothing on the page
+        const saveNodes = async (list, words) => {
+          let r; try { r = await set({ 'network.lanNodes': list }); } catch (e) { ui.toast(e, 'err'); return false; }
+          st.nodeNotice = r?.notice || null;   // saved, but an address outside this PC and the owner's network: said beside the field
+          await load(); drawTab(); if (words) ui.toast(words, 'ok'); return true;
+        };
         const scan = ui.btn('Scan', { kind: 'ghost sm', onClick: async () => { scan.disabled = true; scan.textContent = 'Scanning…'; try { st.hw = await ui.api(API + 'hardware?force=1'); drawTab(); } catch (e) { ui.toast(e.message, 'err'); } } });
         const name = ui.h('input', { type: 'text', placeholder: 'Name, for example Ryzen PC', style: { flex: '1 1 120px' } });
         const addr = ui.h('input', { type: 'text', placeholder: 'Address, for example 192.168.1.20:11434', style: { flex: '2 1 180px' } });
@@ -594,6 +634,7 @@ export const pages = {
         const llKey = ui.h('input', { type: 'password', placeholder: 'LiteLLM key (master key)', class: 'mdl-pw' });
         const tests = st.data?.active || [];
         return [
+          ui.h('p', { class: 'sub', 'data-apd': 'nodes-what' }, 'A node is another PC on your own network that runs models for this desk.'),
           ui.line('This PC', `${hw.gpu ? `${hw.gpu.name} · ${hw.gpu.vramGb} GB` : 'No graphics card found'} · ${hw.cpu.name} · ${hw.ramGb} GB RAM`, scan),
           ui.h('p', { class: 'sub' }, hw.line + ` Scanned ${ui.fmt.when(hw.at)}.`),
           ui.h('h6', { style: { marginLeft: 0 } }, 'Other PCs on your network'),
@@ -601,22 +642,24 @@ export const pages = {
             testLine(tests.find(a => a.provider === 'lan:' + n.id)?.test, ui),
             ui.sw(n.enabled !== false, n.name || 'Node', (on) => saveNodes(nodes.map(x => x.id === n.id ? { ...x, enabled: on } : x))),
             n.enabled !== false ? testBtn({ provider: 'lan:' + n.id, model: n.model || null }, async () => { await load(); drawTab(); }) : null,
-            ui.btn('Remove', { kind: 'ghost sm', onClick: () => saveNodes(nodes.filter(x => x.id !== n.id)) }))),
+            ui.btn('Remove', { kind: 'ghost sm', onClick: () => saveNodes(nodes.filter(x => x.id !== n.id), `${n.name || 'The node'} removed.`) }))),
           ui.h('div', { class: 'row' }, name, addr, model, ui.btn('Add', { kind: 'ghost sm', onClick: async () => {
-            if (!addr.value.trim()) return ui.toast('Type the address of the other PC.', 'err');
+            if (!addr.value.trim()) return ui.needs(addr, 'Type the address of the other PC.');
             let base = addr.value.trim().replace(/\/$/, ''); if (!/^https?:\/\//.test(base)) base = 'http://' + base; if (/:11434$/.test(base)) base += '/v1';
-            const probe = await ui.api(API + 'lan/probe', { body: { baseUrl: base } });
+            let probe; try { probe = await ui.api(API + 'lan/probe', { body: { baseUrl: base } }); } catch (e) { probe = { ok: false, models: [] }; }
             const id = (name.value || 'node').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 20) + '-' + Date.now().toString(36).slice(-4);
-            await saveNodes([...nodes, { id, name: name.value.trim() || base, baseUrl: base, model: model.value.trim() || probe.models?.[0] || '', enabled: true }]);
-            ui.toast(probe.ok ? `It answers with ${probe.models.length} models.` : `Saved, but it does not answer yet (${probe.error}).`, probe.ok ? 'ok' : 'err');
+            const models = probe.models || [];
+            await saveNodes([...nodes, { id, name: name.value.trim() || base, baseUrl: base, model: model.value.trim() || models[0] || '', enabled: true }],
+              probe.ok ? `Saved. It answers with ${ui.plural(models.length, 'model')}.` : 'Saved, but it does not answer yet. Check that the program on that PC is running.');
           } })),
+          st.nodeNotice ? ui.h('p', { class: 'sub', role: 'status', 'data-apd': 'node-notice', style: { margin: '6px 0 10px' } }, st.nodeNotice) : null,
           ui.h('p', { class: 'sub' }, 'Another PC running Ollama or a router. Offline, the desk still uses these, because they are on your own network.'),
           ui.h('h6', { style: { marginLeft: 0 } }, 'LiteLLM proxy (optional)'),
           ll.found ? (ll.added ? ui.line('LiteLLM on this PC', `Added as a Custom provider · ${ll.models.join(', ')}`, ui.pill('Added', 'ok'))
-            : ui.h('div', null, ui.line('LiteLLM on this PC', `Answers at ${ll.url}${ll.models.length ? ' · ' + ll.models.join(', ') : ' · its model list needs your LiteLLM key'}`), ui.h('div', { class: 'row' }, llKey, ui.btn('Add as a provider', { kind: 'ghost sm', onClick: async () => {
+            : ui.h('div', null, ui.line('LiteLLM on this PC', `Answers${ll.models.length ? ' · ' + ll.models.join(', ') : ' · its model list needs your LiteLLM key'}`), ui.h('div', { class: 'row' }, llKey, ui.btn('Add as a provider', { kind: 'ghost sm', onClick: async () => {
               try { await ui.api(API + 'keys', { body: { provider: 'custom', value: llKey.value || 'sk-no-key-needed', label: 'LiteLLM on this PC', baseUrl: ll.url, model: ll.models[0] || '' } }); ui.toast('LiteLLM added. Test it under Providers and keys.', 'ok'); await load(); drawTab(); } catch (e) { ui.toast(e.message, 'err'); }
             } }))))
-            : ui.h('p', { class: 'sub' }, `No LiteLLM proxy answers at ${ll.url}. If you run one, it shows here and can be added as a provider.`),
+            : ui.h('p', { class: 'sub' }, `No LiteLLM proxy answers on this PC. If you run one, it shows here and can be added as a provider.`),
         ];
       }
       async function tabUsage() {
@@ -624,7 +667,7 @@ export const pages = {
         const tot = u.today.reduce((s, r) => ({ calls: s.calls + r.calls, failed: s.failed + r.failed, cost: s.cost + r.cost, unknown: s.unknown + (r.unknown || 0) }), { calls: 0, failed: 0, cost: 0, unknown: 0 });
         // a call whose cost the desk cannot know is shown as "not known", with its tokens, never as ₹0
         const costCell = (r) => r.unknown ? (r.cost ? `${ui.fmt.money(r.cost, u.currency)} + not known` : 'not known') : ui.fmt.money(r.cost, u.currency);
-        return [ui.h('p', { class: 'sub' }, `Today: ${tot.calls} calls, ${tot.failed} failed, about ${ui.fmt.money(tot.cost, u.currency)}${tot.unknown ? `, and ${tot.unknown} call${tot.unknown === 1 ? '' : 's'} whose cost is not known` : ''}. Free API and local models cost nothing.`),
+        return [ui.h('p', { class: 'sub' }, `Today: ${ui.plural(tot.calls, 'call')}, ${tot.failed} failed, about ${ui.fmt.money(tot.cost, u.currency)}${tot.unknown ? `, and ${tot.unknown} call${tot.unknown === 1 ? '' : 's'} whose cost is not known` : ''}. Free API and local models cost nothing.`),
           ui.table([{ label: 'Model', render: r => r.label }, { label: 'Calls', render: r => String(r.calls) }, { label: 'Failed', render: r => String(r.failed) }, { label: 'Tokens', render: r => String(r.tokens) }, { label: 'Cost (about)', render: costCell }], u.today, { empty: 'No model calls yet today.' })];
       }
 

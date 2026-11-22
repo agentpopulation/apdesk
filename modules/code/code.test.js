@@ -59,3 +59,11 @@ test('the container image card says it comes from Docker Hub', async () => {
     t.core.approval.decide(card.id, 'deny');
   } finally { await t.close(); }
 });
+
+test('"Docker is not running" names the app only where there is one', async () => {
+  const { dockerNotRunning } = await import('./sandbox.js');
+  assert.match(dockerNotRunning('win32'), /Start Docker Desktop/);
+  assert.match(dockerNotRunning('darwin'), /Start Docker Desktop/);
+  assert.match(dockerNotRunning('linux'), /Start the Docker service/);
+  assert.doesNotMatch(dockerNotRunning('linux'), /Desktop/);
+});

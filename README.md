@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="Licence: Apache 2.0" src="https://img.shields.io/badge/licence-Apache_2.0-6a1fd0"></a>
-  <img alt="Version 0.1.0" src="https://img.shields.io/badge/version-0.1.0-e0308c">
+  <img alt="Version 0.1.2" src="https://img.shields.io/badge/version-0.1.2-e0308c">
   <img alt="Node 22.13 or newer" src="https://img.shields.io/badge/node-22.13%2B-22c58b">
   <img alt="No build step" src="https://img.shields.io/badge/build_step-none-ff8a3d">
   <img alt="Runs on your PC" src="https://img.shields.io/badge/runs-on_your_PC-4f9dff">
@@ -46,7 +46,7 @@ Most AI tools are a chat box on someone else's server. AP Desk is a small office
 | 📈 | **Sales help that waits for you** | Leads with the page each one came from, a four-stage pipeline, and outreach drafts. A draft goes out only when you approve that exact text. |
 | 🗂️ | **Real files, not just chat** | Excel and CSV tables, Word, PDF and Markdown documents, saved in your workspace folder. |
 | 🧠 | **A desk that learns you** | It remembers what you teach it, tidies its memory at night, and shows you what it kept. |
-| 🧩 | **30 modules, switch on what you need** | 16 are on from the first run. 13 more wait in the Module Store. See the [full list](#-the-30-modules). |
+| 🧩 | **35 modules, switch on what you need** | 17 are on from the first run. 17 more wait in the Module Store, and 1 is parked. See the [full list](#-the-35-modules). |
 
 ### Things you can ask on day one
 
@@ -83,11 +83,11 @@ Draft an email to the first lead. I will approve it before it goes.
 🪟 **Windows** (x64 and ARM64)
 
 1. Download AP Desk: press the green **Code** button on this page and choose **Download ZIP**. Unpack it anywhere.
-2. Double-click **`install.bat`** in the unpacked folder.
+2. Double-click **`install.bat`** in the unpacked folder. The installer opens in your browser. If no browser can be opened, or you run `install.bat /console`, it asks the same questions in the window instead.
 
 What the installer does:
 
-- asks where to put AP Desk (press Enter for `%LOCALAPPDATA%\Programs\AP Desk`, or type or browse to another folder);
+- asks where to put AP Desk (the page has a Browse button; in the console, press Enter for `%LOCALAPPDATA%\Programs\AP Desk`, or type another folder);
 - gets its own copy of Node.js 22 from nodejs.org, checks it against its published checksum, and keeps it inside the AP Desk folder;
 - copies AP Desk there; your `data` and `backups` are never touched when you run it again;
 - adds **AP Desk** to your Start menu and, if you like, to your Desktop, to Settings › Apps, and to the programs that start when you sign in;
@@ -173,9 +173,9 @@ Keys found in the environment when the desk starts are used for that run and are
 - **Your browser only.** The first browser that opens a fresh desk is remembered. Any other browser must type a six-digit code shown in the desk's own window.
 - **A guard for hidden instructions.** Text from web pages and files is marked as untrusted before a model sees it, so a page cannot quietly give orders to your agents.
 
-## 🧩 The 30 modules
+## 🧩 The 35 modules
 
-**On from the first run (16)**
+**On from the first run (17)**
 
 | # | Module | What it does |
 |---|---|---|
@@ -194,9 +194,10 @@ Keys found in the environment when the desk starts are used for that run and are
 | 13 | Sales | Leads with sources, a four-stage pipeline and outreach drafts that wait for you. |
 | 14 | Safety | The security level, auto-approve, the waiting list, and the guard for hidden instructions. |
 | 15 | Backup | Back up the database and workspace into one zip, restore it, and read the activity log. |
-| 16 | Module Store | All 30 modules as cards: what each does, whether it is on, and its honest status. |
+| 16 | Module Store | Every module as a card: what each does, whether it is on, and its honest status. |
+| 38 | Doctor | One button checks the desk: a model answers, keys, the internet, disk space, the local model, updates and your switches. Each problem says what to do. |
 
-**Switch on when you want them (13)**
+**Switch on when you want them (17)**
 
 | # | Module | What it does |
 |---|---|---|
@@ -213,20 +214,27 @@ Keys found in the environment when the desk starts are used for that run and are
 | 27 | Network and OSINT | Speed test, devices on your network, and public lookups for a domain. |
 | 28 | Life | Weather, a day plan for a trip with its sources, and exchange rates. |
 | 29 | Studio | Build a small one-page website from a brief, and compare two models on a saved question. |
+| 31 | Bench mode | While you are away, the desk looks back at its own work and looks up your market, then leaves you a note. Nothing is sent, saved or changed until you press Keep. |
+| 32 | Finder | A second search beside the usual one, with a private library of every page read that you can search while Offline. |
+| 34 | APIs | Find public data addresses for what you need from the public AgentPopulation packs. A pack is fetched only when you press Get. |
+| 35 | Tables | Watch a list on a public page, such as an event's attendee list, and keep the customer list up to date. Nothing is sent from here. |
 
-**Parked (1):** Looks (festival themes and avatar sets) is not built in this version.
+**Parked (1):** Looks (festival themes and office scenes) is not built in this version. The drawn agent avatars are in Agents.
 
 ## 📏 Honest status
 
-This is version **0.1.1**. We only state what was measured, with the date.
+This is version **0.1.2**. We only state what was measured, with the date.
 
 | What was measured | Result | When |
 |---|---|---|
-| Automated tests (`npm test`), Linux x64, Node 22 | 762 of 762 pass | 21 Nov 2026 |
-| Start-up check (`node tools/smoke.mjs --quick`): every module loads and every page opens in a real browser | 35 modules found, 17 on, 18 switch on and off, 0 pages with problems | 21 Nov 2026 |
+| Automated tests (`npm test`), Linux x64, Node 22 | 1,030 of 1,030 pass | 22 Nov 2026 |
+| Start-up check (`node tools/smoke.mjs --quick`): every module loads and every page opens in a real browser | 35 modules found, 17 on, 18 switch on and off, 0 pages with problems | 22 Nov 2026 |
 | New features of 20–21 Nov, tried on a real desk with free models (first chat, Bench, Finder, APIs, Tables, CRM, advisors, Doctor, Network) | 9 passed, 8 partial, 1 failed of 19, then corrected and re-checked | 21 Nov 2026 |
+| Independent test of the desk on real free models, as a first-time user (version 0.1.1) | 8 passed, 10 partial, 1 failed of 19; corrected in 0.1.1 and 0.1.2, not yet re-tested | 22 Nov 2026 |
+| Independent test of the CRM through the screen (version 0.1.1) | 18 passed, 19 partial, 13 failed of 50; corrections are in work, not in this version | 22 Nov 2026 |
+| Full review of 0.1.1 by six reviewers, each finding checked a second time | 90 faults stood (6 serious, 29 medium, 55 small); corrected in 0.1.2, then 25 more found in the corrections and corrected | 22 Nov 2026 |
 | 17 acceptance asks, answered by real free models | 13 passed, 3 failed, 1 not checked, on the 15 Nov code; not re-run since | 15 Nov 2026 |
-| Safety probes in `tools/safety` | All hold, with one accepted limit listed below | 21 Nov 2026 |
+| Safety probes in `tools/safety` | All hold, with one accepted limit listed below | 22 Nov 2026 |
 
 The three that failed, and why:
 
@@ -249,6 +257,8 @@ The ask that was not checked needs a local model through Ollama, which the test 
 - **The code sandbox is not isolation** unless Docker is installed. Code you approve can read files on your PC, including the desk's own database. Its approval card says so, and the Code module is off until you switch it on.
 - **A lead search lists some leads as "not checked".** Checked leads come first: a page it read places the company in your country and says it sells what you asked about. The rest are labelled "Country: not checked" or "What it sells: not checked". Some of those will be real fits.
 - **After Panic, a module's own timer keeps ticking.** Everything it tries through the desk's doors is refused while halted.
+- **Behind a proxy, the desk may not reach the internet.** The desk's own web calls (updates, downloads, model calls) do not read a proxy setting, and the Windows step that fetches Node.js does not read the Windows proxy. The failure message can then point at your internet, which works in your browser. Seen in a code review on 22 Nov 2026; not tried on a proxied network.
+- **Some chat behaviour still follows word patterns.** A few rules read the words of your ask to decide which tools the model gets or to check its draft. They can misjudge an unusual ask. Seen in a code review on 22 Nov 2026.
 
 The full list is in [`CHANGELOG.md`](CHANGELOG.md) under "Known weak points". Found something? Tell us on X.
 
@@ -257,9 +267,10 @@ The full list is in [`CHANGELOG.md`](CHANGELOG.md) under "Known weak points". Fo
 | Platform | State |
 |---|---|
 | Linux x64, Node 22 and 24 | Developed and tested here, including `start.sh`. |
-| Windows 11 x64 | The main target. An earlier build was started from a GitHub download on a Windows 11 PC on 20 Nov 2026 and opened the desk with all 16 default modules. The new installer (`install.bat`), the background mode and the start page have not been run on Windows yet. |
-| Windows on ARM64 | Not tested. The installer picks the ARM64 build of Node.js for these PCs; the desk itself is plain JavaScript with no native add-ons. |
-| macOS | Not tested yet. `start.command` uses the same script as Linux. |
+| Windows 11 x64 | The main target. The one-line install was run by the project owner on Windows 11 on 20 Nov 2026: it downloaded AP Desk, installed the packages, started all 16 default modules of that build and opened the desk. |
+| Windows 11 on ARM64 | `install.bat` with its console questions was run by the project owner on 22 Nov 2026: it fetched the ARM64 build of Node.js 22, installed the packages and opened the desk. |
+| Windows, not run yet | The visual installer in the browser, the hidden start, the background mode and the update step have not been run on Windows. They are covered by tests on Linux only. |
+| macOS | Not run. `start.command` uses the same script as Linux. |
 
 The agents' browser uses the Edge or Chrome already installed on your computer.
 
@@ -268,8 +279,8 @@ The agents' browser uses the Edge or Chrome already installed on your computer.
 | Path | What it holds |
 |---|---|
 | `app/` | The server, the shell, and the core doors: models, approvals, storage, modules. |
-| `app/core/contracts/` | The four contracts every module follows. Start here if you want to build a module. |
-| `modules/` | The 30 modules, one folder each, with a `module.json`. |
+| `app/core/contracts/` | The contracts every module follows: modules, storage, models, approvals, people and updates. Start here if you want to build a module. |
+| `modules/` | The 35 modules, one folder each, with a `module.json`. |
 | `vendor/` | Browser builds of open-source code, with their licences. |
 | `install.bat`, `uninstall.bat` | The Windows installer for your user only, and its uninstaller. |
 | `start.bat`, `start.command`, `start.sh` | One-file starters for Windows, Mac and Linux. |

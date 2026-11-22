@@ -1,6 +1,6 @@
 # Contract 1: how a module plugs in
 
-A module is a folder `modules/<id>/` with three files. Nothing else in the app knows about a module except through this contract.
+A module is a folder `modules/<id>/` with a `module.json`, and usually a `server.js` and a `ui.js`. Other files (helpers, fixtures, tests) may sit beside them. Nothing else in the app knows about a module except through this contract.
 
 ```
 modules/<id>/
@@ -18,8 +18,8 @@ modules/<id>/
   "number": 17,
   "name": "Mail",
   "description": "Inbox, drafts and allowed senders. Nothing is sent without you.",
-  "kind": "switch-on",          "core" = on from first run and cannot be switched off from the store
-  "defaultOn": false,           what a fresh install does
+  "kind": "switch-on",          "core" = always on, cannot be switched off from the store; "switch-on" = the owner switches it on and off (it may still ship on, see defaultOn); "parked" = not built, never started
+  "defaultOn": false,           what a fresh install does for a "switch-on" module (Doctor ships on)
   "menu": [{ "id": "mail", "label": "Mail", "order": 90 }],   extra places in the top menu while on (official eight never move)
   "pages": ["mail"],            page ids this module's ui.js renders
   "settings": [{ "id": "mail", "label": "Channels and mail" }],   sections it adds to Settings
@@ -32,6 +32,8 @@ modules/<id>/
   "status": "works" | "partial" | "stub"   the module's honest status
 }
 ```
+
+There is no version field: a module has the version of the desk it ships in.
 
 The official menu is fixed: Chat, Research, Tasks, Sales, Files, Agents, Models, Settings. A core module owns each: `chat` -> Chat, `research` -> Research, `tasks` -> Tasks, `sales` -> Sales, `files` -> Files, `agents` -> Agents, `models` -> Models, and Settings is the shell's. A switch-on module may add a menu place after the eight (Mail, Calendar, Social, Life, ...) which appears only while the module is on.
 
@@ -58,20 +60,26 @@ export async function activate(ctx) {
 | `ctx.workspace` | absolute path of the workspace folder; `ctx.workspacePath(...parts)` resolves inside it and refuses to escape |
 | `ctx.model` | the model door, see MODEL-DOOR.md |
 | `ctx.approval` | the approval door, see APPROVAL-DOOR.md |
-| `ctx.panic` | `ctx.panic.signal` (aborted on Panic), `ctx.panic.onStop(fn)` to kill child processes and browsers, `ctx.panic.halted` |
+| `ctx.panic` | `ctx.panic.signal` (aborted on Panic), `ctx.panic.onStop(fn)` to kill child processes and browsers, `ctx.panic.halted`, `ctx.panic.child(signal)` (a signal that aborts on Panic or when the one you pass aborts) |
 | `ctx.jobs` | background jobs that outlive the browser: `ctx.jobs.start({ kind, title, agentId, chatId, input, run, quiet })`, `ctx.jobs.list()`, `ctx.jobs.get(id)`. See below. `quiet: true` marks a job the desk starts for its own upkeep (the nightly memory tidy): no finish notice, no menu count, not on Home or in the brief, listed under Housekeeping in Tasks; a quiet job that fails is still shown. A quiet job's `input` must be an object. Never mark work the owner asked for as quiet. |
-| `ctx.events.emit(type, data)` | pushes to every open browser over SSE (`/api/events`). Types the shell knows: `job`, `approval`, `chat`, `panic`, `modules`, `toast`. |
-| `ctx.agents` | `list()`, `get(id)`, `update(id, patch)`: the roster (name, role, personality, instructions, model main and fallback, tools) |
+| `ctx.events.emit(type, data)` | pushes to every open browser over SSE (`/api/events`). Types a module may emit: `chat`, `toast`, and its own names. The core alone emits `panic`, `security`, `approval`, `modules`, `settings`, `agents`, `job` and `restart`; a module that emits one of these gets a `reserved_event` error. |
+| `ctx.events.on(fn)` | `fn(type, data)` for every event the desk emits, run in this module's space |
+| `ctx.agents` | `list()`, `get(id)`, `update(id, patch)`, `create(agent)`, `remove(id)`, `systemPrompt(id, extra)`: the roster (name, role, personality, instructions, model main and fallback, tools) |
 | `ctx.settings.get(key)` | read-only view of app settings (theme, role, online, level, limits). Writing goes through the shell's Settings routes only, with one exception: `ctx.settings.setOwnerText('business.about', text)` stores what the owner typed about his business when he answers the desk's question in a chat. It accepts that one key only, plain text, at most 600 characters, and may be called only from a route where `owner` is true. No other setting can be written by a module. |
 | `ctx.secrets.get(name)`, `.set(name, value)`, `.has(name)`, `.list()` | credentials that belong to this module (SMTP password, bot token). Stored in the `secrets` table; never put them in `kv`, logs, events or route answers. |
 | `ctx.serviceKey(id)` | the owner's key for a dedicated service that is not a chat model: search (`serper`, `tavily`, `brave`, `exa`, `jina`) or audio (`elevenlabs`, `deepgram`, `cartesia`, `assemblyai`). Null when he has not added one. Added on the Models page or in Keys and logins through `/api/keys/services`; also picked up from the environment (`SERPER_API_KEY` ...) for that run. `ctx.services.list()` gives the masked list. |
+| `ctx.serviceKeyRefused(id, why)` | tell the desk the service refused the key it was given (`why` is `'refused'`) or its allowance ran out (`'allowance'`): that key rests and the next one is used |
 | route arg `owner` | `true` when the request carries the shell's session token (the owner clicked it in the desk). Routes that delete, reveal a secret, restore, or change what agents may do must refuse when `owner` is false. |
 | `ctx.tool({ name, description, parameters, run })` | registers a Coordinator tool. `run(args, call)` where `call = { agentId, chatId, signal, emitCard(card) }`. Return a plain object; the Coordinator shows it. Tool names use letters, digits and underscores only (`research_deep`), because some providers refuse dots. |
 | `ctx.untool(name)` | removes one of this module's own tools while it stays on |
 | `ctx.chatCard(chatId, card)` | posts a card into a chat (`{ kind: 'table'|'progress'|'file'|'draft'|'actions'|'text', ... }`). The Chat module renders kinds it knows; unknown kinds render as text. |
+| `ctx.expose(api)` | the object other modules reach with `ctx.modules.api(id)`; it runs in this module's space |
 | `ctx.modules.api(id)` | the object another module exposed, or `null` if that module is off |
 | `ctx.modules.isOn(id)` | |
+| `ctx.modules.list()`, `ctx.modules.tools()`, `ctx.modules.runTool(name, args, call)` | every module with its state; every registered Coordinator tool; run one by name (refused while Panic holds) |
+| `ctx.readBody(req, limit?)` | the raw request body, up to `limit` bytes (default 64 MB), for a route that takes a file |
 | `ctx.log(...)` | prefixed console log |
+| `ctx.plainFailure(e)` | a failure as `{ code, line }`: one plain line for the screen and a short code, the same as the model door says it. Never a path, a system code or program text; put the raw message in `ctx.log`. |
 | `ctx.activity(title, detail?)` | one line in the owner's activity log, in plain words |
 | `ctx.requestRestart(reason)` | stop cleanly and start again (the launcher restarts the desk). For the Backup module after a restore; call only from a route where `owner` is true. In tests it only sets `desk.restartRequested`. |
 | `ctx.dataDir`, `ctx.backupsDir`, `ctx.root` | the data folder, the backups folder (outside data), the install folder |

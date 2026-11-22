@@ -5,7 +5,7 @@ import { Settings } from './settings.js';
 import { Events } from './events.js';
 import { Agents } from './agents.js';
 import { ApprovalDoor } from './approval-door.js';
-import { ModelDoor } from './model-door.js';
+import { ModelDoor, NO_LIMITS, zeroLimit } from './model-door.js';
 import { Jobs } from './jobs.js';
 import { Modules } from './modules.js';
 import { ServiceKeys } from './service-keys.js';
@@ -42,7 +42,8 @@ export function openSpace({ dataDir, backupsDir, panic: housePanic, main = true,
     if (waiting && j.status === 'running') jobs.update(jobId, { status: 'waiting', detail: 'Waiting for your approval: ' + String(title || '').slice(0, 160) });
     else if (!waiting && j.status === 'waiting') jobs.update(jobId, { status: 'running', detail: 'Working' });
   };
-  model.spendGuard = () => { const l = approval.limits(); return approval.spent('day') >= l.perDay ? 'daily spend limit' : approval.spent('month') >= l.perMonth ? 'monthly spend limit' : null; };
+  // a limit of 0 is no limit set (paid model calls off), not a limit reached with nothing spent
+  model.spendGuard = () => { const l = approval.limits(); if (zeroLimit(l.perDay) || zeroLimit(l.perMonth)) return NO_LIMITS; return approval.spent('day') >= l.perDay ? 'daily spend limit' : approval.spent('month') >= l.perMonth ? 'monthly spend limit' : null; };
   jobs.cardSink = (chatId, card) => modules.api('chat')?.postCard?.(chatId, card);
   panic.onChange((st) => { events.emit('panic', st); approval.activity({ action: 'panic', title: st.halted ? 'Panic: everything stopped' : 'Resumed', how: 'owner' }); });
 

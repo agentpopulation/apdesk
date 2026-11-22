@@ -5,6 +5,14 @@ import { askModel, asSource, DATA_RULE, passages, verifyQuote, quoteOnPage, code
 import { writeReport } from './export.js';
 import { domainIn, onDomain, anchorFromSite, namesExactly, applyScreen, screenPages, sanityPass, rivalSentences, otherValues, readOwnSite, uncorroborated, ownSiteLine, topLines, tailLines } from './entity.js';
 
+/** "1 source", "3 sources". */
+export const count = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
+/** The report's date in the owner's zone and style; a stored value the browser does not accept falls back to the computer's own. */
+export function reportDate({ locale, timeZone } = {}, when = new Date()) {
+  const o = { day: 'numeric', month: 'long', year: 'numeric' }; const loc = locale ? String(locale).trim().replace(/_/g, '-') : undefined;
+  for (const [l, z] of [[loc, timeZone], [undefined, timeZone], [loc, undefined], [undefined, undefined]]) { try { return when.toLocaleDateString(l, { ...o, timeZone: z || undefined }); } catch {} }
+  return when.toDateString();
+}
 const SKIP_HOSTS = /(^|\.)(youtube\.com|youtu\.be|facebook\.com|instagram\.com|x\.com|twitter\.com|linkedin\.com|tiktok\.com|pinterest\.|quora\.com|reddit\.com)$/i;
 /** A bibliography entry, not a statement of the page. Plain signs only: authors with initials, et al., "Retrieved/Accessed <date>",
  *  "Archived from the original", a quoted title then a publication and a date, "Surname, I. (year)", volume(issue), "pp.",
@@ -116,7 +124,7 @@ export async function runDeep(ctx, job, { rid, question, agentId, chatId, store 
         if (p?.text?.length >= MIN_TEXT) { t.ok = true; t.status = 200; t.chars = p.text.length; t.note = 'read in the browser'; good.push({ url: c.url, status: 200, kind: 'rendered', title: p.title || c.title, text: p.text.slice(0, 200000), snippet: c.snippet, provider: c.source }); }
         else { t.ok = false; t.note = e.message; perHost[h]--; }
       }
-      done++; step(from + (to - from) * Math.min(1, good.length / target), `Reading ${good.length} pages (${tried.length} tried)`);
+      done++; step(from + (to - from) * Math.min(1, good.length / target), `Reading ${count(good.length, 'page')} (${tried.length} tried)`);
     });
   };
   await readSome(0.22, 0.45);
@@ -132,7 +140,7 @@ export async function runDeep(ctx, job, { rid, question, agentId, chatId, store 
     }
     await readSome(0.52, 0.55);
   }
-  if (!good.length) throw Object.assign(new Error(`No page could be read (${tried.length} tried). Search: ${Object.entries(providers).map(([k, v]) => `${k}: ${v.results} results${v.note ? ', then ' + v.note : ''}`).join('; ')}. Try again in a few minutes.`), { code: 'search_failed' });
+  if (!good.length) throw Object.assign(new Error(`No page could be read (${tried.length} tried). Search: ${Object.entries(providers).map(([k, v]) => `${k}: ${count(v.results, 'result')}${v.note ? ', then ' + v.note : ''}`).join('; ')}. Try again in a few minutes.`), { code: 'search_failed' });
 
   // 3b. entity screening: pages about a different organisation with a similar name are left out, never merged
   let screen = null;
@@ -168,7 +176,7 @@ export async function runDeep(ctx, job, { rid, question, agentId, chatId, store 
     const batches = []; for (let i = 0; i < list.length; i += 3) batches.push(list.slice(i, i + 3));
     let done = 0;
     await pool(batches, 2, async (batch) => {
-      step(p0 + (p1 - p0) * (done / batches.length), `Picking passages to cite (${evidence.length} so far, ${good.length} pages)`);
+      step(p0 + (p1 - p0) * (done / batches.length), `Picking passages to cite (${evidence.length} so far, ${count(good.length, 'page')})`);
       let rows = [];
       for (let attempt = 0; attempt < 2 && !rows.length; attempt++) try {
         const rr = await askModel(ctx, { agentId, purpose: 'research', json: true, signal, maxTokens: 3000, temperature: 0, messages: [
@@ -185,7 +193,7 @@ export async function runDeep(ctx, job, { rid, question, agentId, chatId, store 
   if (!evidence.length) throw new Error('No passage of the pages read could be verified, so nothing can be cited. Try again in a few minutes.');
 
   // 5. write: every claim restates one or two verified passages; code then checks each claim against its passage (numbers, words, negation)
-  step(0.63, `Writing the report from ${evidence.length} verified passages of ${new Set(evidence.map((e) => e.n)).size} pages`);
+  step(0.63, `Writing the report from ${count(evidence.length, 'verified passage')} of ${count(new Set(evidence.map((e) => e.n)).size, 'page')}`);
   const evText = (list) => list.map((e) => `[${e.id}] (source ${e.n}: ${host(srcs[e.n - 1].page.url)}) "${e.quote}"`).join('\n');
   const byId = new Map(); const sync = () => { for (const e of evidence) byId.set(e.id, e); };
   sync();
@@ -287,8 +295,8 @@ export async function runDeep(ctx, job, { rid, question, agentId, chatId, store 
   const uncited = good.filter((g) => g.url && !cited.some((s) => s.page.url === g.url) && !(screen?.unclear || []).some((u) => u.url === g.url)).map((g) => ({ title: String(g.title || '').trim() || host(g.url), url: g.url }));
   const line = (c) => c.ok.length ? `${c.text} ${c.ok.map((n) => `[${num.get(n)}]`).join('')}${c.note ? ` *(${c.note})*` : ''}` : `${c.text} *(not checked${c.sanity ? ': ' + c.sanity : ''})*`;
   const sections = summaryList.length ? [{ heading: 'Summary', claims: summaryList }] : []; for (const c of claims.filter((x) => x.section !== 'Summary')) { let s = sections.find((x) => x.heading === c.section); if (!s) sections.push(s = { heading: c.section, claims: [] }); s.claims.push(c); }
-  const date = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: ctx.settings.get('timeZone') || Intl.DateTimeFormat().resolvedOptions().timeZone });
-  const md = [`# ${title}`, '', ...(sources.length < MIN_SOURCES ? [`**${sources.length} ${sources.length === 1 ? 'source' : 'sources'} could be confirmed** (ten were the aim; ${good.length} pages were read).`, ''] : []), ...entityTop(), `*Researched ${date}. ${good.length} pages read, ${sources.length} cited. ${passed} of ${claims.length} claims were checked against the text of their sources; the rest are marked "not checked".*`, '',
+  const date = reportDate({ locale: ctx.settings.get('locale'), timeZone: ctx.settings.get('timeZone') });
+  const md = [`# ${title}`, '', ...(sources.length < MIN_SOURCES ? [`**${count(sources.length, 'source')} could be confirmed** (ten were the aim; ${count(good.length, 'page')} read).`, ''] : []), ...entityTop(), `*Researched ${date}. ${count(good.length, 'page')} read, ${sources.length} cited. ${passed} of ${count(claims.length, 'claim')} were checked against the text of their sources; the rest are marked "not checked".*`, '',
     ...sections.flatMap((s) => [`## ${s.heading}`, '', ...(s.heading === 'Summary' ? [s.claims.map(line).join(' ')] : s.claims.map((c) => '- ' + line(c))), '']),
     '## Sources', '', 'Each source is followed by the passage of its page that supports each claim citing it, copied word for word.', '',
     ...sources.flatMap((s) => [`**${s.n}. [${s.title.replace(/[[\]*]/g, '')}](${s.url})** (${s.host})`, '', ...s.quotes.flatMap((q) => [`> "${q.quote.replace(/\s+/g, ' ').trim()}" (supports: ${q.claim})`, '']) ]),
@@ -306,7 +314,7 @@ export async function runDeep(ctx, job, { rid, question, agentId, chatId, store 
   const files = await writeReport(ctx, { title, markdown: md, sources: sources.map(({ n, title: t, url }) => ({ n, title: t, url })), jobId: job.id, agentId, chatId, signal });
   store.update(rid, { files, status: 'done', progress: 1, step: 'Report ready' });
   const shortSources = sources.map(({ n, title: t, url }) => ({ n, title: t, url }));
-  job.card({ kind: 'progress', id: cardId, title: 'Deep research: ' + title, detail: `Report ready: ${sources.length} sources, ${passed} of ${claims.length} claims checked`, progress: 1, status: 'done' });
+  job.card({ kind: 'progress', id: cardId, title: 'Deep research: ' + title, detail: `Report ready: ${count(sources.length, 'source')}, ${passed} of ${count(claims.length, 'claim')} checked`, progress: 1, status: 'done' });
   job.card({ kind: 'report', title, summary, path: files.md || null, sources: shortSources, go: '#/research/' + rid });
   job.card({ kind: 'sources', items: shortSources });
   return { reportId: rid, title, sources: sources.length, read: good.length, claims: claims.length, passed, files, go: '#/research/' + rid };

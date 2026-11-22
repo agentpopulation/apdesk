@@ -67,7 +67,7 @@
     note($('folder-note'), '');
     call('install', body).then(function (r) {
       b.disabled = false; b.textContent = 'Install';
-      if (r.status === 202) { show('progress'); paint({ phase: 'running', step: null, done: [], line: 'Getting ready …' }); poll(); return; }
+      if (r.status === 202) { show('progress'); paint({ phase: 'running', step: null, done: [], line: r.kept || 'Getting ready …' }); poll(); return; }
       if (r.warn) { $('warn-text').textContent = r.warn; $('warn').hidden = false; $('anyway').focus(); return; }
       note($('folder-note'), r.problem || 'The installer could not use that folder.', 'bad'); $('folder').focus();
     }).catch(function () { b.disabled = false; b.textContent = 'Install'; lost($('folder-note')); });
@@ -95,6 +95,7 @@
       show('ready'); keepAlive();
       $('ready-where').textContent = 'It is installed in ' + s.dir + '.';
       $('ready-problems').hidden = !s.problems;
+      $('ready-kept').textContent = s.kept || ''; $('ready-kept').hidden = !s.kept;
       if (s.started) note($('ready-note'), 'AP Desk is starting. It opens in its own window in a moment.', 'ok');
       return;
     }

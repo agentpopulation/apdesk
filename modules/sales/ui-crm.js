@@ -124,9 +124,9 @@ export function mountCrm(pane, ui) {
         const r = await api('m/sales/crm/import/preview', { body: picked });
         const what = (x) => x.action === 'new' ? 'New customer' : x.action === 'merge' ? `Merged with ${x.with}` : `Skipped: ${x.why}`;
         const keep = r.rows.filter(x => x.action !== 'skip').length;
-        out.replaceChildren(h('p', { class: 'sub', style: { margin: 0 } }, `${keep} of ${r.rows.length} rows will be saved as customers. Nothing is saved until you press Save.`),
+        out.replaceChildren(h('p', { class: 'sub', style: { margin: 0 } }, `${keep} of ${r.rows.length} row${r.rows.length === 1 ? '' : 's'} will be saved as customers. Nothing is saved until you press Save.`),
           h('div', { class: 'scroll', style: { maxHeight: '40vh' } }, grid([{ label: 'Company', render: (x) => val(x.name) }, { label: 'Site', render: (x) => val(x.host) }, { label: 'Contact', render: (x) => x.contact || '' }, { label: 'Mail address', render: (x) => x.email || '' }, { label: 'What happens', render: what }], r.rows, { empty: 'No rows in that file.' })));
-      } catch (e) { picked = null; out.replaceChildren(h('p', { class: 'sub' }, e.message)); }
+      } catch (e) { picked = null; out.replaceChildren(h('p', { class: 'sub' }, ui.plainError(e))); }
     });
     ui.modal({ title: 'Import customers', wide: true, body: h('div', { class: 'stack' }, h('span', { class: 'sub' }, 'A CSV file with a company name and site, and an optional contact name and mail address. You see every row before anything is saved.'), file, out),
       actions: [{ label: 'Cancel' }, { label: 'Save', kind: '', onClick: async () => {

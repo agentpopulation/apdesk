@@ -62,10 +62,21 @@ test('spend gate: caps and session limits are owner-only and are cleaned on the 
     assert.equal(bad.status, 400);
     const notOwner = await t.call('/api/m/bench/spendgate', { body: { option: 'free' }, session: false });
     assert.equal(notOwner.status, 403, 'raising/changing the choice needs the owner at the desk');
-    await t.call('/api/m/bench/spendgate', { body: { option: 'paid', capSessionMinor: '250.7', capDayMinor: -5, limits: { steps: 20, sources: -3 } } });
+    const badLimit = await t.call('/api/m/bench/spendgate', { body: { option: 'paid', limits: { steps: 20, sources: -3 } } });
+    assert.equal(badLimit.status, 400, 'an unsound limit is refused, not quietly dropped'); assert.match(badLimit.json.error, /limit/i);
+    assert.equal(bench.gate().limits.steps, 140, 'nothing of a refused change is saved'); assert.equal(bench.gate().option, null);
+    await t.call('/api/m/bench/spendgate', { body: { option: 'paid', capSessionMinor: '250.7', capDayMinor: 700, limits: { steps: 20 } } });
     const g = bench.gate();
-    assert.equal(g.capSessionMinor, 251); assert.equal(g.capDayMinor, 0, 'a negative cap means no cap');
-    assert.equal(g.limits.steps, 20); assert.equal(g.limits.sources, 140, 'an unsound limit keeps its default');
+    assert.equal(g.capSessionMinor, 251); assert.equal(g.capDayMinor, 700);
+    assert.equal(g.limits.steps, 20); assert.equal(g.limits.sources, 140, 'a limit not sent keeps its value');
+    // a cap that is below zero, empty, true or not a number is refused with a reason; it never quietly removes a cap
+    for (const bad of [-5, -100, 'lots', '', '  ', true, false, {}]) {
+      const r = await t.call('/api/m/bench/spendgate', { body: { capDayMinor: bad } });
+      assert.equal(r.status, 400, String(bad)); assert.match(r.json.error, /cap/i); assert.match(r.json.error, /zero/i);
+    }
+    assert.equal(bench.gate().capDayMinor, 700, 'the cap set earlier is still there');
+    assert.equal((await t.call('/api/m/bench/spendgate', { body: { capDayMinor: 0 } })).status, 200, 'zero is how a cap is taken off, on purpose');
+    assert.equal(bench.gate().capDayMinor, 0);
   } finally { await t.close(); }
 });
 
@@ -141,4 +152,15 @@ test('return panel: a headline, result cards, a needs-you list and what was not 
     assert.ok(p.results.length >= 1, 'Bench findings show as result cards');
     assert.ok(p.results.every((c) => 'rating' in c), 'every result card carries its rating slot');
   } finally { await t.close(); }
+});
+
+test('a job stopped because no model could answer is seen as unfinished, in the model door\'s own words too', async () => {
+  const { modelStopped } = await import('./activities.js');
+  const { FAILURE_LINES } = await import('../../app/core/model-door.js');
+  assert.equal(modelStopped(FAILURE_LINES.not_online), true, 'this PC is not online');
+  assert.equal(modelStopped(FAILURE_LINES.timeout), true);
+  assert.equal(modelStopped('No model answered: the providers are busy. Try again in a minute, or add a free key or a local model in Models.'), true);
+  assert.equal(modelStopped('No model is available right now. Add a free key or start a local model in Models.'), true);
+  assert.equal(modelStopped('That file is not in the workspace.'), false);
+  assert.equal(modelStopped(null), false);
 });

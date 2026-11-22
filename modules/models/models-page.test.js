@@ -169,7 +169,7 @@ test('the small-model note is shown: the engine card and the first-start box bot
   const ui = fs.readFileSync(new URL('./ui.js', import.meta.url), 'utf8');
   assert.match(ui, /plan\.note \? ui\.h\('p', \{ class: 'sub', 'data-apd': 'engine-note' \}, plan\.note\) : null/);
   const shell = fs.readFileSync(new URL('../../app/ui/shell.js', import.meta.url), 'utf8');
-  const box = shell.slice(shell.indexOf('function localModelBox()'), shell.indexOf('async function firstStep('));
+  const box = shell.slice(shell.indexOf('function localModelBox('), shell.indexOf('async function firstStep('));
   assert.match(box, /note\.textContent = plan\.note \|\| ''; note\.hidden = !plan\.note;/);
   assert.match(box, /h\('span', \{ class: 'd', 'data-apd': 'local-model-note', hidden: true \}\)/);
 });
@@ -177,7 +177,7 @@ test('the small-model note is shown: the engine card and the first-start box bot
 test('the first-start box never leaves a low-memory PC with nothing to do: it offers Check again, which reads the memory afresh', async () => {
   const fs = await import('node:fs');
   const shell = fs.readFileSync(new URL('../../app/ui/shell.js', import.meta.url), 'utf8');
-  const box = shell.slice(shell.indexOf('function localModelBox()'), shell.indexOf('async function firstStep('));
+  const box = shell.slice(shell.indexOf('function localModelBox('), shell.indexOf('async function firstStep('));
   assert.match(box, /'Check again'/);
   assert.match(box, /plan\.lowMemory/);
   assert.match(box, /fresh=1/);
@@ -189,7 +189,7 @@ test('the first-start box never leaves a low-memory PC with nothing to do: it of
 test('the first-start box: Check again keeps the owner\'s untick; only a model he picks ticks the box again', async () => {
   const fs = await import('node:fs');
   const shell = fs.readFileSync(new URL('../../app/ui/shell.js', import.meta.url), 'utf8');
-  const box = shell.slice(shell.indexOf('function localModelBox()'), shell.indexOf('async function firstStep('));
+  const box = shell.slice(shell.indexOf('function localModelBox('), shell.indexOf('async function firstStep('));
   assert.match(box, /again\.onclick = [^\n]*read\(pick\.id, true\)/, 'Check again reads afresh for the same model');
   assert.match(box, /show\(plan, !!id && !fresh\)/, 'a fresh read is not a pick');
   assert.match(box, /cb\.onchange = \(\) => \{ unticked = !cb\.checked; \}/, 'the owner\'s untick is remembered');

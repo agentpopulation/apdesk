@@ -9,6 +9,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
 import { SETTINGS_TOKEN } from './approval-door.js';
+import { failureKind } from './model-door.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const KEYS_FILE = path.join(HERE, 'update-keys.json');
@@ -157,6 +158,15 @@ function dayOf(iso, settings) {
   try { return new Date(iso).toLocaleDateString(settings.get('locale') || 'en-GB', opt); } catch { return new Date(iso).toLocaleDateString('en-GB', { ...opt, timeZone: 'UTC' }); }
 }
 
+/** Why GitHub could not be reached, in plain words with a next step (the raw error goes to the log). */
+export function reachLine(e) {
+  const k = failureKind(e);
+  if (k === 'not_online') return 'Could not reach GitHub: this PC is not online. Try again when it is.';
+  if (k === 'timeout') return 'GitHub did not answer in time. Try again later.';
+  if (k === 'no_answer') return 'Could not reach GitHub: the connection was refused. A firewall or proxy on this PC may be in the way.';
+  if (k === 'broke') return 'The connection to GitHub broke. Try again.';
+  return 'Could not reach GitHub. Check the internet connection, then try again.';
+}
 export class Updater {
   /** core: the desk's core. Options are for tests and the probe: the install folder, the release address, the hosts it may reach, the keys. */
   constructor(core, { root = core.root, repo = REPO, hosts = GITHUB_HOSTS, keys = null } = {}) {
@@ -233,12 +243,12 @@ export class Updater {
   }
   async get(href, cap, { toFile = null, what = 'file' } = {}) {
     let u = this.allowed(href);
-    const signal = AbortSignal.any([this.core.panic.child(), AbortSignal.timeout(toFile ? 30 * 60000 : 20000)]);
+    const signal = this.core.panic.child(AbortSignal.timeout(toFile ? 30 * 60000 : 20000));
     for (let hop = 0; hop < 6; hop++) {
       this.stopIfNeeded();
       let res;
       try { res = await fetch(u, { method: 'GET', redirect: 'manual', headers: { 'User-Agent': UA, Accept: 'application/octet-stream, application/json, */*' }, signal }); }
-      catch (e) { if (this.core.panic.halted) throw refusal('Stopped by Panic. Nothing was changed.'); if (e.code === 'offline') throw refusal('The desk is Offline. Go Online to check for updates.'); throw refusal(`Could not reach GitHub (${e.cause?.code || e.name === 'TimeoutError' ? 'no answer in time' : e.message}).`); }
+      catch (e) { if (this.core.panic.halted) throw refusal('Stopped by Panic. Nothing was changed.'); if (e.code === 'offline') throw refusal('The desk is Offline. Go Online to check for updates.'); this.core.log?.('update', 'GitHub not reached:', e?.message, e?.cause?.code || ''); throw Object.assign(refusal(reachLine(e)), { whole: true }); }
       if ([301, 302, 303, 307, 308].includes(res.status)) {
         const loc = res.headers.get('location'); try { await res.body?.cancel(); } catch {}
         if (!loc) throw refusal('GitHub answered with a redirect to nowhere.');
@@ -252,7 +262,7 @@ export class Updater {
       const fd = toFile ? fs.openSync(toFile, 'w') : null;
       try {
         for (;;) {
-          let r; try { r = await reader.read(); } catch (e) { throw this.core.panic.halted ? refusal('Stopped by Panic. Nothing was changed.') : refusal(`The download stopped (${e.message}).`); }
+          let r; try { r = await reader.read(); } catch (e) { throw this.core.panic.halted ? refusal('Stopped by Panic. Nothing was changed.') : (this.core.log?.('update', 'download stopped:', e?.message), refusal(`The download stopped. ${failureKind(e) === 'not_online' ? 'This PC is not online. ' : ''}Try again later.`)); }
           if (r.done) break;
           n += r.value.length;
           if (n > cap) { try { await reader.cancel(); } catch {} throw big(); }
@@ -278,7 +288,7 @@ export class Updater {
     const r = (result, line, extra = {}) => ({ result, line, at, ...extra });
     if (!this.setUp) return r('not-set-up', 'Updates are not set up in this build.');
     if (layout === 'git') return r('git', 'This copy is a Git checkout. Update it with git pull.');
-    const quiet = (e) => /^(Everything is stopped|The desk is Offline|Stopped by Panic)/.test(e.message);
+    const quiet = (e) => e.whole === true || /^(Everything is stopped|The desk is Offline|Stopped by Panic)/.test(e.message);   // whole: a line that already says what and what next
     const channel = this.channel;
     // Stable: GitHub's latest full release. Preview: that one and the newest few releases in the feed (pre-releases too).
     const bases = [`${this.repo}/releases/latest/download`];

@@ -49,6 +49,8 @@ export function findPython() {
   return (pyCache = false);
 }
 
+/** Docker Desktop is the app on Windows and macOS; on Linux it is a service. */
+export const dockerNotRunning = (platform = process.platform) => `Docker is installed but not running. Start ${platform === 'linux' ? 'the Docker service' : 'Docker Desktop'} to use the container sandbox.`;
 let dockerCache = { at: 0, value: null };
 export function dockerStatus({ force = false } = {}) {
   if (!force && dockerCache.value && Date.now() - dockerCache.at < 30_000) return dockerCache.value;
@@ -57,8 +59,8 @@ export function dockerStatus({ force = false } = {}) {
     const r = spawnSync('docker', ['version', '--format', '{{.Server.Version}}'], { encoding: 'utf8', timeout: 6000, windowsHide: true });
     if (r.error?.code === 'ENOENT') value = { available: false, reason: 'Docker is not installed on this PC.' };
     else if (r.status === 0 && String(r.stdout).trim()) value = { available: true, version: String(r.stdout).trim() };
-    else value = { available: false, reason: 'Docker is installed but not running. Start Docker Desktop to use the container sandbox.' };
-  } catch (e) { value = { available: false, reason: 'Docker could not be checked: ' + e.message }; }
+    else value = { available: false, reason: dockerNotRunning() };
+  } catch { value = { available: false, reason: 'Docker could not be checked on this PC.' }; }
   if (value.available) {
     value.images = {};
     for (const [lang, image] of Object.entries(IMAGES)) {

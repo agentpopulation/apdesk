@@ -81,3 +81,17 @@ test('each job names who did the work: its agent when it has one, otherwise the 
     assert.ok(!listed.finished.some(j => j.by === 'Coordinator'), 'no job is put down to the Coordinator by default');
   } finally { await t.close(); }
 });
+
+test('a fault inside a task route reaches the page as one plain line, never a path or a system code', async () => {
+  const t = await testDesk({ modules: ['tasks', 'flows'] });
+  try {
+    const fsp = await import('node:fs/promises');
+    t.core.jobs.start = async () => { await fsp.readFile('/nope/secret/path.txt'); };
+    const r = await t.call('/api/m/tasks/create', { body: { prompt: 'Say hello' } });
+    assert.equal(r.status, 500);
+    assert.equal(r.json.error, 'Something went wrong on this PC. The details are in the desk\'s log.');
+    assert.doesNotMatch(r.text, /ENOENT|nope|secret/);
+    const bad = await t.call('/api/m/tasks/jobs/nothing/again', { method: 'POST' });
+    assert.equal(bad.status, 404); assert.equal(bad.json.error, 'No such task.', 'a refusal keeps its own sentence');
+  } finally { await t.close(); }
+});

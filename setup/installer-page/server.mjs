@@ -8,7 +8,7 @@
 //     the end screens ask now and then, so their buttons keep working while the page is open
 import http from 'node:http'; import crypto from 'node:crypto'; import fs from 'node:fs'; import path from 'node:path';
 import { fileURLToPath } from 'node:url'; import { spawnSync } from 'node:child_process';
-import { install, checkFolder, version, cmdBrowse, cmdStart, realRunner, deskAnswers, defaultFolder, APP } from '../install.mjs';
+import { install, checkFolder, version, cmdBrowse, cmdStart, realRunner, deskAnswers, defaultFolder, APP, KEPT_NOTE } from '../install.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SOURCE = path.dirname(path.dirname(HERE));
@@ -21,7 +21,7 @@ const HEADERS = {
 
 export function installerServer({ source = SOURCE, env = process.env, run = realRunner, isRunning = deskAnswers, endAfter = 1500, idleAfterEnd = 120000 } = {}) {
   const token = crypto.randomBytes(24).toString('base64url');
-  const state = { phase: 'ready', step: null, done: [], line: '', message: '', log: '', dir: '', problems: 0, started: false };
+  const state = { phase: 'ready', step: null, done: [], line: '', message: '', log: '', dir: '', problems: 0, started: false, kept: '' };
   let port = 0; let url = ''; let closing = null; let idle = 0; let leaving = false; let endResult = { ok: false };
   let finish; const ended = new Promise((r) => { finish = r; });
 
@@ -46,7 +46,7 @@ export function installerServer({ source = SOURCE, env = process.env, run = real
 
   async function runInstall(dir, a) {
     if (closing) { clearTimeout(closing); closing = null; } idle = 0;
-    Object.assign(state, { phase: 'running', step: null, done: [], line: 'Getting ready ...', message: '', log: '', dir, problems: 0, started: false });
+    Object.assign(state, { phase: 'running', step: null, done: [], line: 'Getting ready ...', message: '', log: '', dir, problems: 0, started: false, kept: KEPT_NOTE[a.kept] || '' });
     const say = (l) => { const t = String(l ?? '').trim(); if (t && !/^(would |Folder:|Start it from|Stop it with|\(The program)/.test(t)) state.line = t; };
     const step = (id) => { if (state.step && !state.done.includes(state.step)) state.done.push(state.step); state.step = id; };
     let r;
@@ -56,7 +56,7 @@ export function installerServer({ source = SOURCE, env = process.env, run = real
     } catch (e) {
       const log = path.join(dir, 'data', 'install.log');
       try { fs.mkdirSync(path.dirname(log), { recursive: true }); fs.appendFileSync(log, `  Stopped: ${e && e.message}\r\n`); } catch {}
-      r = { ok: false, message: 'Something went wrong on this PC while ' + ({ copy: 'copying the program', packages: 'getting the packages', shortcuts: 'making the shortcuts' }[state.step] || 'installing') + '. Check that the disk has space, then try again.', log };
+      r = { ok: false, message: 'Something went wrong on this PC while ' + ({ copy: 'copying the program', packages: 'getting the packages', shortcuts: 'making the shortcuts' }[state.step] || 'installing') + '. Close any folder window that shows the AP Desk folder and check that the disk has space, then try again.', log };
     }
     if (r.ok) { if (state.step && !state.done.includes(state.step)) state.done.push(state.step); }
     Object.assign(state, { phase: r.ok ? 'done' : 'failed', message: r.ok ? '' : pageWords(r.message), log: r.log && fs.existsSync(r.log) ? r.log : '', problems: (r.problems || []).length, started: !!r.started });
@@ -89,8 +89,8 @@ export function installerServer({ source = SOURCE, env = process.env, run = real
       if (check.problem) return send(res, 400, { problem: check.problem });
       if (check.warn && body.anyway !== true) return send(res, 409, { warn: check.warn });
       const pick = (k, def) => typeof body[k] === 'boolean' ? body[k] : def;
-      runInstall(path.resolve(dir), { desktop: pick('desktop', true), apps: pick('apps', true), autostart: pick('autostart', false), start: pick('start', true), anyway: body.anyway === true });
-      return send(res, 202, { ok: true });
+      runInstall(path.resolve(dir), { desktop: pick('desktop', true), apps: pick('apps', true), autostart: pick('autostart', false), start: pick('start', true), anyway: body.anyway === true, kept: check.kept });
+      return send(res, 202, { ok: true, kept: KEPT_NOTE[check.kept] || '' });
     }
     if (name === 'open') {
       if (state.phase !== 'done') return send(res, 409, { problem: 'The install has not finished yet.' });

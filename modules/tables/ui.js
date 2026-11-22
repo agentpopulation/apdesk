@@ -58,7 +58,7 @@ export const pages = {
           const r = await api('/api/m/tables/preview', { body: { url } });
           if (!r.candidates.length) { found.replaceChildren(empty(r.note)); return; }
           found.replaceChildren(h('p', { class: 'sub' }, `${one(r.candidates.length, 'list')} found on ${r.url}. Pick one and say what each column is. The guesses come from the heading words.`), ...r.candidates.map((c, n) => candidate(r, c, n)));
-        } catch (e) { found.replaceChildren(empty(e.message)); }
+        } catch (e) { found.replaceChildren(empty(ui.plainError(e))); }
         finally { done(); }
       }
       function candidate(r, c, n) {
@@ -117,7 +117,7 @@ export const pages = {
           rowsBox);
       }
       async function load() {
-        try { info = await api('/api/m/tables/sources'); } catch (e) { list.replaceChildren(empty(e.message)); return; }
+        try { info = await api('/api/m/tables/sources'); } catch (e) { list.replaceChildren(empty(ui.plainError(e))); return; }
         lawful.replaceChildren(info.lawful); phone.replaceChildren(info.phoneApps);
         list.replaceChildren(...(info.sources.length ? info.sources.map(source) : found.firstChild ? [] : [empty('No lists yet. Give the address of a public page with a list on it: the desk reads that one page and shows the lists it finds.')]));
       }

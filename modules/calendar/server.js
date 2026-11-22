@@ -89,7 +89,7 @@ export async function activate(ctx) {
     } });
 
   const ownerOnly = (res, owner) => { if (!owner) { ctx.json(res, { error: 'Only the owner at this desk can do that.' }, 403); return true; } return false; };
-  const fail = (res, e) => ctx.json(res, { error: e.message }, e.status || 500);
+  const fail = (res, e) => ctx.json(res, { error: e.status < 500 ? e.message : ctx.plainFailure(e).line }, e.status || 500);
   ctx.route('GET', '/events', (req, res, { query }) => ctx.json(res, { events: list({ from: query.from, to: query.to }), timeZone: tz() }));
   ctx.route('POST', '/events', (req, res, { body, owner }) => { if (ownerOnly(res, owner)) return; try { ctx.json(res, { event: insert(body || {}) }); } catch (e) { fail(res, e); } });
   ctx.route('PATCH', '/events/:id', (req, res, { params, body, owner }) => { if (ownerOnly(res, owner)) return; try { const e = update(params.id, body || {}); e ? ctx.json(res, { event: e }) : ctx.json(res, { error: 'Not found' }, 404); } catch (e) { fail(res, e); } });

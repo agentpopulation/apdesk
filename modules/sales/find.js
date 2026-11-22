@@ -272,12 +272,12 @@ export async function findLeads({ query, count = 20, search, model, agentId = 'c
   const leads = [...final, ...unchecked.slice(0, Math.max(0, count - final.length))];   // checked first, then not checked up to the count
   // what the site step found, counted over the leads kept (a candidate checked and then merged or left out is not one of them)
   Object.assign(sites, leadCounts(leads));
-  onProgress({ pages: pagesRead, leads: leads.length, p: 0.97, detail: `read ${pagesRead} pages, ${leads.length} leads` });
+  onProgress({ pages: pagesRead, leads: leads.length, p: 0.97, detail: `read ${pagesRead} ${pagesRead === 1 ? 'page' : 'pages'}, ${leads.length} ${leads.length === 1 ? 'lead' : 'leads'}` });
   let reason = '';
   if (leads.length < count) {
     const why = Object.entries(rejected).sort((a, b) => (b[0] === 'already in your pipeline') - (a[0] === 'already in your pipeline') || b[1] - a[1]).map(([k, v]) => (WHY[k] ? WHY[k](v, country) : `${v}: ${k}`)).slice(0, 4);
     const stop = signal?.aborted ? 'stopped' : pagesRead >= B.pages ? `the page budget (${B.pages}) was spent` : searches >= B.searches ? `the search budget (${B.searches}) was spent` : left() < 60000 ? `the time limit (${Math.round(B.totalMs / 60000)} minutes) was reached` : `${extra} extra search round${extra === 1 ? '' : 's'} found no more new companies`;
-    reason = `${pagesRead} pages read from ${searches} searches; ${why.length ? why.join(', ') + '; ' : ''}${stop}`;
+    reason = `${pagesRead} ${pagesRead === 1 ? 'page' : 'pages'} read from ${searches} ${searches === 1 ? 'search' : 'searches'}; ${why.length ? why.join(', ') + '; ' : ''}${stop}`;
   }
   return { leads, pagesRead, searches, queries: used, readUrls, rejected, label, reason, buyerProduct, country, sites, ms: Date.now() - t0, rounds: round, extraRounds: extra, kindAsk, checked: final.length };
 }

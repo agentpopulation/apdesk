@@ -25,6 +25,23 @@ export function privateHost(host) {
 }
 
 /**
+ * The host to keep in the "Pages on your own network" list, read from what the owner typed ("printer.local",
+ * "http://192.168.1.20:8080/", "[fd00::1]:80", "fd00::1"), the same way checkUrl reads a page address.
+ * -> { host } or { error } with a plain reason.
+ */
+export function allowedHostOf(typed) {
+  const s = String(typed || '').trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+  if (!s || (/^[/:?#]/.test(s) && net.isIP(s) !== 6)) return { error: 'Type an address, for example printer.local or 192.168.1.20.' };
+  let host = '';
+  if (net.isIP(s) === 6) host = s.toLowerCase();
+  else { try { host = new URL('http://' + s).hostname.toLowerCase().replace(/^\[|\]$/g, ''); } catch { host = ''; } }
+  if (net.isIP(host) === 6) { try { host = new URL('http://[' + host + ']/').hostname.replace(/^\[|\]$/g, ''); } catch {} }
+  if (!host) return { error: 'That is not an address the desk can read. Type it like printer.local or 192.168.1.20.' };
+  if (!privateHost(host)) return { error: `${host} is not on this PC or your home network, so it needs no allowing here.` };
+  return { host };
+}
+
+/**
  * Is this address one the agent may open? Returns null when fine, else a plain sentence.
  * allowHosts: hosts the owner allowed (for example a LAN printer page). The desk's own port is refused
  * on every loopback name even when loopback is allowed, so an agent can never drive the desk itself.
@@ -37,7 +54,7 @@ export function checkUrl(url, { allowHosts = [], deskPort = null, who = null, as
   const port = u.port || (u.protocol === 'https:' ? '443' : '80');
   const loop = host === 'localhost' || host.endsWith('.localhost') || host === '::1' || /^127\./.test(host) || host === '0.0.0.0';
   if (loop && deskPort && String(port) === String(deskPort)) return 'The agent cannot open the desk itself.';
-  if (privateHost(host) && !allowHosts.map(h => String(h).toLowerCase()).includes(host)) return `${host} is on this PC or your home network. The agent may open it only if you allow that address on the Computer tab.`;
+  if (privateHost(host) && !allowHosts.map(h => String(h).toLowerCase()).includes(host)) return `${host} is on this PC or your home network. The agent may open it only if you allow that address. Do it on any agent's Computer tab, under "Pages on your own network".`;
   try { siteRuleSync(host, { who, asking }); } catch (e) { return e.message; }   // the owner's website rules (Network page)
   return null;
 }

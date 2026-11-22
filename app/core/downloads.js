@@ -8,6 +8,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { id as makeId, now } from './storage.js';
 import { insideFolder } from './approval-door.js';
+import { failureKind } from './model-door.js';
 
 const NS = 'core.downloads';
 const MAX_ACTIVE = 2;
@@ -77,7 +78,8 @@ export class Downloads {
   summary() {
     const open = this.all().filter(d => OPEN.has(d.state));
     const n = (st) => open.filter(d => d.state === st).length;
-    return { active: n('running') + n('queued'), total: open.length, running: n('running'), queued: n('queued'), waiting: n('waiting'), paused: n('paused') };
+    // stuck: paused because something went wrong (not by the owner, Panic or Offline): the top bar can say so
+    return { active: n('running') + n('queued'), total: open.length, running: n('running'), queued: n('queued'), waiting: n('waiting'), paused: n('paused'), stuck: open.filter(d => d.state === 'paused' && d.pausedBy === 'error').length };
   }
   list() { return { downloads: this.all().reverse().map(d => this.out(d)), summary: this.summary() }; }
   emit(d, force = false) {
@@ -141,8 +143,8 @@ export class Downloads {
   async ask(id) {
     const d = this.get(id); if (!d) return;
     const r = await this.approval.request({ action: 'install', agentId: d.agentId || null, chatId: d.chatId || null,
-      title: `${d.title} (${sizeText(d.size)})`.slice(0, 300), detail: `From ${hostOf(d.url)}. Checked against its SHA-256 before it is used.`,
-      payload: { kind: 'download', what: d.kind, url: d.url, size: d.size, sha256: d.sha256, file: path.basename(d.to) } });
+      title: `${d.title} (${sizeText(d.size)})`.slice(0, 300), detail: `From ${hostOf(d.url)}. The desk checks the file is the one published before it is used.`,
+      payload: { file: path.basename(d.to), size: sizeText(d.size), url: d.url } });   // plain words: the exact size and the SHA-256 are checked by the desk, not read by the owner
     const cur = this.get(id); if (!cur || cur.state !== 'waiting') return;      // cancelled meanwhile
     if (r.ok) { this.patch(id, { state: 'queued', approvalId: r.id, reason: null }); this.pump(); return; }
     if (r.reason === 'halted') this.patch(id, { state: 'paused', pausedBy: 'panic', reason: 'Panic stopped this before you allowed it. Press Resume to be asked again.' });
@@ -267,7 +269,8 @@ export class Downloads {
       if (why) { /* paused, cancelled, blocked, offline, panic or shutdown: the one who stopped it has set the state */ }
       else if (e.code === 'short' || e.code === 'bad_range' || /fetch failed|ECONNRESET|socket|terminated|other side closed/i.test(String(e.message) + String(e.cause?.code || ''))) {
         const cur = this.get(id);
-        if (cur?.state === 'running') this.patch(id, { state: 'paused', pausedBy: 'error', reason: plain(e) + ' Press Resume to go on.' });
+        if (cur?.state === 'running') this.patch(id, { state: 'paused', pausedBy: 'error', reason: pausedWhy(e) });
+        this.log('downloads', 'paused', d.title, e.message, e.cause?.code || '');
       } else {
         if (['too_large', 'bad_checksum', 'bad_host', 'http', 'not_https'].includes(e.code)) rmQuiet(part);
         if (e.code === 'offline') this.patch(id, { state: 'paused', pausedBy: 'offline', reason: 'Paused: the desk is offline. It goes on when the desk is online again.' });
@@ -275,6 +278,7 @@ export class Downloads {
         this.log('downloads', 'failed', d.title, e.message);
       }
     } finally {
+      signal.release?.();   // the transfer is over: Panic lets go of it
       this.live.delete(id);
       if (this.get(id)?.state === 'cancelled') rmQuiet(part);
       setImmediate(() => this.pump());
@@ -332,6 +336,15 @@ function rate(samples) { const t = Date.now(); const recent = samples.filter(s =
 function hostOf(u) { try { return new URL(u).hostname; } catch { return null; } }
 function rmQuiet(f) { try { fs.rmSync(f, { force: true }); } catch {} }
 function notFound() { return Object.assign(new Error('No such download.'), { status: 404 }); }
+/** Why a download stopped part way, and what to do next: the real reason (not online, no answer, a broken connection). */
+function pausedWhy(e) {
+  const k = failureKind(e);
+  if (k === 'not_online') return 'This PC is not online. Press Resume when it is back; the download goes on from where it stopped.';
+  if (k === 'timeout') return 'The host stopped answering. Press Resume to try again from where it stopped.';
+  if (k === 'broke') return 'The connection broke. Press Resume to go on from where it stopped.';
+  if (k === 'no_answer' || /fetch failed/i.test(String(e?.message))) return 'The host could not be reached. Check the internet connection, then press Resume.';
+  return plain(e) + ' Press Resume to go on.';
+}
 function plain(e) { const m = String(e?.message || e); if (/fetch failed|ENOTFOUND|EAI_AGAIN|ECONNREFUSED/i.test(m + String(e?.cause?.code || ''))) return 'The host could not be reached.'; if (/ECONNRESET|terminated|other side closed|socket/i.test(m + String(e?.cause?.code || ''))) return 'The connection broke.'; return m.slice(0, 220); }
 async function hashFile(file, hash, upTo) {
   await new Promise((res, rej) => { const s = fs.createReadStream(file, { start: 0, end: upTo - 1 }); s.on('data', (c) => hash.update(c)); s.on('end', res); s.on('error', rej); });

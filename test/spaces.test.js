@@ -168,7 +168,7 @@ test('two spaces in one process: chats, memory, leads, jobs, ratings, website ru
   }
 });
 
-test('a space reached from outside it: its exposed functions and doors run in it, Offline it may call only its own model servers, and closing it stops its work', async () => {
+test('a space reached from outside it: its exposed functions and doors run in it, Offline it may call only the keeper\'s model servers, and closing it stops its work', async () => {
   const t = await testDesk({ modules: ['chat', 'search', 'browser', 'network'] });
   const bDir = fs.mkdtempSync(path.join(os.tmpdir(), 'apd-test-b-'));
   const tag = (s) => http.createServer((q, r) => r.end(s));
@@ -200,16 +200,18 @@ test('a space reached from outside it: its exposed functions and doors run in it
     const j = await B.jobs.start({ kind: 'test.b', title: 'B job', run: async () => ({ never: ruleFor('only-b.example')?.kind ?? null, ask: ruleFor('ask-a.example')?.kind ?? null }) });
     assert.deepEqual((await B.jobs.wait(j.id)).output, { never: 'never', ask: null });
 
-    // Offline: each space may call its own local model server, not the other's
-    A.settings.set('ollama.baseUrl', urlA.slice(0, -1)); B.settings.set('ollama.baseUrl', urlB.slice(0, -1));
+    // Offline: the local model addresses are the keeper's for the whole PC: another space cannot set its own, it reads
+    // the keeper's, and no space reaches an address the keeper did not set
+    assert.throws(() => B.settings.set('ollama.baseUrl', urlB.slice(0, -1)), /keeper's own desk/);
+    A.settings.set('ollama.baseUrl', urlA.slice(0, -1));
     assert.equal((await t.call('/api/settings', { body: { online: false } })).status, 200);
     try {
       const get = (u) => fetch(u).then(r => r.text(), (e) => 'refused:' + e.code);
-      assert.equal(await b.run(() => get(urlB)), 'B-node');
-      assert.equal(await b.run(() => get(urlA)), 'refused:offline');
+      assert.equal(await b.run(() => get(urlA)), 'A-node', 'B reads the keeper\'s address');
+      assert.equal(await b.run(() => get(urlB)), 'refused:offline');
       assert.equal(await get(urlA), 'A-node');
       assert.equal(await get(urlB), 'refused:offline');
-      assert.equal(B.offlineAllows(new URL(urlB)), true); assert.equal(B.offlineAllows(new URL(urlA)), false);
+      assert.equal(B.offlineAllows(new URL(urlA)), true); assert.equal(B.offlineAllows(new URL(urlB)), false);
     } finally { assert.equal((await t.call('/api/settings', { body: { online: true } })).status, 200); }
 
     // closing B aborts what B was handed: a fetch hung on B's Panic signal stops with it

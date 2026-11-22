@@ -29,6 +29,12 @@ export function h(tag, attrs, ...children) {
   return el;
 }
 
+// A fetch that never reached the desk (no answer at all, not even an error page) is marked, so the plain line can say the
+// desk is not answering. A stop the page asked for (AbortError) stays as it is.
+async function reach(url, opts) {
+  try { return await fetch(url, opts); }
+  catch (e) { if (e?.name === 'AbortError') throw e; throw Object.assign(new Error(String(e?.message || 'fetch failed')), { deskDown: true, cause: e }); }
+}
 export async function api(path, { method, body, signal, raw } = {}) {
   const url = path.startsWith('/') ? path : '/api/' + path;
   const opts = { method: method || (body !== undefined ? 'POST' : 'GET'), headers: { 'x-apd-session': SESSION }, signal };
@@ -36,7 +42,7 @@ export async function api(path, { method, body, signal, raw } = {}) {
     if (body instanceof FormData || body instanceof Blob || body instanceof ArrayBuffer) opts.body = body;
     else { opts.headers['content-type'] = 'application/json'; opts.body = JSON.stringify(body); }
   }
-  const r = await fetch(url, opts);
+  const r = await reach(url, opts);
   if (raw) return r;
   let data = null; const text = await r.text();
   try { data = text ? JSON.parse(text) : null; } catch { data = { text }; }
@@ -45,8 +51,8 @@ export async function api(path, { method, body, signal, raw } = {}) {
 }
 /** POST and read an NDJSON stream line by line (model replies). Returns the last line. */
 export async function apiStream(path, body, onLine, { signal } = {}) {
-  const r = await fetch(path.startsWith('/') ? path : '/api/' + path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-apd-session': SESSION }, body: JSON.stringify(body), signal });
-  if (!r.ok) { let e = null; try { e = await r.json(); } catch {} throw Object.assign(new Error(e?.error || `Request failed (${r.status})`), { status: r.status }); }
+  const r = await reach(path.startsWith('/') ? path : '/api/' + path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-apd-session': SESSION }, body: JSON.stringify(body), signal });
+  if (!r.ok) { let e = null; try { e = await r.json(); } catch {} throw Object.assign(new Error(e?.error || `Request failed (${r.status})`), { status: r.status, data: e }); }
   const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = ''; let last = null;
   for (;;) {
     const { value, done } = await reader.read(); if (done) break;
@@ -75,6 +81,17 @@ export function table(cols, rows, { onRow, empty: emptyText = 'Nothing here yet.
     h('tbody', null, rows.map(r => h('tr', { class: onRow ? 'pick' : '', onclick: onRow ? () => onRow(r) : null }, cols.map(c => h('td', null, c.render ? c.render(r) : (r[c.key] ?? ''))))))));
 }
 
+/** An empty field answers on the spot, beside the field, and nothing is sent: `if (!value) return needs(input, 'Type a token first.')`. */
+export function needs(field, words) {
+  let n = field._need;
+  if (!n || !n.parentNode) { n = h('span', { class: 'saved err', role: 'alert' }); field._need = n; field.after(n); }
+  n.textContent = words;
+  const clear = () => { n.remove(); field._need = null; };
+  field.addEventListener('input', clear, { once: true });
+  try { field.focus({ preventScroll: true }); } catch {}
+  return false;
+}
+
 /** A status chip: kind live (answers, on, saved) | slow | run (running) | fail | off. */
 export const statusChip = (text, kind = 'off') => h('span', { class: 'schip ' + kind }, text);
 
@@ -92,13 +109,13 @@ export function savedMark() {
   };
   m.saving = () => show('busy', '<span class="spin" aria-hidden="true"></span>', 'Saving…', 'Saving…');
   m.ok = (word = 'Saved') => { show('ok', TICK, word, word); m._t = setTimeout(() => show('', '', '', ''), 4000); };
-  m.fail = (reason) => show('err', CROSS, 'Not saved: ' + (reason || 'it did not save'), 'Not saved: ' + (reason || 'it did not save'));
+  m.fail = (reason) => { const why = reason ? plainError(reason) : 'it did not save'; show('err', CROSS, 'Not saved: ' + why, 'Not saved: ' + why); };
   m.clear = () => show('', '', '', '');
   /** Run one save: Saving…, then the tick or the cross. With field, a failed save puts the field's old value back. */
   m.run = async (save, { field, old, word } = {}) => {
     m.saving();
     try { const r = await save(); if (r === false) throw new Error('it did not save'); m.ok(word); return true; }
-    catch (e) { if (field && old !== undefined) { if (field.type === 'checkbox') field.checked = !!old; else field.value = old ?? ''; } m.fail(e?.message); return false; }
+    catch (e) { if (field && old !== undefined) { if (field.type === 'checkbox') field.checked = !!old; else field.value = old ?? ''; } m.fail(e); return false; }
   };
   return m;
 }
@@ -115,7 +132,35 @@ export const activities = () => [...acts.values()];
 export const onActivity = (fn) => { actFns.add(fn); return () => actFns.delete(fn); };
 
 // ---- feedback
-export function toast(text, kind = '', ms = 0) { const t = h('div', { class: 'toast ' + kind }, text); $('#toasts').append(t); setTimeout(() => t.remove(), ms || (kind === 'err' ? 7000 : 3500)); return t; }
+// One plain line for any failure; a toast, a mark's cross and its hover text, and a test line all use it. Raw program
+// text (a failed fetch, a Node, file-system or SQLite message, provider JSON, an error page, "[object Object]") never
+// reaches the screen: the raw text goes to the console for whoever needs it. The facts decide, in this order: the desk was
+// not reached at all; the desk sent its own code and plain line; the desk answered and a provider or program it uses could
+// not be reached; anything else raw gets one honest general line.
+export const PLAIN = Object.freeze({
+  deskDown: 'The desk is not answering. It may be restarting; try again in a moment.',
+  notOnline: 'This PC is not online. Local models still work.',
+  unreached: 'A provider or program the desk uses could not be reached. Check that it is running, then try again.',
+  general: 'Something went wrong. Please try again.',
+});
+const BROWSER_NET = /^(failed to fetch|load failed|networkerror when attempting|network request failed)/i;
+const RAW_NET = /^fetch failed|\b(ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|ENETDOWN|socket hang up|getaddrinfo)\b/i;
+const RAW_CODE = /^request failed \(\d+\)|cannot read propert|is not (a function|defined|iterable)|\bundefined\b|\bnull\b|\bNaN\b|\[object |unexpected (token|end of)|in JSON at|is not valid JSON|SQLITE_|\bat \S+ \(|^(Type|Range|Syntax|Reference)Error\b|(^|[\s'"(])[\\/][\w.-]+[\\/]|\b[A-Za-z]:\\|^\s*[{[]|<\/?[a-z!][^>]*>|\n\s*at /i;
+const RAW_SYS = /\bE[A-Z]{3,}\b|\bERR_[A-Z_]+/;   // a system code (ENOENT, EACCES, ERR_INVALID_URL): case counts
+export function plainError(e) {
+  const raw = typeof e === 'string' ? e : e?.message;
+  const text = String(raw ?? '').trim();
+  const code = typeof e === 'object' && e ? String(e.data?.code || e.code || '') : '';
+  const said = (line) => { if (text && text !== line) console.warn('[desk]', text); return line; };
+  if (typeof e === 'object' && e && (e.deskDown || (e.status == null && e.name === 'TypeError' && BROWSER_NET.test(text)))) return said(PLAIN.deskDown);
+  if (!text && !code) return PLAIN.general;
+  if (code === 'not_online') return said(PLAIN.notOnline);
+  if (RAW_NET.test(text)) return said(PLAIN.unreached);
+  if (BROWSER_NET.test(text)) return said(PLAIN.deskDown);   // the same words as a plain string: only the browser writes them
+  if (!text || RAW_CODE.test(text) || RAW_SYS.test(text)) return said(PLAIN.general);
+  return text;
+}
+export function toast(text, kind = '', ms = 0) { const t = h('div', { class: 'toast ' + kind }, text && typeof text === 'object' && !(text instanceof Error) ? text : plainError(text)); $('#toasts').append(t); setTimeout(() => t.remove(), ms || (kind === 'err' ? 7000 : 3500)); return t; }
 export function modal({ title, body, actions = [], wide = false, onClose } = {}) {
   const host = $('#modal');
   const opener = document.activeElement;
@@ -146,14 +191,34 @@ export const ask = (title, { value = '', placeholder = '', ok = 'Save', multilin
 });
 
 // ---- formatting in the owner's zone and currency (never UTC or $ unless the owner chose them)
-let prefs = { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, locale: Intl.DateTimeFormat().resolvedOptions().locale, currency: '' };   // the computer's own until settings load; no guessed currency
+const device = Intl.DateTimeFormat().resolvedOptions();
+let prefs = { timeZone: device.timeZone, locale: device.locale, currency: '' };   // the computer's own until settings load; no guessed currency
 export const setPrefs = (p) => { prefs = { ...prefs, ...p }; };
+// A stored zone, locale or currency can be mistyped. Each is checked the first time it is used and, when the browser does
+// not accept it, the computer's own zone and style are used, so no screen ever fails because of what was typed in Settings.
+const okCache = new Map();
+const accepted = (kind, value, test) => { const k = kind + '|' + value; if (!okCache.has(k)) { let r = null; try { r = test(value); } catch {} okCache.set(k, r); } return okCache.get(k); };
+const zone = () => accepted('z', prefs.timeZone, (z) => { new Intl.DateTimeFormat('en', { timeZone: z }); return z; }) || device.timeZone;
+const loc = () => accepted('l', prefs.locale, (l) => Intl.getCanonicalLocales(String(l).trim().replace(/_/g, '-'))[0]) || device.locale;
+const cur = (c) => accepted('c', c, (x) => (x && Intl.supportedValuesOf('currency').includes(String(x).toUpperCase()) ? String(x).toUpperCase() : null));
+const when = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? null : d; };
+const dayKey = (d) => d.toLocaleDateString('en-CA', { timeZone: zone() });
+/** "3 sources", "1 source": the number, then the word (many defaults to one + "s"). */
+export const plural = (n, one, many) => `${Number(n || 0).toLocaleString(loc())} ${Number(n) === 1 ? one : (many || one + 's')}`;
+const timeIn = (d) => d.toLocaleTimeString(loc(), { hour: 'numeric', minute: '2-digit', timeZone: zone() });
 export const fmt = {
-  time: (iso) => { if (!iso) return ''; const d = new Date(iso); return d.toLocaleTimeString(prefs.locale, { hour: 'numeric', minute: '2-digit', timeZone: prefs.timeZone }); },
-  date: (iso) => { if (!iso) return ''; return new Date(iso).toLocaleDateString(prefs.locale, { day: 'numeric', month: 'short', year: 'numeric', timeZone: prefs.timeZone }); },
-  when: (iso) => { if (!iso) return ''; const d = new Date(iso); const same = d.toDateString() === new Date().toDateString(); return same ? fmt.time(iso) : d.toLocaleDateString(prefs.locale, { day: 'numeric', month: 'short', timeZone: prefs.timeZone }) + ', ' + fmt.time(iso); },
-  ago: (iso) => { if (!iso) return ''; const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000); if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s / 60) + ' min ago'; if (s < 86400) return Math.floor(s / 3600) + ' h ago'; return Math.floor(s / 86400) + ' d ago'; },
-  money: (minor, currency = prefs.currency) => { const n = (Number(minor) || 0) / 100; try { return new Intl.NumberFormat(prefs.locale, currency ? { style: 'currency', currency, maximumFractionDigits: 0 } : { maximumFractionDigits: 0 }).format(n); } catch { return currency ? `${currency} ${n}` : String(n); } },
+  time: (iso) => { const d = iso && when(iso); return d ? timeIn(d) : ''; },
+  date: (iso) => { const d = iso && when(iso); return d ? d.toLocaleDateString(loc(), { day: 'numeric', month: 'short', year: 'numeric', timeZone: zone() }) : ''; },
+  when: (iso) => { const d = iso && when(iso); if (!d) return ''; return dayKey(d) === dayKey(new Date()) ? timeIn(d) : d.toLocaleDateString(loc(), { day: 'numeric', month: 'short', timeZone: zone() }) + ', ' + timeIn(d); },
+  ago: (iso) => { const d = iso && when(iso); if (!d) return ''; const s = Math.max(0, (Date.now() - d.getTime()) / 1000); if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s / 60) + ' min ago'; if (s < 86400) return Math.floor(s / 3600) + ' h ago'; return Math.floor(s / 86400) + ' d ago'; },
+  // Money is kept in minor units (cents, paise). Amounts of 100 or more show as whole units; a smaller amount keeps its
+  // cents so it is true ("$0.42"), and less than one cent reads "less than $0.01", never "$0" for money that was spent.
+  money: (minor, currency = prefs.currency) => {
+    const n = (Number(minor) || 0) / 100; const c = cur(currency); const abs = Math.abs(n);
+    const one = (v, small) => { const o = c ? { style: 'currency', currency: c } : {}; try { return new Intl.NumberFormat(loc(), small ? { ...o, minimumFractionDigits: v === Math.round(v) ? 0 : 2, maximumFractionDigits: 2 } : { ...o, maximumFractionDigits: 0 }).format(v); } catch { return String(v); } };
+    if (abs > 0 && abs < 0.005) return 'less than ' + one(0.01, true) + (n < 0 ? ' below zero' : '');
+    return one(n, abs < 100);
+  },
   bytes: (n) => { n = Number(n) || 0; const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return (i ? n.toFixed(1) : n) + ' ' + u[i]; },
   pct: (p) => Math.round((Number(p) || 0) * 100) + '%',
 };

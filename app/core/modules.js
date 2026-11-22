@@ -4,6 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { now } from './storage.js';
 import { inSpace, boundToSpace } from './space-context.js';
+import { plainFailure } from './model-door.js';
 
 // Modules that ship with the desk and need the plain database door: Backup copies and restores every table, Vault
 // shows the owner his saved keys and logins. Named here, in the core, so a manifest cannot claim it.
@@ -154,6 +155,8 @@ export class Modules {
       chatCard(chatId, card) { return self.api('chat')?.postCard?.(chatId, card) ?? null; },
       modules: { api: (x) => self.api(x), isOn: (x) => self.isOn(x), list: () => self.list(), tools: () => [...self.tools.values()].map(t => ({ name: t.name, module: t.module, description: t.description, parameters: t.parameters })), runTool: (name, args, call) => self.runTool(name, args, call) },
       log: (...a) => core.log(id, ...a),
+      /** A failure as one plain line and a short code, as the model door says it ({ code, line }); the raw text is for ctx.log only. */
+      plainFailure: (e) => plainFailure(e),
       /** One line in the owner's activity log (Settings > Backup > Activity log): what this module did, in plain words. */
       activity: (title, detail) => core.approval.activity({ action: 'module.' + id, title: String(title || '').slice(0, 300), how: id, detail: detail ? String(detail).slice(0, 1000) : null }),
       /** After a restore: stop cleanly and start again (start.bat restarts the desk on exit code 75). Owner actions only. */

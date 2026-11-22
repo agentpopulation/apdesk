@@ -162,7 +162,7 @@ async function profileTab(el, ui, agent) {
     const ok = await motionMark.run(() => api('settings', { body: { [MOTION_KEY]: on } }));
     if (ok) { if (ui.state.settings) ui.state.settings[MOTION_KEY] = on; setAvatarMotion(on); } else return false;
   });
-  const motionRow = h('div', { class: 'stack', style: { marginTop: '10px' } }, h('div', { class: 'pf-h' }, h('span', { class: 'pf-l', style: { whiteSpace: 'nowrap' } }, 'Avatar motion'), motion, motionMark), h('p', { class: 'sub' }, 'Blinking eyes and small movements. It stays still if your system asks for less motion.'));
+  const motionRow = h('div', { class: 'stack', style: { marginTop: '10px' } }, h('div', { class: 'pf-h' }, h('span', { class: 'pf-l', style: { whiteSpace: 'nowrap' } }, 'Avatar motion (all agents)'), motion, motionMark), h('p', { class: 'sub', 'data-apd': 'motion-all' }, 'Blinking eyes and small movements, for every agent on this desk, not only this one. It stays still if your system asks for less motion.'));
 
   const skills = h('div', { class: 'chips' }, ui.spinner());
   const lately = h('div', { class: 'group' }, h('div', { class: 'sub' }, 'Reading the records…'));
@@ -193,20 +193,21 @@ async function toolsTab(el, ui, agent) {
   const { h, api, btn, toast, line, sw, empty } = ui;
   el.replaceChildren(ui.spinner());
   let d;
-  try { d = await api(API + 'agents/' + encodeURIComponent(agent.id)); } catch (e) { el.replaceChildren(empty(e.message)); return; }
+  try { d = await api(API + 'agents/' + encodeURIComponent(agent.id)); } catch (e) { el.replaceChildren(empty(ui.plainError(e))); return; }
+  const toolMark = ui.savedMark(), skillMark = ui.savedMark();
   const off = new Set(d.tools.filter(t => !t.on).map(t => t.name));
   const on = new Set(d.skills.filter(s => s.on).map(s => s.id));
   const saveTools = async () => { await api(API + `agents/${encodeURIComponent(agent.id)}/tools`, { method: 'PUT', body: { off: [...off] } }); };
   const saveSkills = async () => { await api(API + `agents/${encodeURIComponent(agent.id)}/skills`, { method: 'PUT', body: { on: [...on] } }); };
   const byModule = new Map(); for (const t of d.tools) { if (!byModule.has(t.moduleName)) byModule.set(t.moduleName, []); byModule.get(t.moduleName).push(t); }
-  const toolRows = [...byModule.entries()].map(([mod, ts]) => line(mod, ts.map(t => words(t.name)).join(', '), sw(ts.every(t => !off.has(t.name)), mod, async (v) => { for (const t of ts) v ? off.delete(t.name) : off.add(t.name); await saveTools(); })));
+  const toolRows = [...byModule.entries()].map(([mod, ts]) => line(mod, ts.map(t => words(t.name)).join(', '), sw(ts.every(t => !off.has(t.name)), mod, async (v) => { for (const t of ts) v ? off.delete(t.name) : off.add(t.name); const ok = await toolMark.run(saveTools); if (!ok) for (const t of ts) v ? off.add(t.name) : off.delete(t.name); return ok; })));
   const skillList = h('div');
-  const paintSkills = () => skillList.replaceChildren(...d.skills.map(s => line(s.title, s.description, btn('Read', { kind: 'ghost sm', onClick: () => showSkill(ui, s.id) }), sw(on.has(s.id), s.title, async (v) => { v ? on.add(s.id) : on.delete(s.id); await saveSkills(); }))));
+  const paintSkills = () => skillList.replaceChildren(...d.skills.map(s => line(s.title, s.description, btn('Read', { kind: 'ghost sm', onClick: () => showSkill(ui, s.id) }), sw(on.has(s.id), s.title, async (v) => { v ? on.add(s.id) : on.delete(s.id); const ok = await skillMark.run(saveSkills); if (!ok) v ? on.delete(s.id) : on.add(s.id); return ok; }))));
   paintSkills();
   el.replaceChildren(
-    h('h6', { style: { marginLeft: 0 } }, 'Tools it may use'),
+    h('div', { class: 'row' }, h('h6', { style: { marginLeft: 0 } }, 'Tools it may use'), toolMark),
     toolRows.length ? h('div', null, toolRows) : h('p', { class: 'sub' }, 'No tools are switched on in the desk yet. They appear here when their modules are on.'),
-    h('div', { class: 'row', style: { marginTop: '10px' } }, h('h6', { style: { margin: 0 } }, 'Skills'), h('span', { class: 'sub' }, `${on.size} on`), h('span', { class: 'grow' }), btn('Write a skill', { kind: 'ghost sm', onClick: async () => {
+    h('div', { class: 'row', style: { marginTop: '10px' } }, h('h6', { style: { margin: 0 } }, 'Skills'), h('span', { class: 'sub' }, `${on.size} on`), skillMark, h('span', { class: 'grow' }), btn('Write a skill', { kind: 'ghost sm', onClick: async () => {
       const title = await ui.ask('Name of the skill', { placeholder: 'Supplier comparison' }); if (!title) return;
       const body = await ui.ask('Its steps, in plain words', { multiline: true, placeholder: '1. ...\n2. ...' }); if (!body) return;
       try { const s = await api(API + 'skills', { body: { title, body } }); d.skills.push({ ...s, on: true }); on.add(s.id); await saveSkills(); paintSkills(); toast('Skill added and switched on.', 'ok'); } catch (e) { toast(e.message, 'err'); }

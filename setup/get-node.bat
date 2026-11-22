@@ -1,7 +1,11 @@
 @echo off
 rem Puts AP Desk's own copy of Node.js in runtime\node, inside the AP Desk folder. Nothing is installed for the whole PC.
 rem The download is checked against the SHA-256 that nodejs.org publishes for this version before it is unpacked.
-rem Uses only tools that ship with Windows 10 and 11: curl, certutil and tar.
+rem Uses only tools that ship with Windows 10 and 11: curl, certutil, tar, reg and findstr.
+rem A proxy: curl uses HTTPS_PROXY by itself when it is set. Else the proxy set for this user in Windows (Settings,
+rem Network, Proxy, "Use a proxy server") is read with reg and given to curl, with this user's own Windows sign-in
+rem for a proxy that asks for one. A proxy that Windows finds by itself or through a setup script (PAC) cannot be
+rem read with these tools; the message after a failed download says to set HTTPS_PROXY then.
 setlocal EnableExtensions
 set "VER=22.23.5"
 set "SUM_X64=4a191082e9706866830379d577d2cc8a50c776fcd9436a8d061b063ed0d9a0e3"
@@ -24,7 +28,15 @@ set "ZIP=%RT%\%NAME%.zip"
 
 echo Getting Node.js %VER% for this PC (%ARCH%) from nodejs.org. About 30 MB, only once ...
 if not exist "%RT%" mkdir "%RT%"
+set "PROXY="
+if not defined HTTPS_PROXY call :winproxy
+if defined PROXY goto :viaproxy
 curl -fL --retry 2 -o "%ZIP%" "https://nodejs.org/dist/v%VER%/%NAME%.zip"
+goto :fetched
+:viaproxy
+echo Going through the proxy that is set in Windows for you.
+curl -fL --retry 2 --proxy "%PROXY%" --proxy-anyauth --proxy-user : -o "%ZIP%" "https://nodejs.org/dist/v%VER%/%NAME%.zip"
+:fetched
 if errorlevel 1 goto :nodownload
 certutil -hashfile "%ZIP%" SHA256 | findstr /i "%SUM%" >nul
 if errorlevel 1 goto :badsum
@@ -41,7 +53,32 @@ exit /b 0
 :nodownload
 if exist "%ZIP%" del "%ZIP%"
 echo Could not download Node.js. Check your internet connection and try again.
+echo If this PC reaches the internet through a proxy, set HTTPS_PROXY for your account to the proxy's
+echo address (ask whoever looks after this PC for it), then try again.
 exit /b 1
+
+:winproxy
+rem The proxy set in Windows for this user, when "Use a proxy server" is on. ProxyServer is "host:port" for every
+rem kind of address, or a list such as "http=host:port;https=host:port": the https one is used, else the http one.
+set "PXON="
+set "PXSRV="
+for /f "tokens=3" %%a in ('reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyEnable 2^>nul ^| findstr /i "ProxyEnable"') do set "PXON=%%a"
+if not "%PXON%"=="0x1" exit /b 0
+for /f "tokens=2,*" %%a in ('reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyServer 2^>nul ^| findstr /i "ProxyServer"') do set "PXSRV=%%b"
+if not defined PXSRV exit /b 0
+set "PROXY=%PXSRV%"
+echo %PXSRV%| findstr "=" >nul || exit /b 0
+set "PROXY="
+set "PXHTTP="
+for %%e in ("%PXSRV:;=" "%") do call :proxypart %%e
+if not defined PROXY set "PROXY=%PXHTTP%"
+exit /b 0
+
+:proxypart
+set "PART=%~1"
+if /i "%PART:~0,6%"=="https=" set "PROXY=%PART:~6%"
+if /i "%PART:~0,5%"=="http=" set "PXHTTP=%PART:~5%"
+exit /b 0
 
 :badsum
 del "%ZIP%"

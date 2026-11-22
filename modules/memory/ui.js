@@ -17,31 +17,32 @@ function addForm(ui, agentId, onAdded) {
   const { h, btn, toast } = ui;
   const input = h('input', { type: 'text', placeholder: agentId ? 'Something to remember, or a lesson: "When I ask for leads, always include the city"' : 'Something every agent should remember', style: { flex: '1', minWidth: '200px' }, 'aria-label': 'New memory' });
   const kind = h('select', { 'aria-label': 'Kind' }, ['fact', 'preference', 'lesson'].map(k => h('option', { value: k }, KIND[k])));
-  const add = async () => { const text = input.value.trim(); if (!text) return; try { await ui.api(API + 'items', { body: { agentId, text, kind: kind.value } }); input.value = ''; toast('Remembered', 'ok'); onAdded(); } catch (e) { toast(e.message, 'err'); } };
+  const add = async () => { const text = input.value.trim(); if (!text) return ui.needs(input, 'Type something to remember first.'); try { await ui.api(API + 'items', { body: { agentId, text, kind: kind.value } }); input.value = ''; toast('Remembered', 'ok'); onAdded(); } catch (e) { toast(e.message, 'err'); } };
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
   return h('div', { class: 'row' }, input, kind, btn('Add', { onClick: add }));
 }
 
 export const settings = {
   memory: { title: 'Memory', async render(el, ui) {
-    const { h, card, line, sw, btn, fmt, toast, confirm, empty } = ui;
+    const { h, card, line, sw, btn, fmt, toast, confirm, empty, plural } = ui;
     const top = h('div', { class: 'card' }); const listCard = h('div', { class: 'card' });
     const listBody = h('div'); const q = h('input', { type: 'search', placeholder: 'Search what is remembered', 'aria-label': 'Search memories', style: { flex: '1', minWidth: '180px' } });
     el.append(top, listCard);
-    const setOpt = async (patch) => { await ui.api(API + 'settings', { body: patch }); };
+    // each switch answers beside itself: Saving, then the tick, or the reason and the switch goes back
+    const setOpt = (mark, patch) => mark.run(() => ui.api(API + 'settings', { body: patch }));
     const paintList = async () => {
       const r = await ui.api(API + 'items' + (q.value.trim() ? '?q=' + encodeURIComponent(q.value.trim()) : ''));
       listBody.replaceChildren(...(r.items.length ? r.items.map(m => memoryRow(ui, m, refresh)) : [empty(q.value ? 'Nothing matches.' : 'Nothing is remembered yet. Agents learn as you chat, or add a line here.')]));
     };
     const paintTop = async () => {
-      const s = await ui.api(API + 'status');
+      const s = await ui.api(API + 'status'); const learnMark = ui.savedMark(), nightMark = ui.savedMark();
       const k = s.byKind || {};
-      const what = s.total ? `${s.total} things: ${k.fact || 0} facts, ${k.preference || 0} preferences, ${k.lesson || 0} lessons, ${k.summary || 0} summaries` : 'Nothing yet';
+      const what = s.total ? `${plural(s.total, 'thing')}: ${plural(k.fact || 0, 'fact')}, ${plural(k.preference || 0, 'preference')}, ${plural(k.lesson || 0, 'lesson')}, ${plural(k.summary || 0, 'summary', 'summaries')}` : 'Nothing yet';
       const d = s.lastDream;
       top.replaceChildren(...[h('h3', null, 'Dream and Learn'),
         line('What is remembered', what + ' · about you, your business and your people', btn('Review', { kind: 'ghost sm', onClick: () => listCard.scrollIntoView({ behavior: 'smooth' }) })),
-        line('Learn from chat', 'After a reply, keep lasting facts and preferences about you and your business. Never passwords, codes or one-off asks.', sw(s.learnChat, 'Learn from chat', (on) => setOpt({ learnChat: on }))),
-        line('Nightly Dream', 'Tidies memory at 3:17 at night when the desk is on: merges duplicates, writes a short summary, lets stale lines fade. A missed night is not run later.', sw(s.nightly, 'Nightly Dream', (on) => setOpt({ nightly: on }))),
+        line('Learn from chat', 'After a reply, keep lasting facts and preferences about you and your business. Never passwords, codes or one-off asks.', sw(s.learnChat, 'Learn from chat', (on) => setOpt(learnMark, { learnChat: on })), learnMark),
+        line('Nightly Dream', 'Tidies memory at 3:17 at night when the desk is on: merges duplicates, writes a short summary, lets stale lines fade. A missed night is not run later.', sw(s.nightly, 'Nightly Dream', (on) => setOpt(nightMark, { nightly: on })), nightMark),
         line('Run Dream now', d ? `Last run ${fmt.when(d.at)}, started by ${d.startedBy || 'an earlier version'}: ${d.merged} merged, ${d.lowered} faded${d.label ? ' · ' + d.label : ''}` : 'Not run yet', btn('Run Dream now', { kind: 'ghost sm', onClick: async (e) => { const b = e.currentTarget; b.disabled = true; b.textContent = 'Dreaming…'; try { await ui.api(API + 'dream', { body: {} }); } catch (err) { toast(err.message, 'err'); b.disabled = false; b.textContent = 'Run Dream now'; } } })),
         (s.dreams || []).length > 1 ? line('Earlier Dream runs', (s.dreams || []).slice(1, 6).map(x => `${fmt.when(x.at)}, started by ${x.startedBy || 'an earlier version'}`).join(' · ')) : null,
         line('How memories are found', s.search?.ok ? `By meaning (${s.search.model}) and by words` : 'By words and their related words. For search by meaning, pull an embedding model in Ollama.'),

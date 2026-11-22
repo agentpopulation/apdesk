@@ -96,3 +96,14 @@ test('T: the active-connection detail answers from this PC and names the fields 
     assert.match(a.note, /DHCP lease end and the link-up time are not reported/);
   } finally { await t.close(); }
 });
+
+test('N: a schedule choice that is not offered is refused with a reason, and the one in use stays', async () => {
+  const t = await on();
+  try {
+    assert.equal((await t.call('/api/m/network/dns/settings', { body: { every: '15m' } })).json.every, '15m');
+    for (const [p, body] of [['dns/settings', { every: 'sometimes' }], ['api-health/settings', { every: '' }], ['asn/settings', {}], ['registrar/settings', { every: 'weekly' }], ['devices/settings', { every: 'often' }], ['visits/settings', { retentionDays: 'lots' }]]) {
+      const r = await t.call('/api/m/network/' + p, { body });
+      assert.equal(r.status, 400, p); assert.match(r.json.error, /Choose|days/);
+    }
+  } finally { await t.close(); }
+});

@@ -38,7 +38,7 @@ export async function activate(ctx) {
   });
   ctx.route('POST', '/unlock', async (req, res, { body, owner }) => {
     if (guard(res, owner, { allowLocked: true })) return;
-    if (Date.now() < waitUntil) return ctx.json(res, { error: `Too many wrong tries. Wait ${state().waitSeconds} seconds.`, ...state() }, 429);
+    if (Date.now() < waitUntil) return ctx.json(res, { error: `Too many wrong tries. Wait ${state().waitSeconds} ${state().waitSeconds === 1 ? 'second' : 'seconds'}.`, ...state() }, 429);
     const okPin = await pinOk(String(body?.pin || ''));
     const okCode = !totpOn() || verifyTotp(ctx.secrets.get('totp'), body?.code);
     if (!okPin || !okCode) {

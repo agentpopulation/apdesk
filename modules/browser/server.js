@@ -2,7 +2,7 @@
 import { Computer } from './computer.js';
 import { runLoop, shortUrl } from './agent-loop.js';
 import { launchChoice } from './launch.js';
-import { leavesThisPc, OFFLINE_LINE } from './guard.js';
+import { leavesThisPc, OFFLINE_LINE, allowedHostOf } from './guard.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -72,7 +72,7 @@ export async function activate(ctx) {
           const notChecked = out.missing?.length || 0;
           c.step('done', out.limit ? 'Stopped at the step limit.' : notChecked ? `Finished, but ${notChecked} part${notChecked === 1 ? '' : 's'} of the task could not be found: ${out.missing.join('; ').slice(0, 200)}.` : 'Finished.');
           const sources = out.visited.filter(u => /^https?:/.test(u));
-          job.card({ kind: 'progress', id: cardId, title: notChecked ? `${name} finished part of the task in the browser` : `${name} finished in the browser`, detail: `${out.steps} steps, ${sources.length} pages${notChecked ? `, ${notChecked} part${notChecked === 1 ? '' : 's'} not checked` : ''}`, progress: 1, status: 'done', actions: [{ label: 'Watch', go: `#/agents/${agentId}/computer` }] });
+          job.card({ kind: 'progress', id: cardId, title: notChecked ? `${name} finished part of the task in the browser` : `${name} finished in the browser`, detail: `${out.steps} step${out.steps === 1 ? '' : 's'}, ${sources.length} page${sources.length === 1 ? '' : 's'}${notChecked ? `, ${notChecked} part${notChecked === 1 ? '' : 's'} not checked` : ''}`, progress: 1, status: 'done', actions: [{ label: 'Watch', go: `#/agents/${agentId}/computer` }] });
           job.card({ kind: 'text', text: `**What ${name} found in the browser** (${out.labels.join(', ') || 'model'})\n\n${out.result}` });
           if (sources.length) job.card({ kind: 'sources', items: sources.slice(0, 20).map((u, i) => ({ n: i + 1, title: shortUrl(u), url: u })) });
           return { result: out.result, steps: out.steps, pages: sources, labels: out.labels, modelCalls: out.modelCalls, frames: c.frameNo, limit: !!out.limit, complete: !!out.complete, checked: !!out.checked, missing: out.missing || [], parts: out.parts || null };
@@ -133,9 +133,17 @@ export async function activate(ctx) {
   ctx.route('POST', '/:agentId/task', async (req, res, { params, body, owner }) => { if (!ownerOnly(res, owner)) return; port(req); try { const j = await runTask({ agentId: params.agentId, goal: body?.goal, startUrl: body?.startUrl || null, chatId: body?.chatId || null }); ctx.json(res, j); } catch (e) { ctx.json(res, { error: e.message }, 409); } });
   ctx.route('POST', '/allow-host', (req, res, { body, owner }) => {
     if (!ownerOnly(res, owner)) return;
-    const h = String(body?.host || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/[/:].*$/, '');
-    let list = allowHosts().filter(x => x !== h); if (h && body?.allow !== false) list = [...list, h];
-    ctx.kv.set('allowHosts', list); ctx.json(res, { allowHosts: list });
+    // The address is read the way the browser guard reads it, so what is listed is what the guard lets through. An entry
+    // already in the list is removed as it is written, so an old broken entry can still be taken out.
+    const raw = String(body?.host || '').trim(); const now = allowHosts();
+    if (body?.allow === false) {
+      const h = now.includes(raw) ? raw : allowedHostOf(raw).host;
+      if (!h || !now.includes(h)) return ctx.json(res, { error: 'That address is not in the list.' }, 404);
+      const list = now.filter(x => x !== h); ctx.kv.set('allowHosts', list); return ctx.json(res, { allowHosts: list });
+    }
+    const { host: h, error } = allowedHostOf(raw);
+    if (!h) return ctx.json(res, { error }, 400);
+    const list = [...now.filter(x => x !== h), h]; ctx.kv.set('allowHosts', list); ctx.json(res, { allowHosts: list, host: h });
   });
 
   ctx.tool({

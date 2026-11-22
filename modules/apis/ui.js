@@ -92,7 +92,7 @@ export const pages = {
             h('div', { class: 'chips' }, r.suggestions.map(p => h('button', { type: 'button', class: 'chip', onclick: () => { topic = p.id; paintTopics(); paintPack(); packEl.scrollIntoView({ block: 'nearest' }); } }, `${p.short} · ${p.bytesText}`)))) : null;
           const head = !r.searched.length ? empty('No pack is on this PC yet. Pick a topic above and press Get.') : h('p', { class: 'sub' }, `${r.rows.length ? r.rows.length + ' best matches' : 'Nothing matched'} from ${r.scanned.toLocaleString()} endpoints in ${r.searched.length} pack${r.searched.length === 1 ? '' : 's'}. ${r.tested}`);
           put(resultsEl, sug, head, r.rows.map(endpoint));
-        } catch (e) { put(resultsEl, empty(e.message)); }
+        } catch (e) { put(resultsEl, empty(ui.plainError(e))); }
       }
       async function loadTools() {
         tools = (await api('m/apis/tools')).tools;

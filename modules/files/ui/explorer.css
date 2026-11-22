@@ -568,7 +568,7 @@
 }
 @media (max-width: 720px) {
   .view.fxv { overflow: auto; }
-  .fx .fx-body, .fx.has-pane .fx-body, .fx.has-pane[data-pane="open"] .fx-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(320px, 1fr) auto; }
+  .fx .fx-body, .fx.has-pane .fx-body, .fx.has-pane[data-pane="open"] .fx-body, .fx.has-pane[data-pane="idle"] .fx-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(320px, 1fr) auto; }
   .fx-split { display: none !important; }
   .fx.has-pane[data-pane="open"] .fx-tree { grid-row: auto; }
   .fx.has-pane[data-pane="open"] .fx-pane:not([hidden]) { grid-column: auto; grid-row: auto; }

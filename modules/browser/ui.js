@@ -2,6 +2,37 @@
 const KEYS = new Set(['Enter', 'Backspace', 'Tab', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End', 'Delete']);
 const MODE_WORDS = { idle: ['Idle', ''], agent: ['Working', 'run'], owner: ['You are driving', 'wait'], needs_owner: ['Waiting for you', 'wait'] };
 
+/** The addresses the agents may open on this PC or the home network. One list for the whole desk, kept by the Browser module. */
+export function allowedAddresses(ui) {
+  const { h, btn, api, toast } = ui;
+  const base = '/api/m/browser';
+  const list = h('div', { class: 'stack', style: { gap: '4px' } });
+  const mark = ui.savedMark ? ui.savedMark() : null;
+  let hosts = [];
+  const draw = () => list.replaceChildren(...(hosts.length ? hosts.map(a => h('div', { class: 'row', 'data-allowed': a }, h('span', null, a), h('span', { class: 'grow' }),
+    btn('Remove', { kind: 'ghost sm', 'aria-label': 'Stop allowing ' + a, onClick: () => change(a, false) })))
+    : [h('div', { class: 'sub' }, 'None yet. Agents cannot open anything on this PC or your home network.')]));
+  async function change(host, allow) {
+    // the tick shows only after the desk kept the change; a refusal shows its reason beside the box and keeps what was typed
+    const run = async () => { const r = await api(base + '/allow-host', { method: 'POST', body: { host, allow } }); hosts = r.allowHosts || []; draw(); };
+    if (mark) return mark.run(run, { word: allow ? 'Allowed' : 'Removed' });
+    try { await run(); return true; } catch (e) { toast(e, 'err'); return false; }
+  }
+  const input = h('input', { type: 'text', 'aria-label': 'Address to allow', placeholder: 'For example: printer.local or 192.168.1.20', style: { flex: '1', minWidth: '0' } });
+  const add = async () => {
+    const v = input.value.trim(); if (!v) return ui.needs ? ui.needs(input, 'Type the address first.') : toast('Type the address first.');
+    if (await change(v, true)) input.value = '';
+  };
+  input.addEventListener?.('keydown', (e) => { if (e.key === 'Enter') add(); });
+  const box = h('details', { 'data-apd': 'allowed-addresses', class: 'card' },
+    h('summary', { class: 'sub', style: { cursor: 'pointer' } }, 'Pages on your own network'),
+    h('p', { class: 'sub' }, 'An agent may open a page on this PC or your home network, such as a printer or a router page, only if you allow its address here. This is for every agent.'),
+    list, h('div', { class: 'row' }, input, btn('Allow', { onClick: add }), mark));
+  draw();
+  api(base + '/info').then((r) => { hosts = r?.allowHosts || []; draw(); }).catch(() => {});
+  return box;
+}
+
 export function renderComputer(el, ui, agent) {
   const { h, btn, pill, api, toast, fmt } = ui;
   const id = agent?.id || 'operator'; const name = agent?.name || id;
@@ -101,7 +132,8 @@ export function renderComputer(el, ui, agent) {
     h('div', { class: 'stack', style: { minWidth: '0' } },
       h('div', { class: 'screen' }, urlBar, stage),
       h('div', { class: 'row' }, modePill, offPill, framesPill, h('span', { class: 'grow' }), bWin, bStop, bTake, bBack),
-      h('div', { class: 'row' }, goal, start, bGo)),
+      h('div', { class: 'row' }, goal, start, bGo),
+      allowedAddresses(ui)),
     h('div', { class: 'card', style: { display: 'flex', flexDirection: 'column', gap: '8px', minHeight: '0', maxHeight: 'calc(100vh - 240px)' } },
       h('h3', null, 'Steps'), goalLine, steps, result,
       h('p', { class: 'sub', style: { fontSize: '12px' } }, 'Take over pauses the agent at once; click, type and scroll on the picture to drive. It never types passwords, card numbers or codes: it stops and asks you.'))));

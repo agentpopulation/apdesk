@@ -5,7 +5,8 @@
 //   node check.mjs port       prints the port the desk uses (see choosePort); exit 1 if none is free
 //   node check.mjs running    the desk answers on its port
 //   node check.mjs wait       wait up to 60 seconds for the desk to answer
-//   node check.mjs stop       ask the desk to stop and wait until it has
+//   node check.mjs stop       ask the desk to stop and wait until it has: exit 0 stopped, 1 was not running,
+//                             2 it still answers (it did not stop)
 //   node check.mjs layout     prints "repo" for a repository checkout, "zip" for the unzipped app
 // The port: APD_PORT when it is set, else the one remembered in data\port.txt, else 3445.
 import fs from 'node:fs'; import path from 'node:path'; import net from 'node:net'; import { fileURLToPath } from 'node:url';
@@ -54,15 +55,25 @@ async function main(cmd) {
   }
   if (cmd === 'running') return isDesk(PORT);
   if (cmd === 'wait') { for (let i = 0; i < 120; i++) { if (await isDesk(PORT)) return true; await sleep(500); } return false; }
-  if (cmd === 'stop') {
-    if (!(await isDesk(PORT))) return false;
-    let ok = false;
-    fs.mkdirSync(DATA, { recursive: true }); fs.writeFileSync(path.join(DATA, 'stop.request'), new Date().toISOString());
-    for (let i = 0; i < 40; i++) { await sleep(500); if (!(await isDesk(PORT))) { ok = true; break; } }
-    if (!ok) { try { const pid = Number(fs.readFileSync(path.join(DATA, 'desk.pid'), 'utf8')); if (pid) { process.kill(pid); ok = true; } } catch {} }
-    try { fs.rmSync(path.join(DATA, 'stop.request'), { force: true }); } catch {}
-    return ok;
-  }
+  if (cmd === 'stop') return STOP_CODE[await stopDesk()];
   return false;
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exit((await main(process.argv[2] || 'all')) ? 0 : 1);
+
+// Asks the desk to stop and waits until it no longer answers. 'stopped', 'not running', or 'still running' when it
+// still answers after the wait and after its process was ended: the caller must not say it stopped.
+export async function stopDesk({ answers = () => isDesk(PORT), data = DATA, wait = sleep, kill = (pid) => process.kill(pid), tries = 40 } = {}) {
+  if (!(await answers())) return 'not running';
+  const note = path.join(data, 'stop.request');
+  fs.mkdirSync(data, { recursive: true }); fs.writeFileSync(note, new Date().toISOString());
+  const gone = async (n) => { for (let i = 0; i < n; i++) { await wait(500); if (!(await answers())) return true; } return false; };
+  let ok = await gone(tries);
+  if (!ok) { try { const pid = Number(fs.readFileSync(path.join(data, 'desk.pid'), 'utf8')); if (pid) { kill(pid); ok = await gone(10); } } catch {} }
+  try { fs.rmSync(note, { force: true }); } catch {}
+  return ok ? 'stopped' : 'still running';
+}
+// exit codes of "node check.mjs stop": 0 stopped, 1 was not running, 2 still running
+export const STOP_CODE = { stopped: 0, 'not running': 1, 'still running': 2 };
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const r = await main(process.argv[2] || 'all');
+  process.exit(typeof r === 'number' ? r : r ? 0 : 1);
+}

@@ -5,8 +5,8 @@ One SQLite file and one workspace folder per space (contracts/PEOPLE.md). Nothin
 ```
 <install>/                   for example C:\apdesk; the repository root
   start.bat  stop.bat  README.md
-  app/                       the shell and the four doors: server.js, core/, ui/, docs/
-  modules/                   the 30 modules, one folder each
+  app/                       the shell and the four doors: server.js, core/, ui/ (a release zip adds docs/ with the licences)
+  modules/                   the 35 modules, one folder each
   vendor/                    open-source code copied in, with licences
   node_modules/              installed packages (made by setup; never edited)
   setup/                     setup.bat, reinstall.bat, the package list
@@ -32,7 +32,7 @@ ctx.workspace                                    // absolute path
 ctx.workspacePath('reports', 'x.pdf')            // joins and refuses '..' and absolute escapes
 ```
 
-Tables a module makes are named `m_<id>_<thing>`. Core tables (`settings`, `agents`, `jobs`, `approvals`, `activity`, `secrets`, `calls`, `modules`, `kv`, `migrations`) belong to the core; modules read them through `ctx` helpers, not SQL, so the core can change them.
+Tables a module makes are named `m_<id>_<thing>`. The door refuses SQL from a module that names another module's table: it may not write it, and may not read it either (`OTHER_MODULE_READS` in `app/core/storage.js` is empty: Memory asks Chat for a chat's options with `settings(chatId)`). A module that needs another's data asks for it through `ctx.modules.api(id)`. Core tables (`settings`, `agents`, `jobs`, `approvals`, `activity`, `secrets`, `calls`, `modules`, `kv`, `migrations`) belong to the core; modules read them through `ctx` helpers, not SQL, so the core can change them.
 
 Rows store times as ISO strings in UTC and the UI shows them in the owner's zone (Settings › General). Money is stored as integer minor units with a currency code.
 

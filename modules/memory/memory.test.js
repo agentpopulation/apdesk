@@ -94,3 +94,17 @@ test('memory: the old Flows schedule that asked a model turn to call memory_drea
     assert.deepEqual(flows.list().map(s => s.title), ['Morning brief']);
   } finally { await t.close(); }
 });
+
+test('"Remember this chat" off in Chat is honoured: Memory asks Chat for it, it reads no table of Chat\'s', async () => {
+  const t = await testDesk({ modules: ['chat', 'agents', 'memory'] });
+  try {
+    const mem = t.core.modules.api('memory');
+    assert.equal((await t.call('/api/m/chat/chats/dm-scout', { method: 'PATCH', body: { settings: { remember: false } } })).status, 200);
+    assert.equal(t.core.modules.api('chat').settings('dm-scout').remember, false);
+    const r = await mem.learnFromTurn({ chatId: 'dm-scout', agentId: 'scout', user: 'My office is in Pune and I sell paint', assistant: 'Noted.' });
+    assert.equal(r.skipped, 'Remember this chat is off', JSON.stringify(r));
+    await t.call('/api/m/chat/chats/dm-scout', { method: 'PATCH', body: { settings: { remember: true } } });
+    const r2 = await mem.learnFromTurn({ chatId: 'dm-scout', agentId: 'scout', user: 'hi', assistant: 'Hello.' });
+    assert.notEqual(r2.skipped, 'Remember this chat is off', 'switched back on, the chat switch no longer stops it');
+  } finally { await t.close(); }
+});

@@ -1,9 +1,9 @@
-// AP Desk uninstaller for one Windows user. uninstall.bat stops the desk, runs this, and then removes what Node.js
+// AP Desk uninstaller for one Windows user. uninstall.bat asks once, stops the desk, runs this, and then removes what Node.js
 // itself cannot while it runs: runtime\ and uninstall.bat.
 // It removes this user's shortcuts and Apps entry, then the program files named in setup\installed.txt (only
 // names inside this folder). data\ and backups\ go only when the user answers Yes and then types DELETE.
 import fs from 'node:fs'; import path from 'node:path'; import { fileURLToPath } from 'node:url';
-import { shortcuts, userFolders, cmdAppsRemove, realRunner, consoleAsk } from './install.mjs';
+import { shortcuts, userFolders, cmdAppsRemove, realRunner, consoleAsk, STAGE, OLD } from './install.mjs';
 const HERE = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 // what an AP Desk folder can hold when setup\installed.txt is missing (a folder that was unpacked, not installed)
 const KNOWN = ['app', 'modules', 'vendor', 'node_modules', 'setup', 'start.bat', 'stop.bat', 'install.bat', 'start.sh', 'start.command', 'README.md', 'LICENSE', 'NOTICE', 'ATTRIBUTION.md', 'CHANGELOG.md', 'package.json', 'package-lock.json'];
@@ -37,7 +37,7 @@ export async function uninstall({ dir = HERE, run = realRunner, ask = consoleAsk
   }
   // 3. program files (runtime\ and uninstall.bat are removed by uninstall.bat once this Node.js has stopped)
   const removed = [];
-  for (const n of [...programList(dir), ...(delData ? ['data', 'backups'] : [])]) {
+  for (const n of [...programList(dir), STAGE, OLD, ...(delData ? ['data', 'backups'] : [])]) {   // with what an install that stopped half-way left
     const p = path.join(dir, n);
     if (!fs.existsSync(p)) continue;
     try { fs.rmSync(p, { recursive: true, force: true }); removed.push(n); } catch { say(`  Could not remove ${p}. Remove it yourself.`); }

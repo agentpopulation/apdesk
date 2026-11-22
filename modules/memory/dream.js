@@ -8,7 +8,15 @@ export const DREAM_SYSTEM = `You tidy the long-term memory of a business owner's
 2. Write one short summary (two or three sentences) of what was learned today about the owner and his business. Leave it empty if there is nothing worth summarising.
 Return JSON only: {"merge":[{"ids":[1,2],"text":"merged sentence"}],"summary":"..."}`;
 
-export async function dream({ store, model, signal, progress = () => {}, log = () => {} }) {
+/** The day a summary is about, in the owner's zone and date style; the computer's own when a setting is not one. */
+export function dayWords(date = new Date(), { timeZone = null, locale = null } = {}) {
+  for (const [z, l] of [[timeZone, locale], [timeZone, null], [null, null]]) {
+    try { return new Intl.DateTimeFormat(l || undefined, { timeZone: z || undefined, day: 'numeric', month: 'long', year: 'numeric' }).format(date); } catch { /* next */ }
+  }
+  return date.toDateString();
+}
+
+export async function dream({ store, model, signal, progress = () => {}, log = () => {}, timeZone = null, locale = null, now = () => new Date() }) {
   const report = { merged: 0, groups: [], summary: null, lowered: 0, reviewed: 0, label: null, at: new Date().toISOString() };
   const since = new Date(Date.now() - DAY_MS).toISOString();
   const all = store.list({ limit: 2000 }).filter(m => m.kind !== 'summary');
@@ -47,7 +55,7 @@ export async function dream({ store, model, signal, progress = () => {}, log = (
       report.merged += ids.length - 1; report.groups.push({ ids, text, how: 'same meaning' });
     }
     const summary = clip(j.summary || '', 500);
-    if (summary && fresh.length >= 3) { const d = new Date().toISOString().slice(0, 10); report.summary = store.add({ agentId: null, text: `Summary of ${d}: ${summary}`, kind: 'summary', source: 'dream' }); }
+    if (summary && fresh.length >= 3) { const d = dayWords(now(), { timeZone, locale }); report.summary = store.add({ agentId: null, text: `Summary of ${d}: ${summary}`, kind: 'summary', source: 'dream' }); }
   }
   // 3. stale memories weigh less (lessons are kept at full weight: the owner taught them on purpose)
   progress(0.85, 'Lowering the weight of stale memories');

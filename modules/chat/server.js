@@ -224,10 +224,10 @@ export async function activate(ctx) {
       const um = store.add(c.id, { role: 'user', text, meta: { aboutSite: true } }); bus.emitMessage(um);
       const reply = store.add(c.id, { role: 'assistant', agentId: speakerOf(c, body?.agentId), text: '', status: 'streaming', meta: { aboutSite: site } }); bus.emitMessage(reply);
       // the read is this chat's reply: a second send waits for it, and Stop (or Panic) aborts it
-      const ac = new AbortController(); co.running.set(c.id, { ac, replyId: reply.id });
+      const ac = new AbortController(); co.running.set(c.id, { ac, replyId: reply.id }); emit({ type: 'running', chatId: c.id, on: true });
       siteProposal(ctx, site, { signal: ac.signal, chatId: c.id }).catch(() => ({ ok: false, text: 'I could not read that site. ' + ASK_ABOUT }))
         .then((r) => {
-          if (co.running.get(c.id)?.ac === ac) co.running.delete(c.id);
+          if (co.running.get(c.id)?.ac === ac) { co.running.delete(c.id); emit({ type: 'running', chatId: c.id, on: false }); }
           // stopped, or the wait was dropped meanwhile: nothing is proposed into a chat that no longer waits
           const gone = ac.signal.aborted || !store.chat(c.id)?.settings.awaitBusiness;
           const m = gone ? store.update(reply.id, { text: 'Stopped. Nothing was read or saved.', cards: [], status: 'stopped' })
@@ -285,6 +285,8 @@ export async function activate(ctx) {
     const tool = String(body?.tool || '');
     if (!ctx.modules.tools().some(t => t.name === tool)) return ctx.json(res, { error: 'That action is not available now. Its module may be off.' }, 404);
     const agentId = c.members.length === 1 ? c.members[0] : co.handoffFor(tool);
+    // the agent's own switches on the Agents page hold for a card's button too: a tool switched off for it does not run as it
+    if (!co.toolsFor(agentId).some(t => t.name === tool)) { const n = ctx.agents.get(agentId)?.name || 'This agent'; return ctx.json(res, { error: `${n} may not use this tool. Switch it on in Agents › ${n} › Tools it may use.`, code: 'tool_off' }, 403); }
     const label = String(body?.label || '').slice(0, 80);
     const um = store.add(c.id, { role: 'user', text: label || 'Run this', meta: { action: tool } }); bus.emitMessage(um);
     const reply = store.add(c.id, { role: 'assistant', agentId, text: '', status: 'streaming', meta: { steps: [{ tool, agentId, status: 'running' }] } }); bus.emitMessage(reply);
@@ -297,8 +299,10 @@ export async function activate(ctx) {
       const m = store.update(reply.id, { text, cards: [...cur.cards, ...cards], status: 'done', meta: { steps: [{ tool, agentId, status: 'done' }] } });
       bus.emitMessage(m); store.touch(c.id, text || label); ctx.json(res, { ok: true, messageId: m.id });
     } catch (e) {
-      const m = store.update(reply.id, { text: e.code === 'halted' ? 'Stopped.' : 'That did not work: ' + String(e.message || e).slice(0, 300), status: e.code === 'halted' ? 'stopped' : 'error', meta: { steps: [{ tool, agentId, status: 'failed' }] } });
-      bus.emitMessage(m); ctx.json(res, { ok: false, error: e.message }, 200);
+      // one plain line on screen; the raw message goes to the log only
+      const line = ctx.plainFailure(e).line; ctx.log('chat action failed', tool, e?.message || e);
+      const m = store.update(reply.id, { text: e.code === 'halted' ? 'Stopped.' : line, status: e.code === 'halted' ? 'stopped' : 'error', meta: { steps: [{ tool, agentId, status: 'failed' }] } });
+      bus.emitMessage(m); ctx.json(res, { ok: false, error: line }, 200);
     }
   });
   // Attach: the raw body goes to workspace/inbox; a text file is read into the chat, anything else is named.
@@ -397,6 +401,8 @@ export async function activate(ctx) {
       }
       return { chatId: c.id, messageId: m.id, text: m.text, label: m.label, cards: m.cards, status: m.status, posted: true, unfinished: m.meta?.unfinished || null };
     },
+    /** One chat's own options ({ remember, ... }), for Memory; null when there is no such chat. */
+    settings: (chatId) => store.chat(chatId)?.settings ?? null,
     isRunning: (chatId) => co.running.has(chatId),
     stop: (chatId) => co.stop(chatId),
   });

@@ -131,6 +131,42 @@ export function plainWhy(st) {
   if (st?.status === 'stopped') return 'it was stopped';
   return st?.error ? 'it did not work: ' + String(st.error).replace(/\s+/g, ' ').trim().slice(0, 160) : 'it did not work';
 }
+// Network codes that mean the request never left this PC.
+const NOT_ONLINE = /^(?:ENOTFOUND|EAI_AGAIN|ENETUNREACH|ENETDOWN|EHOSTUNREACH|EHOSTDOWN)$/;
+const TIMED_OUT = /^(?:timeout|stalled|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_BODY_TIMEOUT)$/;
+export const FAIL_LINES = {
+  halted: 'Everything is stopped. Press Resume first.',
+  stopped: 'Stopped.',
+  offline: 'The desk is offline. Go online, or use a local model.',
+  not_online: 'This PC is not online. Check the internet and try again.',
+  timeout: 'No answer in time. Try again in a minute.',
+  refused: 'The service refused it. If it needs a key, check it in Models.',
+  busy: 'The service is busy. Try again in a minute.',
+  no_credit: 'The service wants payment: the key is out of credit. Check the key and its credit in Models.',
+  no_model: 'No model answered. Try again in a minute, or check your keys in Models.',
+  failed: 'Something went wrong. Try again in a minute.',
+};
+/** A failure as one plain line for the chat, read from its codes and status, never the raw text (that goes to the log).
+ *  The model door's own line (it carries its kind in `why`) and the desk's own plain sentences keep their words. */
+export function failLine(e) {
+  if (!e || typeof e !== 'object') return FAIL_LINES.failed;
+  const codes = [e.code, e.cause?.code, e.cause?.cause?.code, ...(Array.isArray(e.cause?.errors) ? e.cause.errors.map(x => x?.code) : [])].filter(Boolean).map(String);
+  const msg = String(e.message || '').trim();
+  if (e.code === 'halted') return FAIL_LINES.halted;
+  if (e.code === 'aborted' || e.name === 'AbortError') return FAIL_LINES.stopped;
+  if (e.why && msg) return msg;
+  if (e.code === 'offline') return FAIL_LINES.offline;
+  if (codes.some(c => NOT_ONLINE.test(c))) return FAIL_LINES.not_online;
+  if (e.name === 'TimeoutError' || codes.some(c => TIMED_OUT.test(c))) return FAIL_LINES.timeout;
+  const s = Number(e.status);
+  if (s === 401 || s === 403 || e.code === 'refused' || e.code === 'forbidden') return FAIL_LINES.refused;
+  if (s === 402) return FAIL_LINES.no_credit;
+  if (s === 429 || s === 503 || s === 529) return FAIL_LINES.busy;
+  if (e.code === 'all_failed' || (Array.isArray(e.attempts) && !e.code)) return FAIL_LINES.no_model;
+  const own = (e.constructor === Error || e.constructor?.name === 'ModelError') && !e.cause && !codes.some(c => /^(?:E[A-Z]{2,}|ERR_|UND_)/.test(c))
+    && msg && !/[{}[\]<>]|fetch failed|HTTP \d{3}|\bat \S+ \(|:\d+:\d+|\bundefined\b|\bnull\b/i.test(msg);
+  return own ? msg : FAIL_LINES.failed;
+}
 /** Shorten at a word, never in the middle of one, and end with "…". */
 export function cutAtWord(text, n) {
   const s = String(text ?? '').replace(/\s+/g, ' ').trim();

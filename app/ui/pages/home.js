@@ -17,8 +17,9 @@ export const chipNeedsBusiness = (c) => !!(c && typeof c === 'object' && c.needs
 export const STARTING_TEAM = ['coordinator', 'scout', 'closer', 'operator', 'coder'];
 export const teamFor = (roleId) => ROLES[roleId]?.team || STARTING_TEAM;
 
-export async function applyRole(ui, id) {
-  const r = await ui.api('settings', { body: { role: id || null, onboarded: true } });
+/** extra: more settings saved with the role in the same call (first start: the place shown and step two kept open). */
+export async function applyRole(ui, id, extra = {}) {
+  const r = await ui.api('settings', { body: { ...extra, role: id || null, onboarded: true } });
   ui.state.settings = r.settings;
 }
 
@@ -26,7 +27,8 @@ export async function homePage(el, ui) {
   const { h, api, card, line, btn, pill, meter, fmt, empty } = ui;
   el.classList.add('scroll');
   const role = ROLES[ui.state.settings.role];
-  const hour = Number(new Date().toLocaleString('en-GB', { hour: 'numeric', hour12: false, timeZone: ui.state.settings.timeZone || undefined }));
+  let hour = new Date().getHours();
+  try { hour = Number(new Date().toLocaleString('en-GB', { hour: 'numeric', hour12: false, timeZone: ui.state.settings.timeZone || undefined })); } catch {}   // the desk refuses a zone it cannot use; this is the last guard
   const hello = hour < 4 ? 'Hello' : hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   const bench = h('div'), tiles = h('div', { class: 'tiles' }), running = h('div'), waiting = h('div'), recent = h('div'), extra = h('div', { class: 'tiles' });
   el.append(
@@ -42,7 +44,7 @@ export async function homePage(el, ui) {
     const owners = (list) => list.filter(j => !j.quiet);   // the desk's own upkeep stays in Tasks › Housekeeping
     // a count that is live wears a coloured stripe: blue while tasks run, amber while something waits for the owner
     const tile = (n, label, page, live = '') => h('button', { class: 'card hov stat' + (live && n ? ' ' + live : ''), onclick: () => ui.go(page) }, h('b', null, String(n)), h('span', null, label));
-    tiles.replaceChildren(tile(d.jobs.summary.running, 'Tasks running', 'tasks', 'run'), tile(d.approvals.length + d.jobs.summary.waiting, 'Waiting for you', 'tasks', 'slow'), tile(d.jobs.summary.done, 'Finished', 'tasks'), tile(d.agents, 'Agents', 'agents'));
+    tiles.replaceChildren(tile(d.jobs.summary.running, 'Tasks running', 'tasks', 'run'), tile(d.approvals.length + d.jobs.summary.waiting, 'Waiting for you', 'tasks', 'slow'), tile(d.jobs.summary.done, 'Done', 'tasks'), tile(d.agents, 'Agents', 'agents'));
     const run = owners(d.jobs.running);
     running.replaceChildren(...(run.length ? run.map(j => h('div', { class: 'line' }, h('div', null, h('b', null, j.title), h('span', { class: 'd' }, `${ui.agent(j.agentId)?.name || 'Agent'} · ${j.detail || 'Working'}`)), meter(j.progress, { live: true, style: { maxWidth: '160px' } }), pill(fmt.pct(j.progress), 'run'))) : [empty('Nothing is running.')]));
     const waits = [...d.approvals.map(a => line(a.title, `${ui.whoAsks(a)} · ${ui.ACTION_WORDS[a.action] || a.action}`, btn('Review', { kind: 'ghost sm', onClick: () => ui.openApprovals() }))),
@@ -50,10 +52,12 @@ export async function homePage(el, ui) {
     const stopped = ui.stoppedSection?.();
     waiting.replaceChildren(...(waits.length || stopped ? [...waits, stopped].filter(Boolean) : [empty('Nothing is waiting.')]));
     const rec = [...(d.recent || []).map(c => line(c.title || 'Chat', c.last || '', btn('Open', { kind: 'ghost sm', onClick: () => ui.go('chat', c.id) }))),
-      ...owners(d.jobs.done).slice(0, 4).map(j => line(j.title, `Finished ${fmt.ago(j.finished)}`, btn('Open', { kind: 'ghost sm', onClick: () => j.chatId ? ui.go('chat', j.chatId) : ui.go('tasks') })))];
+      ...owners(d.jobs.done).slice(0, 4).map(j => line(j.title, `Done ${fmt.ago(j.finished)}`, btn('Open', { kind: 'ghost sm', onClick: () => j.chatId ? ui.go('chat', j.chatId) : ui.go('tasks') })))];
     recent.replaceChildren(...(rec.length ? rec : [empty('Start in Chat: ask for research, leads, a schedule or a file.'), h('div', { class: 'chips', style: { justifyContent: 'center' } }, chipsFor(ui.state.settings.role).map(c => h('button', { class: 'chip', onclick: () => { try { sessionStorage.setItem('apd-prefill', chipText(c)); sessionStorage.setItem('apd-prefill-chip', JSON.stringify({ text: chipText(c), needsBusiness: chipNeedsBusiness(c) })); } catch {} ui.go('chat'); } }, chipText(c))))]));
     const mods = ui.state.modules.filter(m => m.on && m.kind !== 'core' && (m.menu || []).length);
-    extra.replaceChildren(...mods.map(m => h('button', { class: 'card hov', onclick: () => ui.go(m.menu[0].id) }, h('b', null, m.name), h('div', { class: 'sub' }, 'Module is on. Open it.'))));
+    // each place by the name the menu gives it, with what it is for in its own words (the first sentence of its description)
+    const what = (m) => (String(m.description || '').match(/^.*?\.(?=\s|$)/) || [''])[0].trim() || 'Open it.';
+    extra.replaceChildren(...mods.map(m => h('button', { class: 'card hov', onclick: () => ui.go(m.menu[0].id) }, h('b', null, ui.label(m.menu[0].id, m.menu[0].label || m.name)), h('div', { class: 'sub' }, what(m)))));
   };
   await paint();
   ui.on('job', paint); ui.on('approval', paint); ui.on('modules', paint); ui.on('panic', paint); ui.on('bench', paint);

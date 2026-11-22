@@ -2,7 +2,7 @@
   "id": "store",
   "number": 16,
   "name": "Module Store",
-  "description": "All 30 modules as cards: what each does, whether it is on, what it adds, its honest status and its open-source parts. Switch the optional ones on and off here.",
+  "description": "Every module as a card: what each does, whether it is on, what it adds, its honest status and its open-source parts. Switch the optional ones on and off here.",
   "kind": "core",
   "defaultOn": true,
   "menu": [],

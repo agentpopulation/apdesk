@@ -94,3 +94,14 @@ test('a keyed provider over quota keeps its group: list call throws, every model
     assert.match(gem.note, /Google Gemini is over its free quota right now; it will be tried again automatically/);
   } finally { await t.close(); }
 });
+
+test('the router line says whether a router of your own answers, never its raw address', async () => {
+  const t = await testDesk({ modules: ['models'] });
+  try {
+    t.core.settings.set('router.baseUrl', 'http://127.0.0.1:1/v1'); t.core.settings.set('router.builtin', true); t.core.settings.set('router.enabled', true);
+    const r = (await t.call('/api/m/models/overview')).json.router;
+    assert.equal(r.mode, 'builtin');
+    assert.match(r.line, /^No router of your own answers, so the built-in free hosts are used/);
+    assert.doesNotMatch(r.line, /127\.0\.0\.1|http/);
+  } finally { await t.close(); }
+});

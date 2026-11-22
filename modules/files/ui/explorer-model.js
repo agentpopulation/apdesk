@@ -102,15 +102,17 @@ export function formatSize(bytes) {
   return n + ' bytes';
 }
 
-/** "08-11-2026 14:05" style, in the PC's own locale. Empty for no date. */
-export function formatDate(value, locale) {
+/** A file's date as the owner reads it: `fmt` is the shell kit's formatter (the owner's zone and style from Settings).
+ *  The list is short ("Nov 22, 10:30 AM" this year, "Nov 22, 2025" before) so it fits its column; `full` adds the year and time. */
+export function formatDate(value, { fmt, full = false } = {}) {
   const t = Date.parse(value || '');
   if (!Number.isFinite(t)) return '';
-  try {
-    return new Date(t).toLocaleString(locale || undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  } catch {
-    return new Date(t).toISOString().slice(0, 16).replace('T', ' ');
+  const iso = new Date(t).toISOString();
+  if (fmt) {
+    if (full) return `${fmt.date(iso)}, ${fmt.time(iso)}`;
+    return new Date(t).getFullYear() === new Date().getFullYear() ? fmt.when(iso) : fmt.date(iso);
   }
+  try { return new Date(t).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return ''; }
 }
 
 /** Folders first (like Explorer), then the chosen column; name breaks ties. */

@@ -128,8 +128,8 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
     let active = [];
     try { active = await ctx.model.active(); } catch (e) { rows.push({ name: 'Models', ok: false, detail: e.message }); }
     for (const a of active) {
-      if (a.provider === 'router') rows.push({ name: a.label, ok: !!a.ok, detail: a.builtin ? `Your router at ${ctx.settings.get('router.baseUrl') || 'http://127.0.0.1:8787/v1'} was not found; the built-in Free API is used (${(a.upstreams || []).length} free sources).` : a.ok ? `Your router answers with ${(a.models || []).length} models.` : (a.error || 'Not reachable') });
-      else if (a.provider === 'ollama') rows.push({ name: 'Ollama', ok: !!a.ok, detail: a.ok ? `${(a.models || []).length} models installed.` : `Not running at ${ctx.settings.get('ollama.baseUrl') || 'http://127.0.0.1:11434'}.` });
+      if (a.provider === 'router') rows.push({ name: a.label, ok: !!a.ok, detail: a.builtin ? `No router program of your own answers on this PC; the built-in Free API is used (${(a.upstreams || []).length} free sources).` : a.ok ? `Your router answers with ${(a.models || []).length} model${(a.models || []).length === 1 ? '' : 's'}.` : (a.error || 'Not reachable') });
+      else if (a.provider === 'ollama') rows.push({ name: 'Ollama', ok: !!a.ok, detail: a.ok ? `${(a.models || []).length} models installed.` : 'Not running on this PC.' });
       else rows.push({ name: a.label, ok: !!a.ok, detail: a.kind === 'lan' ? `Model node on your network, ${(a.models || []).length} models` : a.ok ? `A key is set (${a.keys} ${a.keys === 1 ? 'key' : 'keys'}). The model test checks it for real.` : 'Offline' });
     }
     return { at: nowIso(), rows };
@@ -787,7 +787,13 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
   const R = (method, path, fn, { owner: needOwner = false } = {}) => ctx.route(method, path, async (req, res, arg) => {
     if (needOwner && !arg.owner) return ctx.json(res, { error: 'Only the owner can do this, from the Network page.' }, 403);
     try { const v = await fn(arg, req, res); if (v !== undefined && !res.writableEnded) ctx.json(res, v); }
-    catch (e) { ctx.json(res, { error: e.status && e.status < 500 || ['offline', 'halted', 'over_cap', 'no_key', 'too_soon'].includes(e.code) ? e.message : e.message === 'fetch failed' || e.code === 'timeout' ? 'The service could not be reached just now. Try again later.' : `Could not finish: ${e.message}`, code: e.code || null }, e.status || (e.code === 'offline' ? 409 : e.code === 'halted' ? 503 : 500)); }
+    catch (e) {
+      // a refusal keeps its own sentence; any other fault is one plain line (the raw text goes to the log only)
+      const own = e.status && e.status < 500 || ['offline', 'halted', 'over_cap', 'no_key', 'too_soon'].includes(e.code);
+      if (!own) ctx.log('route', method, path, e?.stack || e);
+      const line = own ? e.message : e.message === 'fetch failed' || e.code === 'timeout' ? 'The service could not be reached just now. Try again later.' : ctx.plainFailure(e).line;
+      ctx.json(res, { error: line, code: /^[a-z_]+$/.test(String(e.code || '')) ? e.code : null }, e.status || (e.code === 'offline' ? 409 : e.code === 'halted' ? 503 : 500));
+    }
   });
   const jobRoute = (kind, title, fn, { approval = null } = {}) => async ({ body }) => {
     const job = await ctx.jobs.start({ kind, title, input: body || null, run: async (jb) => {
@@ -807,17 +813,19 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
   // O API connection health
   R('GET', '/api-health', () => apiHealth());
   R('POST', '/api-health/check', jobRoute('network.apihealth', 'Check API connections', () => pingApis({ trigger: 'owner' })), { owner: true });
-  R('POST', '/api-health/settings', ({ body }) => { const v = Object.hasOwn(API_EVERY, body?.every) ? body.every : 'off'; ctx.kv.set('api.every', v); return { every: v }; }, { owner: true });
+  // a choice that is not one of the offered ones is refused, never quietly saved as Off
+  const choice = (table, v) => { if (!Object.hasOwn(table, v)) throw bad('Choose one of the offered choices.'); return v; };
+  R('POST', '/api-health/settings', ({ body }) => { const v = choice(API_EVERY, body?.every); ctx.kv.set('api.every', v); return { every: v }; }, { owner: true });
   // P IP tracking
   R('GET', '/ip', () => ipView());
   // Q DNS tracking
   R('GET', '/dns', () => dnsView());
   R('POST', '/dns/:domain/check', ({ params }) => dnsSnapshot(normalizeDomain(params.domain), { trigger: 'owner' }), { owner: true });
-  R('POST', '/dns/settings', ({ body }) => { const v = Object.hasOwn(DNS_EVERY, body?.every) ? body.every : 'off'; ctx.kv.set('dns.every', v); return { every: v }; }, { owner: true });
+  R('POST', '/dns/settings', ({ body }) => { const v = choice(DNS_EVERY, body?.every); ctx.kv.set('dns.every', v); return { every: v }; }, { owner: true });
   // R ASN tracking
   R('GET', '/asn', () => asnView());
   R('POST', '/asn/refresh', jobRoute('network.asn', 'Refresh network operators', () => refreshAsn({ trigger: 'owner' })), { owner: true });
-  R('POST', '/asn/settings', ({ body }) => { const v = Object.hasOwn(ASN_EVERY, body?.every) ? body.every : 'off'; ctx.kv.set('asn.every', v); return { every: v }; }, { owner: true });
+  R('POST', '/asn/settings', ({ body }) => { const v = choice(ASN_EVERY, body?.every); ctx.kv.set('asn.every', v); return { every: v }; }, { owner: true });
   // S network issues
   R('GET', '/issues', () => issuesView());
   R('POST', '/issues/:key/mute', ({ params, body }) => { const key = String(params.key); if (!ctx.db.get('SELECT 1 AS x FROM m_network_issues WHERE key = ?', key)) throw bad('No such issue.', 404); ctx.db.run('UPDATE m_network_issues SET muted = ? WHERE key = ?', body?.muted ? 1 : 0, key); return issuesView(); }, { owner: true });
@@ -826,7 +834,7 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
   // W registrar history
   R('GET', '/registrar', () => registrarView());
   R('POST', '/registrar/:domain/check', ({ params }) => checkRegistrar(normalizeDomain(params.domain), { trigger: 'owner' }), { owner: true });
-  R('POST', '/registrar/settings', ({ body }) => { const v = body?.every === 'daily' ? 'daily' : 'off'; ctx.kv.set('reg.every', v); return { every: v }; }, { owner: true });
+  R('POST', '/registrar/settings', ({ body }) => { const v = choice({ off: 1, daily: 1 }, body?.every); ctx.kv.set('reg.every', v); return { every: v }; }, { owner: true });
   // X route tracing (owner's button only; no schedule)
   R('GET', '/route', () => routeView());
   R('POST', '/route/trace', ({ body }) => { needNet(); const target = traceTarget(body?.target); return jobRoute('network.route', `Trace the route to ${target}`, (o) => runTrace(target, o))({ body: { target } }); }, { owner: true });
@@ -872,7 +880,7 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
     res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="agent-visits.csv"', 'cache-control': 'no-store' }); res.end('\uFEFF' + body);
   }, { owner: true });
   R('POST', '/visits/clear', () => { ctx.db.run('DELETE FROM m_network_visits'); return { ok: true }; }, { owner: true });
-  R('POST', '/visits/settings', ({ body }) => { const n = Math.max(1, Math.min(365, Math.round(Number(body?.retentionDays) || 30))); ctx.kv.set('visits.retentionDays', n); return { retentionDays: n }; }, { owner: true });
+  R('POST', '/visits/settings', ({ body }) => { const n = Math.round(Number(body?.retentionDays)); if (!(n >= 1 && n <= 365)) throw bad('Keep visits for 1 to 365 days.'); ctx.kv.set('visits.retentionDays', n); return { retentionDays: n }; }, { owner: true });
   // E
   R('POST', '/diagnose', ({ body }) => diagnose({ target: body?.target ? String(body.target) : null }), { owner: true });
   // F
@@ -882,7 +890,7 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
   R('GET', '/devices', () => ({ devices: devices(), lastRead: kv('devices.lastRead', null), every: kv('devices.every', 'off'), phone: !!kv('alerts.phone', false), subnets: interfaces().filter(i => i.family === 'IPv4' && i.private).map(i => i.cidr).filter(Boolean) }));
   R('POST', '/devices/read', () => readDevices(), { owner: true });
   R('PATCH', '/devices/:mac', ({ params, body }) => { const d = ctx.db.get('SELECT * FROM m_network_devices WHERE mac = ?', String(params.mac).toLowerCase()); if (!d) throw bad('No such device.', 404); if (body?.name != null) ctx.db.run('UPDATE m_network_devices SET name = ? WHERE mac = ?', String(body.name).replace(/[\u0000-\u001f]/g, '').trim().slice(0, 60) || null, d.mac); if (body?.known != null) ctx.db.run('UPDATE m_network_devices SET known = ? WHERE mac = ?', body.known ? 1 : 0, d.mac); return { devices: devices() }; }, { owner: true });
-  R('POST', '/devices/settings', ({ body }) => { if (body?.every != null) ctx.kv.set('devices.every', body.every === 'hourly' ? 'hourly' : 'off'); if (body?.phone != null) ctx.kv.set('alerts.phone', !!body.phone); return { every: kv('devices.every', 'off'), phone: !!kv('alerts.phone', false) }; }, { owner: true });
+  R('POST', '/devices/settings', ({ body }) => { if (body?.every != null) ctx.kv.set('devices.every', choice({ off: 1, hourly: 1 }, body.every)); if (body?.phone != null) ctx.kv.set('alerts.phone', !!body.phone); return { every: kv('devices.every', 'off'), phone: !!kv('alerts.phone', false) }; }, { owner: true });
   // H
   R('GET', '/domains', () => ({ domains: ctx.db.all('SELECT * FROM m_network_domains ORDER BY added').map(domainView) }));
   R('POST', '/domains', ({ body }) => {

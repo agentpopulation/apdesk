@@ -135,3 +135,13 @@ test('the single key slot replaces the key in use: the new key is handed out fir
     assert.equal(s.keys.get('tavily'), 'tvly-old-bad-key-0001');
   } finally { s.close(); }
 });
+
+test('a service no part of the desk uses yet is marked as not built, so a page can leave it out', async () => {
+  const t = store();
+  try {
+    const list = t.keys.list();
+    const notBuilt = list.filter(s => s.built === false).map(s => s.id).sort();
+    assert.deepEqual(notBuilt, ['assemblyai', 'cartesia', 'deepgram']);
+    assert.ok(list.find(s => s.id === 'serper').built && list.find(s => s.id === 'elevenlabs').built);
+  } finally { await t.close(); }
+});

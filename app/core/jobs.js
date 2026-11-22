@@ -58,7 +58,7 @@ export class Jobs {
       } catch (e) {
         if (signal.aborted || e?.code === 'aborted' || e?.code === 'halted' || e?.name === 'AbortError') this.update(id, { status: 'stopped', detail: 'Stopped', finished: now() });
         else { this.log('job failed', kind, e?.message); this.update(id, { status: 'failed', error: String(e?.message || e), detail: 'Failed', finished: now() }); }
-      } finally { this.running.delete(id); try { this.onEnd?.(id); } catch {} }
+      } finally { this.running.delete(id); signal.release?.(); try { this.onEnd?.(id); } catch {} }   // the job is over: Panic lets go of it
     })();
     this.running.set(id, { ac, promise });
     this.events.emit('job', this.get(id));

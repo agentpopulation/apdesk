@@ -25,7 +25,7 @@ export const ACTION_WORDS = {
 };
 export const RULE_WORDS = {
   allow: 'Goes ahead', ask: 'Asks you', once: 'Asks once per job', folder: 'Asks once per folder', visited: 'Goes ahead on sites already visited, else asks',
-  limit: 'Goes ahead within your limits while Payments is on, else asks',
+  limit: 'Goes ahead within your limits while Payments is on, else asks. With no limits set for your currency, every spend asks and paid model calls are off',
 };
 /** What the door does beyond the table; shown as read-only notes. */
 export const NOTES = [

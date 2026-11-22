@@ -94,6 +94,10 @@ export class Storage {
 
 const SQL_FORBIDDEN = new Set(['secrets', 'settings', 'approvals', 'activity', 'kv', 'migrations', 'modules']);
 const SQL_READ_ONLY = new Set(['agents', 'jobs', 'calls']);
+/** Another module's tables (m_<id>_...): never written by a module that is not their own. Read only where a shipped module
+ *  depends on it today, until the owner of the table offers the same through its exposed API. */
+const OTHER_MODULE_READS = {};   // none: a module asks another for its data through ctx.modules.api(id)
+const othersTable = (table, moduleId) => table.startsWith('m_') && !table.startsWith('m_' + String(moduleId).toLowerCase() + '_');
 const stripSql = (sql) => String(sql).replace(/--[^\n]*/g, ' ').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/'(?:[^']|'')*'/g, "''").replace(/["`\[\]]/g, ' ').toLowerCase();
 /** Split a script into its statements at top-level semicolons (quotes and comments respected). */
 export function splitSql(sql) {
@@ -128,9 +132,16 @@ export function checkModuleStatement(stmt, moduleId = 'module', db = null) {
   if (/^\s*pragma\b/.test(bare) && !/^\s*pragma\s+(table_info|table_xinfo|index_list|index_info|foreign_key_list|user_version|page_count|page_size|freelist_count)\b/.test(bare)) refuse('pragma');
   if (/^\s*create\s+(temp\s+|temporary\s+)?(trigger|view)\b/.test(bare)) refuse('triggers and views are not available to modules');
   const at = /\b(?:from|join|into|update(?:\s+or\s+[a-z]+)?|table|on|references)\s+(?:if\s+(?:not\s+)?exists\s+)?(?:(?:main|temp)\s*\.\s*)?([a-z_][a-z0-9_]*)/g; let m;
+  const reads = /^\s*(select|with|explain)\b/.test(bare);
+  const otherTable = (name, writes) => {
+    if (!othersTable(name, moduleId)) return;
+    if (writes) refuse(`table ${name} belongs to another module`);
+    if (!OTHER_MODULE_READS[moduleId]?.has(name)) refuse(`table ${name} belongs to another module`);
+  };
   while ((m = at.exec(bare))) {
     if (SQL_FORBIDDEN.has(m[1])) refuse(`table ${m[1]}`);
-    if (SQL_READ_ONLY.has(m[1]) && !/^\s*(select|with|explain)\b/.test(bare)) refuse(`table ${m[1]} is read-only`);
+    if (SQL_READ_ONLY.has(m[1]) && !reads) refuse(`table ${m[1]} is read-only`);
+    otherTable(m[1], !reads);
   }
   if (db) {
     let ops = null; try { ops = db.prepare('EXPLAIN ' + stmt).all(); } catch { ops = null; }   // a syntax error surfaces on the real call
@@ -142,6 +153,7 @@ export function checkModuleStatement(stmt, moduleId = 'module', db = null) {
         const name = root != null ? roots.get(root) : null; if (!name) continue;
         if (SQL_FORBIDDEN.has(name)) refuse(`table ${name}`);
         if (SQL_READ_ONLY.has(name) && op.opcode !== 'OpenRead' && op.opcode !== 'ReopenIdx') refuse(`table ${name} is read-only`);
+        otherTable(name, op.opcode !== 'OpenRead' && op.opcode !== 'ReopenIdx');
       }
     }
   }

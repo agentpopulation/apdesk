@@ -2,9 +2,15 @@
 // These routes need the session token that the shell page carries; agents and modules never see it.
 import { SETTINGS_TOKEN } from './approval-door.js';
 import { sendJson } from './modules.js';
+import { checkPlace, SPEND_KEYS } from './settings.js';
+import { isLocalAddress, LOCAL_WORDS } from './offline.js';
+import { PAID_OFF } from './model-door.js';
 
 const OWNER_ONLY_PREFIX = ['security.', 'spend.', 'openrouter.', 'update.'];
-const PLAIN_KEYS = new Set(['theme', 'role', 'onboarded', 'online', 'ownerName', 'appName', 'companyName', 'business.about', 'notifications', 'country', 'currency', 'timeZone', 'locale', 'router.enabled', 'router.baseUrl', 'router.freeOnly', 'router.builtin', 'router.model', 'router.apiKey', 'router.upstreams', 'ollama.baseUrl', 'ollama.model', 'model.defaultChain', 'network.lanNodes', 'menuPosition', 'textSize', 'motion', 'countries', 'city', 'startWithWindows', 'notifications']);
+// Only settings something on the desk reads. A key that is not here (or a ui.* or provider.<id>.model key) is refused with
+// a plain reason, so nothing is stored that looks like a setting and does nothing.
+const PLAIN_KEYS = new Set(['theme', 'role', 'onboarded', 'online', 'ownerName', 'appName', 'companyName', 'business.about', 'notifications', 'country', 'currency', 'timeZone', 'locale', 'router.enabled', 'router.baseUrl', 'router.builtin', 'router.model', 'router.apiKey', 'router.upstreams', 'ollama.baseUrl', 'ollama.model', 'model.defaultChain', 'network.lanNodes', 'city']);
+const PLACE = new Set(['country', 'currency', 'timeZone', 'locale']);
 
 export function settingsRoutes(core, sessionOk) {
   const { settings, approval } = core;
@@ -55,14 +61,33 @@ export function settingsRoutes(core, sessionOk) {
     },
     'GET /api/settings': (req, res) => sendJson(res, publicSettings(settings)),
     'POST /api/settings': (req, res, { body }) => {
-      const changed = {};
-      for (let [k, v] of Object.entries(body || {})) {
+      // every key is checked first: one that is refused saves nothing, and the answer says why in plain words
+      const take = {};
+      for (let [k, v] of Object.entries(body && typeof body === 'object' ? body : {})) {
         if (OWNER_ONLY_PREFIX.some(p => k.startsWith(p))) continue;        // these have their own guarded routes
+        if (!(PLAIN_KEYS.has(k) || /^provider\.[a-z]+\.model$/.test(k) || /^ui\.[\w.-]+$/.test(k))) return sendJson(res, { error: `"${String(k).slice(0, 40)}" is not a setting on this desk, so nothing was saved.` }, 400);
+        if (settings.isHouseKey?.(k)) return sendJson(res, { error: k === 'online' ? 'Online and offline are set for the whole desk, by the keeper.' : 'The local model addresses are set for the whole PC, on the keeper\'s own desk. Nothing was saved.' }, 403);
         if (k === 'business.about') v = String(v ?? '').trim().slice(0, 600);   // the owner's own words about his business, capped
-        if (PLAIN_KEYS.has(k) || /^provider\.[a-z]+\.model$/.test(k) || k.startsWith('ui.')) { settings.set(k, v); changed[k] = v; }
+        if (PLACE.has(k)) { const c = checkPlace(k, v); if (!c.ok) return sendJson(res, { error: c.reason }, 400); v = c.value; }
+        take[k] = v;
       }
+      // a new currency: limits the owner set in the old one would mean something else now, so they are cleared (a payment
+      // asks every time, paid model calls are off) until he sets them again; limits he never set follow the new currency's usual ones
+      let notice = null;
+      // (limits that are already cleared stay as they are: nothing to change, log or tell)
+      if ('currency' in take && take.currency !== settings.get('currency') && SPEND_KEYS.some(k => settings.stored(k) && Number(settings.get(k)) > 0)) {
+        for (const k of SPEND_KEYS) settings.set(k, 0);
+        approval.activity({ action: 'spend.limits', title: 'Spend limits cleared: the currency changed', how: 'owner' });
+        notice = `Your spend limits were set in ${settings.get('currency')}, so they are cleared for ${take.currency}: ${PAID_OFF}`;
+      }
+      // a model address that is not on this PC or the owner's network is saved, but Offline does not call it: say so now
+      const outside = [take['ollama.baseUrl'], ...(Array.isArray(take['network.lanNodes']) ? take['network.lanNodes'].map(n => n && n.baseUrl) : [])]
+        .filter(u => typeof u === 'string' && u && !isLocalAddress(u)).map(u => { try { return new URL(u).hostname; } catch { return null; } }).filter(Boolean);
+      if (outside.length) notice = [notice, `Saved. While the desk is offline, ${[...new Set(outside)].join(' and ')} is not called, because it is not on this PC or your own network. ${LOCAL_WORDS}`].filter(Boolean).join(' ');
+      const changed = {};
+      for (const [k, v] of Object.entries(take)) { settings.set(k, v); changed[k] = v; }
       core.events.emit('settings', changed);
-      sendJson(res, { ok: true, changed, settings: publicSettings(settings) });
+      sendJson(res, { ok: true, changed, settings: publicSettings(settings), ...(notice ? { notice } : {}) });
     },
     'POST /api/settings/security': (req, res, { body }) => {
       if (!sessionOk(req)) return sendJson(res, { error: 'The security level changes only in Settings on this desk.' }, 403);
@@ -77,8 +102,17 @@ export function settingsRoutes(core, sessionOk) {
     // keeper-gated route (paid-models) and is not flipped here.
     'POST /api/settings/spend': (req, res, { body }) => {
       if (!sessionOk(req)) return sendJson(res, { error: 'Spend limits change only in Settings on this desk.' }, 403);
-      for (const k of ['perItem', 'perDay', 'perMonth']) if (body?.[k] != null && Number(body[k]) >= 0) settings.set('spend.' + k, Math.round(Number(body[k])));
-      approval.activity({ action: 'spend.limits', title: 'Spend limits changed', how: 'owner' });
+      const next = {};
+      for (const k of ['perItem', 'perDay', 'perMonth']) {
+        if (body?.[k] == null) continue;
+        const n = Number(body[k]);
+        if (!Number.isFinite(n) || n < 0 || (typeof body[k] !== 'number' && typeof body[k] !== 'string')) return sendJson(res, { error: 'A spend limit is an amount of 0 or more. Nothing was changed.' }, 400);
+        next[k] = Math.round(n);
+      }
+      // saved as the owner's own (so a later change of currency knows he set them); logged only when an amount moved
+      const moved = Object.entries(next).filter(([k, v]) => settings.get('spend.' + k) !== v);
+      for (const [k, v] of Object.entries(next)) settings.set('spend.' + k, v);
+      if (moved.length) approval.activity({ action: 'spend.limits', title: 'Spend limits changed', how: 'owner' });
       sendJson(res, approval.state());
     },
     // The paid switch beside the keys (Models) and in Settings › Payments and spend: one setting, one guarded route.

@@ -150,7 +150,7 @@ test('local engine: the Models page engine card and the first-start box list eve
   assert.match(card, /needs about \$\{c\.needsGb\} GB/); assert.match(card, /ui\.confirm\('This model needs more memory than this PC has\. It may be very slow or not start\.'/);
   assert.match(ui, /plan\.freeNote/); assert.match(ui, /plan\.warning/); assert.match(ui, /memoryLine/);
   const shell = fs.readFileSync(path.join(HERE, '..', '..', 'app', 'ui', 'shell.js'), 'utf8');
-  const box = shell.slice(shell.indexOf('function localModelBox()'), shell.indexOf('async function firstStep('));
+  const box = shell.slice(shell.indexOf('function localModelBox('), shell.indexOf('async function firstStep('));
   assert.ok(!/disabled: !c\.fits/.test(box), 'no radio is disabled for not fitting');
   assert.match(box, /'Open Models'/); assert.match(box, /plan\.warning/); assert.match(box, /plan\.freeNote/); assert.match(box, /list\.hidden = false/);
 });

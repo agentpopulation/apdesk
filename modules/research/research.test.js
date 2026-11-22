@@ -371,3 +371,33 @@ test('a conflict needs the same thing: same unit, the same subject words and the
   assert.equal(sameThing('Commercial modules reach 24% efficiency.', 'Laboratory cells reach 26.7% efficiency.'), false, 'a different qualifier');
   assert.equal(sameThing('The record was 33.9% in 2024.', 'The record was 35.5% in 2026.'), false, 'different years');
 });
+
+test('the report date follows the owner\'s style and zone, and a value the computer does not accept never stops the report', async () => {
+  const { reportDate, count } = await import('./deep.js');
+  const at = new Date('2026-11-22T20:30:00Z');
+  assert.equal(reportDate({ locale: 'en-US', timeZone: 'UTC' }, at), 'November 22, 2026');
+  assert.equal(reportDate({ locale: 'en-GB', timeZone: 'UTC' }, at), '22 November 2026');
+  assert.equal(reportDate({ locale: 'en_GB', timeZone: 'Asia/Kolkata' }, at), '23 November 2026', 'the day in the owner\'s zone, an underscore read as a hyphen');
+  assert.match(reportDate({ locale: 'xx_bad', timeZone: 'Mars/Base' }, at), /2026/);
+  assert.equal(count(1, 'source'), '1 source'); assert.equal(count(2, 'page'), '2 pages'); assert.equal(count(0, 'result'), '0 results');
+});
+
+test('a raw fault in deep research is kept out of the report and the chat card; the swarm size is Research\'s own setting', async () => {
+  const t = await testDesk({ modules: ['search', 'research'] });
+  try {
+    const fsp = await import('node:fs/promises');
+    let fsErr = null; try { await fsp.readFile('/nope/secret/path.txt'); } catch (e) { fsErr = e; }
+    const update = t.core.jobs.update.bind(t.core.jobs); let first = true;
+    t.core.jobs.update = (id, patch) => { if (first && patch.progress !== undefined) { first = false; throw fsErr; } return update(id, patch); };   // the first progress step fails
+    const research = t.core.modules.api('research');
+    const job = await research.deep({ question: 'test question' });
+    const j = await t.core.jobs.wait(job.id, 30000);
+    assert.equal(j.status, 'failed');
+    const rep = research.report(job.reportId);
+    assert.equal(rep.error, 'Something went wrong on this PC. The details are in the desk\'s log.');
+    assert.doesNotMatch(JSON.stringify(rep), /ENOENT|nope\/secret/);
+    assert.equal((await t.call('/api/m/research/swarm-size')).json.atOnce, 4);
+    t.core.storage.run("INSERT OR REPLACE INTO kv (ns, key, value) VALUES ('m:research', 'swarmConcurrency', '6')");
+    assert.equal((await t.call('/api/m/research/swarm-size')).json.atOnce, 6);
+  } finally { await t.close(); }
+});

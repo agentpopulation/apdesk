@@ -6,6 +6,11 @@ import { cleanReply, uniqueOutputs, previewText, stepChips, footTag, waitLine, h
 const EVERYONE_LINE = 'Everyone always holds all your agents. To talk to fewer, make a new group.';
 const COORDINATOR_LINE = 'The Coordinator is in every group: it sums up';
 const WHO_ANSWERS = [['everyone', 'Everyone, then a summary'], ['coordinator', 'The Coordinator']];
+// auto-approve, in plain words: what it approves (every ask but these), what it never does, and for how long
+const AUTO_WHAT = 'While it is on, the desk says yes for you whenever an agent would ask you first: to save or delete a file, run a command, use the browser, post to a site, log in, change your calendar, or spend within your limits.';
+const AUTO_NEVER = 'It never sends anything to a person, never installs anything, and never spends more than your limits. Press the chip again to switch it off.';
+const AUTO_FOR = [[15, '15 minutes'], [60, '1 hour'], ['today', 'Until midnight']];
+const AUTO_ON = { 15: 'Auto-approve is on for 15 minutes.', 60: 'Auto-approve is on for 1 hour.', today: 'Auto-approve is on until midnight.' };
 // the rating thumbs: outlines drawn here, dim at rest (one path, turned over for "poor")
 const THUMB = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 11v9H4v-9z"/><path d="M7 11l4-7c1.5 0 2.5 1.2 2.2 2.7L12.7 9H19a2 2 0 0 1 2 2.4l-1.3 6.5A2 2 0 0 1 17.7 20H7"/></svg>';
 
@@ -99,6 +104,8 @@ function css() {
 .chatv .msg .who .nm2{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .chatv .msg .rec{font-size:11.5px;color:var(--dim);margin-top:4px;overflow-wrap:anywhere}
 .chatv .rail .who-t .agav{width:28px;height:28px;border-radius:9px;font-size:11px}
+/* a narrow rail: the name stays under each picture, so three agents that start with C read apart */
+@media (max-width:860px){.chatv .rail .who-t{flex-direction:column;gap:2px;padding:5px 1px}.chatv .rail .who-t .nm{display:block;max-width:100%;font-size:10px;line-height:1.15;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;flex:none}.chatv .rail .who-t .nm small{display:none}}
 /* the drawer's own close button, only where the drawer covers the page */
 .chatv .panel-close{display:none}
 .chatv .who-answers select{display:block;width:100%;max-width:100%;margin:2px 0 8px}
@@ -228,7 +235,7 @@ async function render(el, ui, route) {
 
   // ---------- rail
   const paintRail = () => {
-    const row = (c, name, sub, cls = '') => h('button', { class: 'who-t' + (cls ? ' ' + cls : ''), type: 'button', 'aria-current': c && chat && c.id === chat.id ? 'true' : null, 'data-c': c?.id, 'data-agent-id': c.members?.length === 1 ? c.members[0] : null, onclick: () => open(c.id) },
+    const row = (c, name, sub, cls = '') => h('button', { class: 'who-t' + (cls ? ' ' + cls : ''), type: 'button', title: name, 'aria-label': name, 'aria-current': c && chat && c.id === chat.id ? 'true' : null, 'data-c': c?.id, 'data-agent-id': c.members?.length === 1 ? c.members[0] : null, onclick: () => open(c.id) },
       cls.includes('rc') ? null : c.members?.length === 1 ? avatarOf(c.members[0]) : h('span', { class: 'av' + (c.kind === 'group' || c.everyone ? ' g' : '') }, initials(name)),
       h('span', { class: 'nm' }, name, sub ? h('small', null, sub) : null));
     // the starting rooms, then every group the owner made; a chat with one agent he made is under Recent
@@ -236,12 +243,12 @@ async function render(el, ui, route) {
     const agents = ui.state.agents.map(a => chats.find(c => c.id === 'dm-' + a.id) || { id: 'dm-' + a.id, members: [a.id], kind: 'direct', last: '' });
     const recent = chats.filter(c => !c.seeded && c.members.length <= 1).slice(0, 8);
     rail.replaceChildren(...[
-      h('button', { class: 'who-t', type: 'button', onclick: newChat }, h('span', { class: 'av g' }, '+'), h('span', { class: 'nm' }, 'New chat')),
-      h('h6', null, 'Groups'), ...groups.map(c => row(c, chatTitle(c), previewText(c.last) || `${c.members.length} agents`)),
+      h('button', { class: 'who-t', type: 'button', title: 'New chat', 'aria-label': 'New chat', onclick: newChat }, h('span', { class: 'av g' }, '+'), h('span', { class: 'nm' }, 'New chat')),
+      h('h6', null, 'Groups'), ...groups.map(c => row(c, chatTitle(c), previewText(c.last) || ui.plural(c.members.length, 'agent'))),
       h('h6', null, 'Agents'), ...agents.map(c => row(c, agentName(c.members[0]), railLine(c.last, ui.agent(c.members[0])?.role || ''))),
       recent.length ? h('h6', { class: 'rc' }, 'Recent') : null, ...recent.map(c => row(c, chatTitle(c), null, 'rc')),
       h('span', { class: 'grow' }),
-      h('button', { class: 'who-t', type: 'button', onclick: () => ui.go('settings') }, h('span', { class: 'av g' }, 'S'), h('span', { class: 'nm' }, 'Settings'))].filter(Boolean));
+      h('button', { class: 'who-t', type: 'button', title: 'Settings', 'aria-label': 'Settings', onclick: () => ui.go('settings') }, h('span', { class: 'av g' }, 'S'), h('span', { class: 'nm' }, 'Settings'))].filter(Boolean));
   };
   let deskStarted = null;   // has one exchange finished on this desk (any chat)? Before it, the row above the box shows the two starters
   async function loadChats() {
@@ -428,7 +435,7 @@ async function render(el, ui, route) {
         }
         case 'sources': return h('div', { class: 'card' }, h('h6', { style: { margin: '0 0 4px' } }, 'Sources'), h('ol', { style: { margin: 0, paddingLeft: '20px' } }, (c.items || []).map(s => h('li', null, s.url ? h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer' }, s.title || hostOf(s.url)) : s.title))));
         case 'report': return h('div', { class: 'card' },
-          h('div', { class: 'row' }, h('b', null, c.title || 'Report'), (c.sources || []).length ? pill(`${c.sources.length} sources`) : null, h('span', { class: 'grow' }),
+          h('div', { class: 'row' }, h('b', null, c.title || 'Report'), (c.sources || []).length ? pill(`${c.sources.length} ${c.sources.length === 1 ? 'source' : 'sources'}`) : null, h('span', { class: 'grow' }),
             c.go || c.path ? btn('Open', { kind: 'sm', onClick: () => { if (c.go) location.hash = c.go; else openFile(c.path); } }) : null),
           c.summary ? h('div', { style: { marginTop: '6px' } }, md(ui, c.summary)) : null);
         case 'actions': return h('div', { class: 'act' }, actionBtns(c.actions));
@@ -532,9 +539,11 @@ async function render(el, ui, route) {
     const net = h('button', { class: 'mini', id: 'net', type: 'button', title: 'Online or offline. Offline uses only models on this PC.', onclick: async () => { try { await ui.setOnline(!online); paintUnder(); } catch (e) { toast(e.message, 'err'); } } }, h('i', { class: 'dot' + (online ? ' on' : '') }), h('span', null, online ? 'Online' : 'Offline'));
     const mdl = h('button', { class: 'mini', id: 'mdl-pick', type: 'button', title: 'The model that will answer. Change it in Models.', onclick: () => ui.go('models') }, '…');
     const lvl = h('button', { class: 'mini', id: 'lvl-chip', type: 'button', title: 'Security level. Change it in Settings › Security.', onclick: () => ui.go('settings', 'security') }, cap(sec.level || 'open'));
-    const auto = h('button', { class: 'mini', id: 'auto', type: 'button', 'aria-pressed': String(!!until), title: 'Approve asks by itself for a while (never sending to a person, never spending over your limits)', onclick: async () => {
-      const next = !until ? 15 : mins <= 15 ? 60 : mins <= 60 ? 'today' : 0;
-      try { await ui.setAutoApprove(next); paintUnder(); } catch (e) { toast(e.message, 'err'); }
+    // Off: one small dialog says what is approved without asking and for how long, with Cancel in focus. On: one press ends it.
+    const auto = h('button', { class: 'mini', id: 'auto', type: 'button', 'aria-pressed': String(!!until), title: until ? 'Auto-approve is on. Press to switch it off.' : 'Approve asks by itself for a while (never sending to a person, never spending over your limits)', onclick: async () => {
+      const next = until ? 0 : await askAutoApprove();
+      if (next == null) return;
+      try { await ui.setAutoApprove(next); paintUnder(); toast(next ? AUTO_ON[next] : 'Auto-approve is off. The desk asks you again.', 'ok'); } catch (e) { toast(e.message, 'err'); }
     } }, until ? (mins > 60 ? 'Auto-approve · today' : `Auto-approve · ${mins} min`) : 'Auto-approve off');
     const attach = h('button', { class: 'mini', type: 'button', title: 'Add a file to this chat', onclick: () => fileIn.click() }, 'Attach');
     const add = h('a', { class: 'mini', id: 'mdl-add', href: '#/models', hidden: true, title: 'Pick a model, or add an API key, in Models' }, 'Select model / Add API');
@@ -549,6 +558,17 @@ async function render(el, ui, route) {
       const own = (a.resolved?.whenOnline || a.resolved?.chain || []).some(c => !['router', 'ollama'].includes(c.provider) || (c.provider === 'ollama' && c.model)) || !!ui.state.settings['ollama.model'];
       add.hidden = own || deskStarted === false;
     } catch { mdl.textContent = 'Models'; }
+  }
+  /** How long auto-approve runs, asked once when it is switched on: 15, 60, 'today', or null when he cancels. */
+  function askAutoApprove() {
+    return new Promise((resolve) => {
+      let picked = null;
+      ui.modal({ title: 'Approve by itself for a while?', body: h('div', { class: 'stack', style: { gap: '8px' } },
+        h('p', { class: 'sub', style: { margin: 0 } }, AUTO_WHAT),
+        h('p', { class: 'sub', style: { margin: 0 } }, AUTO_NEVER)),
+      actions: [{ label: 'Cancel' }, ...AUTO_FOR.map(([v, label], i) => ({ label, kind: i ? 'ghost' : '', onClick: () => { picked = v; } }))],
+      onClose: () => resolve(picked) });
+    });
   }
   fileIn.onchange = async () => {
     for (const f of [...fileIn.files]) {
@@ -580,20 +600,24 @@ async function render(el, ui, route) {
     const seen = seenOutputs.get(chat.id); const keys = files.map(f => f.path || f.name);
     seenOutputs.set(chat.id, new Set(keys)); if (seen && keys.some(k => !seen.has(k))) panelNews();
     outputs.replaceChildren(...(files.length ? files.map(f => line(f.name || baseName(f.path), `${m_name(f.by)} · ${fmt.when(f.at)}`, btn('Open', { kind: 'ghost sm', onClick: () => { openFile(f.path); } }))) : [h('p', { class: 'sub' }, 'Files made in this chat show here.')]));
+    drawerMark = typeof ui.savedMark === 'function' ? ui.savedMark() : null;   // the tick with "Saved" for this chat's own options
     const swarm = ui.seg(['1', '5', '20', '50'], Math.max(0, ['1', '5', '20', '50'].indexOf(String(chat.settings.swarm || 5))), (v) => saveSettings({ swarm: Number(v) }));
+    // how many parts are read at once is Research's own setting: said only as Research reports it
+    const swarmWhy = h('span', null, 'Parts a big research job is split into.');
+    api('m/research/swarm-size').then((r) => { if (Number(r?.atOnce) > 0) swarmWhy.textContent = `Parts a big research job is split into. Up to ${r.atOnce} are read at once.`; }).catch(() => {});
     drawerBody.replaceChildren(...[
       h('div', { style: { textAlign: 'center', padding: '6px 0' } }, h('span', { class: 'av big', style: { margin: '0 auto 6px' } }, initials(name)), h('b', null, name)),
       h('div', { class: 'chips', style: { justifyContent: 'center', margin: '4px 0' } }, memberPills),
       h('h6', { style: { marginLeft: 0 } }, 'Suggested'),
-      line('Create a routine', 'Run this on a timetable', btn('Add', { kind: 'ghost sm', onClick: () => panelPrefix('routine') })),
+      line('Create a schedule', 'Run this on a timetable', btn('Add', { kind: 'ghost sm', onClick: () => panelPrefix('routine') })),
       line('Turn into a task', 'Keeps working after you leave', btn('Add', { kind: 'ghost sm', onClick: panelTask })),
       chat.id === 'everyone' ? h('p', { class: 'sub', 'data-everyone': '' }, EVERYONE_LINE) : line('Add an agent', 'Or change who is in this chat', btn('Add', { kind: 'ghost sm', onClick: editMembers })),
       h('h6', { style: { marginLeft: 0 } }, 'Background tasks'), tasks,
       h('h6', { style: { marginLeft: 0 } }, 'Outputs'), outputs,
-      h('h6', { style: { marginLeft: 0 } }, 'This chat'),
+      h('h6', { style: { marginLeft: 0 } }, 'This chat', drawerMark ? [' ', drawerMark] : null),
       line('Deep research in chat', 'A question that needs facts is searched and read here, part by part', sw(chat.settings.deepResearch !== false, 'Deep research in chat', (v) => saveSettings({ deepResearch: v }))),
       chat.members.length > 1 ? h('div', { class: 'who-answers' }, line('Who answers', 'Everyone answering takes more model calls and is slower on free models.'), whoPick()) : null,
-      line('Swarm size', 'Agents in parallel', swarm),
+      line('Swarm size', swarmWhy, swarm),
       line('Remember this chat', 'Agents may learn from it', sw(chat.settings.remember !== false, 'Remember this chat', (v) => saveSettings({ remember: v }))),
       h('div', { class: 'row', style: { marginTop: '8px' } }, btn('Rename', { kind: 'ghost sm', onClick: rename }), btn(chat.seeded ? 'Clear messages' : 'Delete chat', { kind: 'ghost sm', onClick: remove }))].filter(Boolean));
     try {
@@ -608,7 +632,13 @@ async function render(el, ui, route) {
     const cur = chat.settings.whoAnswers === 'coordinator' ? 'coordinator' : 'everyone';
     return h('select', { 'aria-label': 'Who answers', 'data-who-answers': '', onchange: (e) => saveSettings({ whoAnswers: e.target.value }) }, WHO_ANSWERS.map(([v, n]) => h('option', { value: v, selected: v === cur }, n)));
   }
-  async function saveSettings(p) { try { chat = { ...chat, ...(await api(API + `chats/${chat.id}`, { method: 'PATCH', body: { settings: p } })) }; } catch (e) { toast(e.message, 'err'); return false; } }
+  let drawerMark = null;
+  /** One of this chat's options: Saving…, then the tick with "Saved"; a save that fails says why and puts the control back. */
+  async function saveSettings(p) {
+    drawerMark?.saving();
+    try { chat = { ...chat, ...(await api(API + `chats/${chat.id}`, { method: 'PATCH', body: { settings: p } })) }; drawerMark?.ok(); return true; }
+    catch (e) { toast(e.message, 'err'); paintDrawer(); return false; }
+  }
   function prefill(t) { input.value = t; input.focus(); paintBtn(); }
   // The side panel's prefixes: with text in the box the prefix goes in front of it; with an empty box the prefix waits there
   // for him to type. Nothing is sent from here.

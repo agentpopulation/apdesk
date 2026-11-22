@@ -54,7 +54,7 @@ try {
   check('the keeper switcher offers Add a person and Settings for people', await f.p.evaluate(() => { const b = [...document.querySelectorAll('#modal button')].map(x => x.textContent); return b.includes('Add a person') && b.includes('Settings for people') && b.includes('Switch person') && b.includes('Lock this window'); }));
   await f.p.screenshot({ path: `${SHOTS}/switcher_keeper_1366x768_light.png` });
   await f.p.locator('#modal').getByRole('button', { name: 'Add a person' }).click(); await wait(300);
-  check('Add a person shows the plain caution about PINs and separate OS accounts', await f.p.evaluate(() => /does not protect your files/.test(document.getElementById('modal').textContent) && /Windows account/.test(document.getElementById('modal').textContent) && /disk encryption/.test(document.getElementById('modal').textContent)));
+  check('Add a person shows the plain caution about PINs and separate OS accounts', await f.p.evaluate(() => /does not protect your files/.test(document.getElementById('modal').textContent) && /Windows account|user account on this/.test(document.getElementById('modal').textContent) && /disk encryption/.test(document.getElementById('modal').textContent)));
   await f.p.screenshot({ path: `${SHOTS}/add_person_1366x768_light.png` });
   await f.p.fill('#modal input[aria-label="Name"]', 'Person B');
   await f.p.click('#modal .picks.emoji .pk >> nth=2');
@@ -85,7 +85,7 @@ try {
   let s = await ctxFor(1366, 768, 'light');
   await s.p.goto(t.base + '/'); await s.p.waitForSelector('#chooser .person'); await wait(200);
   await s.p.getByRole('button', { name: /Person B/ }).click(); await wait(200);
-  check('picking a person with a PIN asks for the PIN', await s.p.evaluate(() => !!document.querySelector('#chooser .pinf') && /Enter your PIN/.test(document.getElementById('chooser').textContent)));
+  check('picking a person with a PIN asks for the PIN', await s.p.evaluate(() => !!document.querySelector('#chooser .pinf') && /Enter your own PIN/.test(document.getElementById('chooser').textContent)));
   for (let i = 0; i < 6; i++) { await s.p.fill('#chooser .pinf', '0000'); await s.p.getByRole('button', { name: 'Open' }).click(); await wait(120); }
   check('after too many wrong tries the PIN prompt shows the wait', await until(() => s.p.evaluate(() => /Wait \d+ seconds/.test(document.querySelector('#chooser .perr')?.textContent || '')), 3000), await s.p.evaluate(() => document.querySelector('#chooser .perr')?.textContent));
   await s.p.screenshot({ path: `${SHOTS}/chooser_pin_wait_1366x768_light.png` });

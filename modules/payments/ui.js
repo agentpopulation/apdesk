@@ -42,6 +42,8 @@ export const settings = {
             ...[
               line('Today', `${fmt.money(s.spentToday, cur)} of ${fmt.money(l.perDay, cur)}`, meter(l.perDay ? s.spentToday / l.perDay : 0, { style: { maxWidth: '220px' } })),
               line('This month', `${fmt.money(s.spentMonth, cur)} of ${fmt.money(l.perMonth, cur)}`, meter(l.perMonth ? s.spentMonth / l.perMonth : 0, { style: { maxWidth: '220px' } })),
+              // a day or month limit of 0 is no limit set: the model door makes no paid call (contracts/MODEL-DOOR.md)
+              l.perDay === 0 || l.perMonth === 0 ? h('p', { class: 'sub', 'data-apd': 'paid-off' }, 'No limits are set, so a payment asks you every time and paid model calls are off until you set limits in Settings › Payments and spend. Free and local models work.') : null,
               unk.calls ? h('p', { class: 'sub', 'data-apd': 'unknown-spend' }, `${unk.calls} call${unk.calls === 1 ? '' : 's'} today had a cost the desk cannot know. About ${fmt.money(unk.minor, cur)} at the providers' list price is counted toward your daily limit for ${unk.calls === 1 ? 'it' : 'them'}, so no limit is passed unseen.`) : null,
             ].filter(Boolean));
           logBox.replaceChildren(table([

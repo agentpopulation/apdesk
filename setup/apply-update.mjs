@@ -40,7 +40,7 @@ function rename(from, to) {
   catch (e) { if (e.code !== 'EXDEV') throw e; fs.cpSync(from, to, { recursive: true, force: true, verbatimSymlinks: true }); fs.rmSync(from, { recursive: true, force: true }); }
 }
 /** Windows: a file another program has open for a moment (a virus scanner, an Explorer window) is tried again. */
-function retrying(move) {
+export function retrying(move) {
   return (from, to) => {
     for (let i = 0; ; i++) {
       try { return move(from, to); }

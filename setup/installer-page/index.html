@@ -30,7 +30,7 @@
           <input id="folder" name="folder" type="text" spellcheck="false" autocomplete="off" aria-describedby="folder-rule folder-note">
           <button type="button" class="quiet" id="browse">Browse…</button>
         </div>
-        <p class="hint" id="folder-rule">Pick an empty folder or a new one. AP Desk keeps only its own files there, so removing it later never touches yours.</p>
+        <p class="hint" id="folder-rule">Pick an empty folder or a new one, or the folder AP Desk was in before. AP Desk keeps only its own files there, so removing it later never touches yours.</p>
         <p class="note" id="folder-note" role="status" aria-live="polite"></p>
         <div class="warn" id="warn" hidden>
           <p id="warn-text"></p>
@@ -69,6 +69,7 @@
     <div class="big-tick" aria-hidden="true"></div>
     <h1 id="ready-title">AP Desk is ready</h1>
     <p class="lead" id="ready-where"></p>
+    <p class="note ok" id="ready-kept" hidden></p>
     <p class="note" id="ready-problems" hidden>Some shortcuts could not be made. Run install.bat again to make them.</p>
     <button type="button" class="main" id="open">Open AP Desk</button>
     <p class="note" id="ready-note" role="status" aria-live="polite"></p>

@@ -12,6 +12,7 @@
 import fs from 'node:fs'; import path from 'node:path'; import { fileURLToPath } from 'node:url'; import { spawnSync, spawn } from 'node:child_process';
 import readline from 'node:readline/promises';
 import { DEFAULT_PORT } from './check.mjs';
+import { retrying } from './apply-update.mjs';
 
 export const APP = 'AP Desk';
 export const PUBLISHER = 'AgentPopulation';
@@ -44,9 +45,35 @@ export function checkFolder(folder, { env = process.env, source = HERE } = {}) {
     fs.writeFileSync(probe, 'test'); fs.rmSync(probe);
   } catch { return { problem: 'You cannot write to this folder. Pick a folder inside your own user folder.' }; }
   const installed = fs.existsSync(path.join(folder, 'app', 'server.js'));
-  if (!installed && !same(folder, source) && fs.readdirSync(folder).length) return { problem: 'This folder already has other files in it. Pick an empty folder or a new one, so that removing AP Desk later never touches your own files.' };
+  const kept = !installed && keptData(folder, { source });
+  if (!installed && !kept && !same(folder, source) && fs.readdirSync(folder).length) return { problem: 'This folder already has other files in it. Pick an empty folder or a new one, so that removing AP Desk later never touches your own files.' };
   const sync = ['OneDrive', 'OneDriveCommercial', 'OneDriveConsumer'].map(k => env[k]).filter(Boolean).find(d => same(folder, d) || inside(folder, d));
-  return { installed, warn: sync ? 'This folder is inside OneDrive. A folder that syncs can damage the desk\'s database while the desk is using it.' : null };
+  return { installed, kept, warn: sync ? 'This folder is inside OneDrive. A folder that syncs can damage the desk\'s database while the desk is using it.' : null };
+}
+
+// A folder AP Desk was in: what an uninstall that kept the data leaves (data and backups, with the desk's own files
+// in data), or what an install that stopped half-way leaves (its install log, its .apdesk-new or .apdesk-old folder).
+// Only the desk's own database says "kept": a log or a port file alone can come from any program. An install log counts
+// only when it is this installer's (its first line names AP Desk and the install), and a half-way folder only when
+// everything else in it is the program's own or the kept data.
+const DESK_DBS = ['apd.sqlite', 'desk.sqlite'];
+const ourLog = (f) => { try { return new RegExp(`^\\s*${APP} \\S+ install, `).test(fs.readFileSync(f, 'utf8').slice(0, 400)); } catch { return false; } };
+export const KEPT_NOTE = {
+  kept: 'This folder holds the data AP Desk kept when it was removed. The install keeps it, and the desk opens with your chats, files and settings.',
+  unfinished: 'An earlier install into this folder did not finish. This install completes it, and keeps the data in the folder.',
+};
+export function keptData(folder, { source = HERE } = {}) {
+  let names = []; try { names = fs.readdirSync(folder); } catch { return false; }
+  if (names.includes(STAGE) || names.includes(OLD)) {
+    let program = []; try { program = programEntries(source); } catch {}
+    const ours = new Set([...KEEP, ...program, STAGE, OLD, '.apdesk-write-test'].map(n => n.toLowerCase()));
+    return names.every(n => ours.has(n.toLowerCase())) ? 'unfinished' : false;
+  }
+  if (!names.length || !names.every(n => KEEP.includes(n.toLowerCase()))) return false;
+  let data = []; try { data = fs.readdirSync(path.join(folder, 'data')); } catch { return false; }
+  if (data.some(n => DESK_DBS.includes(n.toLowerCase()))) return 'kept';
+  const log = data.find(n => n.toLowerCase() === 'install.log');
+  return log && ourLog(path.join(folder, 'data', log)) ? 'unfinished' : false;
 }
 
 // ---- commands. Each is { cmd, args, env?, what } so a fake runner can check them and a dry run can print them.
@@ -144,7 +171,7 @@ export const BANNER = [
 // One install. Every outside effect goes through run (commands), say (lines for the user) and ask (questions).
 // The installer page passes answers (desktop, apps, autostart, start, anyway) instead of asking, and step, which
 // hears each named step as it starts: copy, packages, shortcuts, done.
-export async function install({ argv = [], env = process.env, source = HERE, run = realRunner, ask = consoleAsk, say = console.log, isRunning = deskAnswers, answers = null, step = () => {}, banner = true, tick = (t = '.') => { if (process.stdout.isTTY) process.stdout.write(t); } } = {}) {
+export async function install({ argv = [], env = process.env, source = HERE, run = realRunner, ask = consoleAsk, say = console.log, isRunning = deskAnswers, answers = null, step = () => {}, banner = true, files = {}, tick = (t = '.') => { if (process.stdout.isTTY) process.stdout.write(t); } } = {}) {
   const opt = parseArgs(argv); const ver = version(source); const dry = opt.dryRun;
   const exec = async (c) => { if (dry) { say(`  would ${c.what}: ${c.cmd} ${c.args.join(' ')}`); return { code: 0, stdout: '' }; } return await run(c); };
   const q = async (text, def, key) => opt.yes ? def : answers && key in answers ? !!answers[key] : yes(await ask(`${text} ${def ? '[Y/n]' : '[y/N]'} `), def);
@@ -179,6 +206,7 @@ export async function install({ argv = [], env = process.env, source = HERE, run
     if (check.warn) { say('  ' + check.warn); if (!(await q('  Install there anyway?', false, 'anyway'))) { if (opt.folder) return fail('Install stopped.', say); dir = null; continue; } }
     break;
   }
+  if (check.kept) say('  ' + KEPT_NOTE[check.kept]);
   if (check.installed && !same(dir, source)) say('  AP Desk is already in this folder. Only the program files are replaced; data, backups and runtime are not touched.');
   if (check.installed && await isRunning(dir)) return fail('AP Desk is running from this folder. Stop it (Stop AP Desk in the Start menu, or stop.bat), then run install.bat again.', say);
 
@@ -197,7 +225,9 @@ export async function install({ argv = [], env = process.env, source = HERE, run
 
   // 3. the program files
   step('copy'); tell('  Copying the program ...');
-  const copied = copyProgram(source, dir, { dry, say });
+  let copied;
+  try { copied = copyProgram(source, dir, { dry, say, ...files }); }   // files: the copy and move steps, for tests
+  catch (e) { if (!(e instanceof CopyError)) throw e; if (log) try { fs.appendFileSync(log, `  Copy stopped: ${e.detail}\r\n`); } catch {} return failed(e.message); }
   // 4. the packages
   step('packages');
   if (!packagesOk(dry ? source : dir)) {
@@ -257,19 +287,65 @@ function parseArgs(argv) {
 // Copies the program into dir (unless it is already there). data, backups and runtime in dir are never touched; a
 // runtime\node that dir does not have yet is copied from the download, so it needs no second download.
 // The names copied are kept in setup\installed.txt: the uninstaller removes those and nothing else.
-export function copyProgram(source, dir, { dry = false, say = () => {} } = {}) {
+// The new files are copied into dir\.apdesk-new first, and swapped in only when the whole copy is there; the old
+// files wait in dir\.apdesk-old until the swap is done. A copy or swap that fails puts the old files back, so the
+// desk that was there still starts, and the next try starts clean. A file another program holds for a moment
+// (a virus scanner, an open folder window) is tried again a few times.
+export const STAGE = '.apdesk-new';
+export const OLD = '.apdesk-old';
+export function copyProgram(source, dir, { dry = false, say = () => {}, copy = (a, b) => fs.cpSync(a, b, { recursive: true, verbatimSymlinks: true }), move = fs.renameSync } = {}) {
   const names = programEntries(source);
   if (same(source, dir)) { if (!dry) writeList(dir, names); return []; }
-  for (const n of names) {
-    if (dry) { say(`  would copy ${n}`); continue; }
-    fs.rmSync(path.join(dir, n), { recursive: true, force: true });
-    fs.cpSync(path.join(source, n), path.join(dir, n), { recursive: true, verbatimSymlinks: true });
+  if (dry) { for (const n of names) say(`  would copy ${n}`); }
+  else {
+    const mv = retrying(move); const stage = path.join(dir, STAGE); const old = path.join(dir, OLD);
+    try { putBack(dir, mv); fs.rmSync(stage, { recursive: true, force: true }); } catch (e) { throw new CopyError('swap', e); }
+    try { for (const n of names) copy(path.join(source, n), path.join(stage, n)); }
+    catch (e) { try { fs.rmSync(stage, { recursive: true, force: true }); } catch {} throw new CopyError('copy', e); }
+    fs.mkdirSync(old, { recursive: true });
+    const done = [];
+    try {
+      for (const n of names) {
+        const s = { n, old: false };
+        done.push(s);
+        if (fs.existsSync(path.join(dir, n))) { mv(path.join(dir, n), path.join(old, n)); s.old = true; }
+        mv(path.join(stage, n), path.join(dir, n)); s.new = true;
+      }
+    } catch (e) {
+      for (const s of done.reverse()) {
+        try { if (s.new) fs.rmSync(path.join(dir, s.n), { recursive: true, force: true }); } catch {}
+        try { if (s.old) mv(path.join(old, s.n), path.join(dir, s.n)); } catch {}
+      }
+      try { fs.rmSync(stage, { recursive: true, force: true }); } catch {}
+      try { if (!fs.readdirSync(old).length) fs.rmSync(old, { recursive: true, force: true }); } catch {}   // what could not go back waits there for the next try
+      throw new CopyError('swap', e);
+    }
+    for (const x of [stage, old]) { try { fs.rmSync(x, { recursive: true, force: true }); } catch {} }
   }
   if (fs.existsSync(path.join(source, 'runtime', 'node', 'node.exe')) && !fs.existsSync(path.join(dir, 'runtime', 'node'))) {
-    if (dry) say('  would copy runtime\\node'); else fs.cpSync(path.join(source, 'runtime', 'node'), path.join(dir, 'runtime', 'node'), { recursive: true });
+    if (dry) say('  would copy runtime\\node');
+    else { const part = path.join(dir, 'runtime', '.node-new'); fs.rmSync(part, { recursive: true, force: true }); fs.cpSync(path.join(source, 'runtime', 'node'), part, { recursive: true }); fs.renameSync(part, path.join(dir, 'runtime', 'node')); }
   }
   if (!dry) writeList(dir, names);
   return names;
+}
+// Old files an earlier try left in dir\.apdesk-old (the PC stopped in the middle of a swap) go back where they were.
+function putBack(dir, mv) {
+  const old = path.join(dir, OLD);
+  let left = []; try { left = fs.readdirSync(old); } catch { return; }
+  for (const n of left) { if (!fs.existsSync(path.join(dir, n))) mv(path.join(old, n), path.join(dir, n)); }
+  fs.rmSync(old, { recursive: true, force: true });
+}
+// What went wrong, in words for the person installing. The code that Windows gave goes to the install log.
+export class CopyError extends Error {
+  constructor(stage, cause) {
+    const code = cause && cause.code;
+    const why = code === 'ENOSPC' ? 'The disk is full. Free some space'
+      : ['EBUSY', 'EPERM', 'EACCES'].includes(code) ? 'A file in the AP Desk folder is in use by another program, such as a virus scanner or an open folder window. Close folder windows, wait a minute'
+      : 'A file could not be copied';
+    super(`${why}, then try again. ${stage === 'copy' ? 'Nothing in the folder was changed' : 'The program that was there is back in place'}, so a desk that was installed still starts.`);
+    this.detail = `${stage}: ${code || ''} ${cause && cause.message}`.trim();
+  }
 }
 const writeList = (dir, names) => { fs.mkdirSync(path.join(dir, 'setup'), { recursive: true }); fs.writeFileSync(path.join(dir, 'setup', 'installed.txt'), [...new Set([...names, 'node_modules'])].join('\r\n') + '\r\n'); };
 

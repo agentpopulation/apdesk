@@ -101,7 +101,7 @@ export class ServiceKeys {
     return Object.entries(CATALOG.services).map(([id, s]) => {
       const keys = this.keys(id); const first = keys[0];
       const fromEnv = !keys.length && !!this.env[id];
-      return { id, kind: s.kind, name: s.name, signup: s.signup, free: s.free, spends: s.test?.spends || null, hasKey: !!keys.length || fromEnv, enabled: keys.length ? keys.some(k => k.enabled) : fromEnv, fromEnvironment: fromEnv, key: first ? first.key : fromEnv ? mask(this.env[id]) : null, created: first?.created || null, keys };
+      return { id, kind: s.kind, name: s.name, built: s.built !== false, signup: s.signup, free: s.free, spends: s.test?.spends || null, hasKey: !!keys.length || fromEnv, enabled: keys.length ? keys.some(k => k.enabled) : fromEnv, fromEnvironment: fromEnv, key: first ? first.key : fromEnv ? mask(this.env[id]) : null, created: first?.created || null, keys };
     });
   }
   /** What a module that manages keys may do: never read a value. fetch is that module's guarded fetch. */

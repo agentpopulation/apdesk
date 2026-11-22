@@ -77,7 +77,7 @@ export const pages = {
       const checkedFirst = (ls) => [...ls].sort((a, b) => open(a) - open(b));
       const dot = (stage) => h('i', { class: `dot s${S_IDX[stage] ?? 0}`, style: { display: 'inline-block', marginRight: '5px' } });
 
-      const seg = ui.seg(['Pipeline', 'Leads', 'Outreach'], st.mode, (o, i) => { st.mode = i; paint(); });
+      const seg = ui.seg(['Pipeline', 'Table', 'Outreach'], st.mode, (o, i) => { st.mode = i; paint(); });
       const jobLine = h('span', { class: 'sub' });
       const tabs = ui.seg(TABS, st.tab, (o, i) => { st.tab = i; layout(); });
       const leadBar = h('div', { class: 'row', style: { flex: '1 1 auto', minWidth: 0 } }, seg, jobLine, h('span', { class: 'grow' }),
@@ -230,7 +230,7 @@ export const pages = {
       function findDialog() {
         if (ui.state.settings?.online === false) { ui.modal({ title: 'Find leads', body: 'The desk is offline. Finding leads needs the internet.', actions: [{ label: 'Close' }] }); return; }
         if (!st.data.searchOn) { ui.modal({ title: 'Find leads', body: 'Search is switched off, so Closer cannot look on the web. Switch on Search in Settings › Modules, or add a lead by hand.', actions: [{ label: 'Close' }] }); return; }
-        const q = h('textarea', { rows: 3, placeholder: 'For example: companies in Pune that make packaging machines' });
+        const q = h('textarea', { rows: 3, placeholder: 'For example: companies in my city that make packaging machines' });
         const n = h('input', { type: 'number', value: '20', min: '1', max: '50' });
         ui.modal({ title: 'Find leads', body: h('div', { class: 'stack' }, h('label', { class: 'f' }, 'Who are you looking for?', q), h('label', { class: 'f' }, 'How many', n), h('span', { class: 'sub' }, 'Closer searches several ways, reads the pages and keeps only companies a page names. Nothing is sent.')),
           actions: [{ label: 'Cancel' }, { label: 'Start search', kind: '', onClick: async () => { if (!q.value.trim()) return false; try { const r = await api('m/sales/find', { body: { query: q.value.trim(), count: Number(n.value) || 20 } }); if (!r.ok) toast(r.text, 'err'); else { st.job = r.jobId; jobLine.textContent = 'Finding leads…'; } } catch (e) { toast(e.message, 'err'); } } }] });
