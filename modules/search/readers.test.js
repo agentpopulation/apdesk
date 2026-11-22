@@ -22,6 +22,7 @@ async function setup({ reply = null } = {}) {
       return res.end(JSON.stringify({ success: true, data: { markdown: md, html, metadata: { title: 'Heat pumps', statusCode: 200, sourceURL: body.url, url: body.url } } }));
     }
     if (host === 'r.jina.ai') {
+      if (req.headers.authorization === 'Bearer jina-refused-key-12345') { asked.push({ service: 'jina', refused: true }); res.writeHead(401, { 'content-type': 'application/json' }); return res.end('{}'); }
       asked.push({ service: 'jina', url: decodeURIComponent(path.slice(1)), auth: req.headers.authorization || null, robots: req.headers['x-robots-txt'] || null });
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ code: 200, data: { title: 'Heat pumps', url: path.slice(1), content: md } }));
@@ -187,6 +188,18 @@ test('Jina Reader: keyless tier switched on, asks the service to keep to robots.
     assert.ok(asked[0].robots, 'the service is asked to keep to robots.txt');
     const r = await t.call('/api/m/search/readers/test', { body: { id: 'jina' } });
     assert.equal(r.json.ok, true, JSON.stringify(r.json)); assert.equal(asked.at(-1).url, 'https://example.com/');
+  } finally { await done(); }
+});
+
+test('Jina Reader: a refused key is said to the key store, and the next read uses the next key', async () => {
+  const { t, asked, search, done } = await setup();
+  try {
+    t.core.services.add('jina', 'jina-refused-key-12345', 'Old'); t.core.services.add('jina', 'jina-working-key-1234', 'Work');
+    assert.equal((await t.call('/api/m/search/readers', { body: { id: 'jina', on: true } })).status, 200);
+    await assert.rejects(search.read('https://spa9.example/'), (e) => /did not accept the key/.test(e.message));
+    assert.deepEqual(t.core.services.keys('jina').map(k => k.resting), ['refused', null]);
+    const p = await search.read('https://spa10.example/');
+    assert.equal(p.through, 'Jina Reader'); assert.equal(asked.at(-1).auth, 'Bearer jina-working-key-1234');
   } finally { await done(); }
 });
 

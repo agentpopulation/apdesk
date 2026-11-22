@@ -28,6 +28,7 @@ export async function activate(ctx) {
   const offStop = ctx.panic.onStop(() => ({ voice: killAll(mine) }));
 
   const elevenKey = () => (typeof ctx.serviceKey === 'function' ? ctx.serviceKey('elevenlabs') : null);
+  const elevenRefused = (why) => { if (typeof ctx.serviceKeyRefused === 'function') ctx.serviceKeyRefused('elevenlabs', why); };
   /** Which engine the server uses: the owner's choice, else local when found, else ElevenLabs when its key is there. */
   const pick = (kind) => {
     const want = kind === 'listen' ? prefs().dictation : prefs().readAloud; const e = engines();
@@ -49,7 +50,7 @@ export async function activate(ctx) {
       if (!absIn.startsWith(path.resolve(ctx.workspace) + path.sep) || !fs.existsSync(absIn)) throw err('That file is not in the workspace.', 404);
       await hostedOk('a recording', agentId);
       const started = Date.now();
-      const text = await elevenTranscribe({ fetch: (u, i) => ctx.fetch(u, i), key, file: absIn, language: language || prefs().language, signal: ctx.panic.child(signal) });
+      const text = await elevenTranscribe({ fetch: (u, i) => ctx.fetch(u, i), key, file: absIn, language: language || prefs().language, signal: ctx.panic.child(signal), refused: elevenRefused });
       return { text, engine: 'ElevenLabs', model: 'scribe_v1', seconds: (Date.now() - started) / 1000 };
     }
     const e = engines();
@@ -78,7 +79,7 @@ export async function activate(ctx) {
       const out = path.join(voiceDir(), name);
       const d = await ctx.approval.request({ agentId, chatId: chatId || 'voice', action: 'file.write', title: `Write ${name}`, detail: 'Workspace › voice', payload: { path: 'voice/' + name } });
       if (!d.ok) throw err('Writing the audio file was not allowed.', 403);
-      await elevenSpeak({ fetch: (u, i) => ctx.fetch(u, i), key, text: t, out, signal: ctx.panic.child(signal) });
+      await elevenSpeak({ fetch: (u, i) => ctx.fetch(u, i), key, text: t, out, signal: ctx.panic.child(signal), refused: elevenRefused });
       return { path: rel(out), name, seconds: null, engine: 'ElevenLabs', voice: 'ElevenLabs', url: `/api/m/voice/audio/${encodeURIComponent(name)}` };
     }
     const e = engines();

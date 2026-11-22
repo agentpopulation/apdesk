@@ -210,3 +210,13 @@ test('an Ollama model card says where it comes from: the Ollama registry, or the
     assert.match(hf.detail, /From hf\.co\./); assert.doesNotMatch(hf.detail, /registry\.ollama\.ai/);
   } finally { await t.close(); }
 });
+
+test('service cards say plainly what the desk does: a refused or used-up key gives way to the next; no "next desk update"', async () => {
+  const { readFileSync } = await import('node:fs');
+  const ui = readFileSync(new URL('./ui.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(ui, /next desk update/);
+  // search, page reading and voice say a refused or used-up key to the core (ctx.serviceKeyRefused), so this holds for every call
+  assert.match(ui, /When a key is refused or its allowance runs out, the next key is used\./);
+  assert.doesNotMatch(ui, /When a Test finds a key refused/);
+  assert.match(ui, /st\.many \? ui\.h\('p', \{ class: 'mdl-note', 'data-apd': 'several-keys' \}/, 'the several-keys line shows only where several keys work');
+});

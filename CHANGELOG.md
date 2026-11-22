@@ -219,6 +219,10 @@ Everything below was built and tested on Linux after the 0.1.0 release. The Wind
 - Agents can have an avatar: pick one of 24 drawn characters and a colour on the agent's Profile tab, or keep the letter. It shows on the Agents page, the Tracker and beside Closer's notes in Sales, and stays with an agent that is off the team.
 - The agent page is redesigned: a header with the avatar, role and state, and cards for who it is, what it always does, what it is good at and what it did lately.
 - The Computer tab says "<Agent>'s browser starts when it is needed" in place of "is not running", and shows the last screenshot of its last run with the time.
+- The Models page is rebuilt: equal "Active now" cards with the answer time and a speed bar, then one full-width area with tabs, Providers and keys first. The provider you are working on opens in its own tinted panel.
+- A key is tested by itself when you save it and the result shows on its row; the button at the top reads "Test again" once everything has been tested.
+- Search, reading and voice services can hold several labelled keys, each with its own Test; when a key is refused or its allowance runs out, the next key is used. Each key can be marked Free tier, Paid or Not sure.
+- On the Per agent tab every choice shows the saved tick, and a line says each choice is saved as you make it.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

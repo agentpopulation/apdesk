@@ -31,3 +31,16 @@ test('killAll stops only the engines of the set it is given (one set per space)'
   assert.equal(mineB.size, 1, 'the other set still runs');
   assert.equal(killAll(mineB), 1); await b;
 });
+
+test('ElevenLabs: a refused key or a used-up plan is said back, so the key store rests that key and hands out the next', async () => {
+  const { elevenSpeak, elevenTranscribe } = await import('./hosted.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'apd-eleven-')); const file = path.join(dir, 'a.wav'); fs.writeFileSync(file, 'x');
+  try {
+    for (const [status, want] of [[401, 'refused'], [403, 'refused'], [402, 'allowance'], [429, 'allowance'], [500, null]]) {
+      const said = []; const fetch = async () => new Response('{}', { status });
+      await assert.rejects(elevenSpeak({ fetch, key: 'k', text: 'hi', out: path.join(dir, 'o.mp3'), refused: (why) => said.push(why) }));
+      await assert.rejects(elevenTranscribe({ fetch, key: 'k', file, refused: (why) => said.push(why) }));
+      assert.deepEqual(said, want ? [want, want] : [], `HTTP ${status}`);
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

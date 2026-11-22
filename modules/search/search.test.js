@@ -122,6 +122,34 @@ test('search: retried once after a fast curable failure (reset, 5xx, short 429),
   assert.equal(f.attempts[0].note, 'connection reset'); assert.match(f.attempts[0].error, /fetch failed.*read ECONNRESET/);
 });
 
+test('search: a refused or used-up key is said to the key store and the next key answers in the same search', async () => {
+  const t = await testDesk({ modules: ['search'] });
+  const realFetch = globalThis.fetch; const sent = [];
+  const answer = { 'serper-bad-key-0000000': 401, 'serper-spent-key-12345': 429, 'serper-good-key-123456': 200 };
+  globalThis.fetch = async (u, i) => {
+    if (!String(u).startsWith('https://google.serper.dev/')) return realFetch(u, i);
+    const k = i.headers['X-API-KEY']; sent.push(k);
+    return answer[k] === 200 ? Response.json({ organic: [{ title: 'A', link: 'https://a.example/', snippet: 's' }] }) : new Response('{}', { status: answer[k] || 401 });
+  };
+  try {
+    for (const [v, l] of [['serper-bad-key-0000000', 'Old'], ['serper-spent-key-12345', 'Spent'], ['serper-good-key-123456', 'Work']]) t.core.services.add('serper', v, l);
+    const r = await t.core.modules.api('search').searchDetailed('heat pumps', { only: ['serper'] });
+    assert.equal(r.results.length, 1, JSON.stringify(r.attempts));
+    assert.deepEqual(sent, ['serper-bad-key-0000000', 'serper-spent-key-12345', 'serper-good-key-123456'], 'each key once, in order');
+    assert.deepEqual(t.core.services.keys('serper').map(k => k.resting), ['refused', 'allowance', null]);
+    const again = await t.core.modules.api('search').searchDetailed('solar', { only: ['serper'] });
+    assert.equal(again.results.length, 1); assert.equal(sent.at(-1), 'serper-good-key-123456'); assert.equal(sent.length, 4, 'the next search starts with the key that works');
+  } finally { globalThis.fetch = realFetch; await t.close(); }
+});
+test('search chain: one key refused and no other key: said once, not tried again with the same key', async () => {
+  let n = 0; const said = [];
+  const env = { fetch: async () => { n++; return new Response('{}', { status: 403 }); }, secret: () => 'only-key-12345678', refused: (id, why) => said.push([id, why]), searxngUrl: null };
+  const r = await runChain(env, 'q', { count: 8, only: ['brave'], retryWaitMs: 5 });
+  assert.equal(n, 1); assert.deepEqual(said, [['brave', 'refused']]); assert.equal(r.attempts[0].ok, false);
+  said.length = 0; const kw = await runChain({ ...env, fetch: async () => new Response('{}', { status: 432 }) }, 'q', { only: ['tavily'], retryWaitMs: 5 });
+  assert.deepEqual(said, [['tavily', 'allowance']]); assert.equal(kw.attempts[0].ok, false);
+});
+
 test('readHtml: the page itself through the same path as read (guard on every hop, rules, Offline, visit log, bot check)', async () => {
   const { standIn } = await import('../network/standin.js');
   const { setRules, clearRules } = await import('../network/rules.js');

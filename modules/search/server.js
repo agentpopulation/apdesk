@@ -1,5 +1,5 @@
 // Search (module 3): one search and one reader for the whole desk.
-import { PROVIDERS, runChain, normUrl, UA, failureLine, plainError, plain } from './providers.js';
+import { PROVIDERS, runChain, normUrl, UA, failureLine, plainError, plain, keyWhy } from './providers.js';
 import { readPage, readBody, htmlToDoc, CHALLENGE, CHALLENGE_TITLE, CHALLENGE_TEXT, MAX_TEXT, MAX_BYTES } from './reader.js';
 import { checkUrl, checkUrlDeep } from './guard.js';
 import { READERS, serviceError } from './services.js';
@@ -36,7 +36,9 @@ export async function activate(ctx) {
     }
     return sidecar.url;
   }
-  const env = async () => ({ fetch: (u, i) => ctx.fetch(u, i), secret, searxngUrl: await detectSearxng() });
+  // a keyed service refused the key or its allowance ran out: the core rests that key and hands out the next one
+  const refused = (id, why) => { if (typeof ctx.serviceKeyRefused === 'function') ctx.serviceKeyRefused(id, why); };
+  const env = async () => ({ fetch: (u, i) => ctx.fetch(u, i), secret, refused, searxngUrl: await detectSearxng() });
 
   async function searchDetailed(query, { count = 8, signal, only, skip } = {}) {
     refuseOffline();
@@ -186,11 +188,12 @@ export async function activate(ctx) {
     for (const r of list) {
       if (used(r) >= cap()) { notes.push(`${r.label} was not used: today's cap of ${cap()} pages is reached.`); continue; }
       refuseOffline(); if (ctx.panic.halted) throw halted();
-      const [address, init] = r.request(u.href, { key: keyOf(r), want });
+      const key = keyOf(r);
+      const [address, init] = r.request(u.href, { key, want });
       counted(r);                                                      // counted when sent: the service may count it either way
       let res; try { res = await send(address, { ...init, signal: AbortSignal.any([sig, AbortSignal.timeout(60000)]) }); }
       catch (e) { if (sig.aborted) throw ctx.panic.halted ? halted() : fail('aborted', 'Stopped'); notes.push(`${r.label}: ${plainError(e)}.`); continue; }
-      if (!res.ok) { try { await res.body?.cancel(); } catch {} notes.push(serviceError(r.label, res.status)); continue; }
+      if (!res.ok) { try { await res.body?.cancel(); } catch {} if (key && r.keyFrom === 'service' && keyWhy(res.status)) refused(r.id, keyWhy(res.status)); notes.push(serviceError(r.label, res.status)); continue; }
       let d = null; try { d = JSON.parse((await readBody(res, sig)).toString('utf8')); } catch (e) { if (e.code === 'too_large') { notes.push(`${r.label} sent back more than the desk reads.`); continue; } }
       const p = r.parse(d, want);
       if (!p || !p.body) { notes.push(`${r.label} sent no page back.`); continue; }

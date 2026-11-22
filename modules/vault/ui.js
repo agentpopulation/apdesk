@@ -11,11 +11,13 @@ export const settings = {
     const paintServices = async () => {
       let s; try { s = (await api('keys/services')).services; } catch (e) { search.replaceChildren(empty(e.message)); audio.replaceChildren(); return; }
       const row = (x) => {
+        // several labelled keys per service live on the Models page; this card keeps one slot, and Remove here removes them all
+        const n = (x.keys || []).length;
         const input = pw(x.hasKey ? 'Replace the key' : 'Paste the key');
-        return line(x.name, [x.hasKey ? `Key ${x.key}${x.fromEnvironment ? ' · from the environment, for this run only' : ''}` : 'No key yet', x.free].filter(Boolean).join(' · '),
+        return line(x.name, [x.hasKey ? (n > 1 ? `${n} keys, tested and labelled on the Models page` : `Key ${x.key}${x.fromEnvironment ? ' · from the environment, for this run only' : ''}`) : 'No key yet', x.free].filter(Boolean).join(' · '),
           x.hasKey && !x.fromEnvironment ? sw(x.enabled, `Use ${x.name}`, (on) => act(() => api('keys/services/' + x.id, { body: { enabled: on } }))) : null,
           input, btn('Save', { kind: 'ghost sm', onClick: () => act(() => api('keys/services/' + x.id, { body: { value: input.value } }), `${x.name} key saved`) }),
-          x.hasKey && !x.fromEnvironment ? btn('Remove', { kind: 'ghost sm', onClick: async () => { if (await confirm(`Remove the ${x.name} key?`, { ok: 'Remove', kind: 'stop' })) act(() => api('keys/services/' + x.id, { method: 'DELETE' }), 'Key removed'); } }) : null,
+          x.hasKey && !x.fromEnvironment ? btn('Remove', { kind: 'ghost sm', onClick: async () => { if (await confirm(n > 1 ? `Remove all ${n} ${x.name} keys?` : `Remove the ${x.name} key?`, { ok: 'Remove', kind: 'stop' })) act(() => api('keys/services/' + x.id, { method: 'DELETE' }), 'Key removed'); } }) : null,
           x.signup ? h('a', { href: x.signup, target: '_blank', rel: 'noopener noreferrer', class: 'sub' }, 'Get a key') : null);
       };
       search.replaceChildren(...(s.filter(x => x.kind === 'search').map(row)));

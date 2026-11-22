@@ -96,11 +96,24 @@ export async function activate(ctx) {
       return { e, late };
     }
   }
-  async function testOne({ provider, model = null, keyId = null, upstream = null }) {
+  // auto: the page's own test right after a key is saved or a local model appears, so the owner sees at once whether it
+  // works. It never runs while the desk is offline or after Panic (it says why instead), and on OpenRouter with Paid
+  // models off it asks a free model, whatever default was chosen.
+  const freeOpenRouter = () => [S('provider.openrouter.model'), providersFile.providers.openrouter?.defaultModel].find(m => /:free$/.test(String(m || '')) || m === 'openrouter/free') || 'openrouter/free';
+  function skipped(provider, model, keyId, upstream, error) {
+    const out = { ok: false, skipped: true, provider, model, label: ctx.model.label(provider, model), ms: 0, at: new Date().toISOString(), tries: 0, local: isLocal(provider), error };
+    const all = tests(); all[tkey(provider, upstream ? 'up:' + upstream : null, keyId)] = out; ctx.kv.set('tests', all);
+    ctx.events.emit('models', { change: 'test', provider, ok: false });
+    return out;
+  }
+  async function testOne({ provider, model = null, keyId = null, upstream = null, auto = false }) {
     return serial(async () => {
       if (!provider) throw new Error('Pick a provider to test.');
       if (upstream) { const u = upstreams().find(x => x.id === upstream); model = model || u?.models?.[0] || null; }
       if (keyId && !(ctx.model.keys.list()[provider] || []).some(k => k.id === keyId)) throw new Error('That key is gone.');
+      if (auto && ctx.panic.halted) return skipped(provider, model, keyId, upstream, 'Not tested: everything is stopped. Press Resume, then Test.');
+      if (auto && S('online') === false && !isLocal(provider) && !provider.startsWith('lan:')) return skipped(provider, model, keyId, upstream, 'Not tested: the desk is offline. Press Test once it is online.');
+      if (auto && provider === 'openrouter' && !openrouterPaid() && !model) model = freeOpenRouter();
       const L = limits(); const local = isLocal(provider);
       const pick = { provider, model, ...(keyId ? { keyId } : {}), ...(upstream ? { via: upstream } : {}) };
       const t0 = Date.now(); let out; let tries = 1;
@@ -143,6 +156,7 @@ export async function activate(ctx) {
     const act = (await ctx.model.active()).filter(a => a.provider !== 'ollama' || a.ok);
     const out = [];
     for (const a of act) out.push(await testOne({ provider: a.provider }));
+    ctx.kv.set('testAll', { at: new Date().toISOString(), total: out.length, ok: out.filter(r => r.ok).length });
     return out;
   }
 
@@ -314,14 +328,14 @@ export async function activate(ctx) {
 
   // ---------- routes
   const R = (m, p, fn) => ctx.route(m, p, async (req, res, arg) => { try { ctx.json(res, await fn(arg)); } catch (e) { ctx.json(res, { error: plainError(e) }, e.status || 400); } });
-  R('GET', '/overview', async () => ({ online: S('online') !== false, active: await activeList(), router: await routerStatus(), providers: providers(), currency: S('currency') }));
+  R('GET', '/overview', async () => ({ online: S('online') !== false, active: await activeList(), router: await routerStatus(), providers: providers(), currency: S('currency'), testAll: ctx.kv.get('testAll', null) }));
   R('GET', '/active', async () => ({ online: S('online') !== false, active: await activeList() }));
   R('GET', '/router', () => routerStatus());
   R('GET', '/providers', () => ({ providers: providers() }));
   R('GET', '/catalog/:provider', ({ params }) => catalog(String(params.provider || '')));
   R('GET', '/available', async () => ({ groups: await available(), defaultLabel: chainLabel() }));
   R('POST', '/test', ({ body }) => testOne(body || {}));
-  R('POST', '/test-all', async () => ({ results: await testAll() }));
+  R('POST', '/test-all', async () => ({ results: await testAll(), summary: ctx.kv.get('testAll', null) }));
   R('POST', '/test-agent', async ({ body }) => {
     const agentId = String(body?.agentId || ''); if (!ctx.agents.get(agentId)) throw new Error('No such agent.');
     try { const r = await ctx.model.chat({ agentId, messages: [{ role: 'system', content: ctx.agents.systemPrompt(agentId) }, ...TEST_PROMPT], purpose: 'small', signal: AbortSignal.timeout(90000) }); return { ok: true, label: r.label, ms: r.ms, reply: String(r.text).trim().slice(0, 80), fallbackUsed: r.fallbackUsed }; }
@@ -350,6 +364,19 @@ export async function activate(ctx) {
     if (!owner) return ctx.json(res, { error: 'Keys are removed only from the desk itself.' }, 403);
     ctx.model.keys.remove(params.id); ctx.json(res, { ok: true });
   });
+  // ---------- service keys (search, page reading, voice): several labelled keys each, a Test per key. The store and the
+  // test call live in the core (app/core/service-keys.js); this module gets ctx.services.forModule, never a key value.
+  const many = () => typeof ctx.services?.keys === 'function' && typeof ctx.services?.test === 'function';
+  const ownerRoute = (method, p, fn, why) => ctx.route(method, p, async (req, res, arg) => {
+    if (!arg.owner) return ctx.json(res, { error: why }, 403);
+    if (!many()) return ctx.json(res, { error: 'Several keys per service need a newer desk. Use Settings, Keys and logins meanwhile.' }, 501);
+    try { ctx.json(res, await fn(arg)); } catch (e) { ctx.json(res, { error: plainError(e) }, e.status || 400); }
+  });
+  R('GET', '/services', () => ({ many: many(), services: ctx.services?.list?.() || [] }));
+  ownerRoute('POST', '/services/:id/keys', ({ params, body }) => ctx.services.add(params.id, String(body?.value || ''), String(body?.label || '')), 'Keys are added only from the desk itself.');
+  ownerRoute('POST', '/services/:id/keys/:kid/test', ({ params }) => ctx.services.test(params.id, params.kid), 'Keys are tested only from the desk itself.');
+  ownerRoute('POST', '/services/keys/:kid/toggle', ({ params, body }) => { ctx.services.toggleKey(params.kid, !!body?.on); return { ok: true }; }, 'Keys are switched only from the desk itself.');
+  ownerRoute('DELETE', '/services/keys/:kid', ({ params }) => { ctx.services.removeKey(params.kid); return { ok: true }; }, 'Keys are removed only from the desk itself.');
   R('GET', '/ollama', () => ollama());
   R('GET', '/ollama/loaded', ({ query }) => ollamaLoaded(query.model ? String(query.model) : null));
   R('POST', '/ollama/pull', ({ body }) => pull(body?.model));

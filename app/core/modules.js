@@ -143,7 +143,10 @@ export class Modules {
       },
       /** A dedicated service key the owner added (search: serper, tavily, brave, exa, jina; audio: elevenlabs, deepgram, cartesia, assemblyai). Null when absent. */
       serviceKey: (sid) => core.services?.get(sid) ?? null,
-      services: { list: () => core.services?.list() ?? [] },
+      // the Models page manages the keys (add, test, switch, remove), never reading a value; every other module sees the list only
+      services: id === 'models' && core.services?.forModule ? core.services.forModule({ fetch: (u, i) => ctx.fetch(u, i) }) : { list: () => core.services?.list() ?? [] },
+      /** The service refused the key this module was given (why 'refused'), or its allowance ran out ('allowance'): that key rests, the next one is used. */
+      serviceKeyRefused: (sid, why) => core.services?.report?.(String(sid || ''), why === 'allowance' ? 'allowance' : 'refused') ?? false,
       tool(def) { if (!def?.name || typeof def.run !== 'function') throw new Error('ctx.tool needs name and run'); self.tools.set(def.name, { module: id, name: def.name, description: def.description || '', parameters: def.parameters || { type: 'object', properties: {} }, run: def.run, agents: def.agents || null }); },
       /** Remove one of this module's own Coordinator tools while the module stays on (an MCP tool the owner unticked). */
       untool(name) { const t = self.tools.get(name); if (t && t.module === id) self.tools.delete(name); },

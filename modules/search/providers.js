@@ -35,11 +35,13 @@ export function parseDdgHtml(html, max) {
 
 class ProviderError extends Error { constructor(code, message) { super(message); this.code = code; } }
 const json = async (r) => { try { return await r.json(); } catch { return null; } };
+/** What a keyed service's answer says about the key: 401/403 refused, 402/429/432 the allowance is used up; else null. */
+export const keyWhy = (status) => status === 401 || status === 403 ? 'refused' : status === 402 || status === 429 || status === 432 ? 'allowance' : null;
 const http = (id, r) => { const e = new ProviderError('http', `HTTP ${r.status}`); e.status = r.status; const ra = Number(r.headers?.get?.('retry-after')); if (Number.isFinite(ra)) e.retryAfterMs = ra * 1000; return e; };
 
 /**
  * Each provider: { id, label, kind: 'sidecar'|'keyless'|'keyed', cap?: share of results, configured(env), run(env, q, n, signal) -> rows }
- * env = { fetch, secret(name), searxngUrl }
+ * env = { fetch, secret(name), refused?(name, why), searxngUrl }
  */
 export const PROVIDERS = [
   {
@@ -203,8 +205,9 @@ export async function runChain(env, query, { count = 8, signal, only, skip = [],
     if (signal?.aborted) throw stopped();
     if (left() < minSliceMs) { notTried.push(p.label); attempts.push({ provider: p.id, label: p.label, ok: false, n: 0, notTried: true, note: 'not tried: the search ran out of time', ms: 0 }); continue; }
     const t0 = Date.now(); const want = count - results.length;
-    let rows = null, err = null;
+    let rows = null, err = null; const keysTried = new Set();
     for (let attempt = 0; attempt < 2 && !rows; attempt++) {        // one retry, only after a fast failure a retry can cure
+      if (p.kind === 'keyed') keysTried.add(env.secret(p.id));
       const limit = AbortSignal.timeout(Math.max(1, Math.min(timeoutMs, left())));
       const sig = AbortSignal.any([signal, limit].filter(Boolean));
       try {
@@ -214,6 +217,9 @@ export async function runChain(env, query, { count = 8, signal, only, skip = [],
       } catch (e) {
         if (signal?.aborted) throw stopped();
         err = e;
+        // the key was refused or its allowance ran out: the key store rests it, and the next key (if any) is tried at once
+        const why = p.kind === 'keyed' && e.code === 'http' ? keyWhy(e.status) : null;
+        if (why) { env.refused?.(p.id, why); const next = env.secret(p.id); if (next && !keysTried.has(next) && left() >= minSliceMs) { attempt--; continue; } if (why === 'refused') break; }
         const wait = e.code === 'http' && e.status === 429 ? Math.max(retryWaitMs, e.retryAfterMs || 0) : retryWaitMs;
         if (attempt || !curable(e, 2000) || left() < wait + minSliceMs) break;
         await new Promise((r) => setTimeout(r, wait));
