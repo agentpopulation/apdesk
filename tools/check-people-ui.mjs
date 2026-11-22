@@ -43,6 +43,7 @@ try {
   check('open desk (one person, no PIN): no chooser, no switcher avatar', await f.p.evaluate(() => document.getElementById('chooser').hidden && document.getElementById('who').hidden));
   await f.p.goto(t.base + '/#/settings/people'); await f.p.waitForSelector('#view .card'); await wait(400);
   check('Settings › People: the keeper sees their profile, their PIN and People on this PC', await f.p.evaluate(() => /Your profile/.test(document.getElementById('view').textContent) && /Your PIN/.test(document.getElementById('view').textContent) && /People on this PC/.test(document.getElementById('view').textContent)));
+  check('Settings › People: no stray "null" or "undefined" on screen', await f.p.evaluate(() => !/\b(null|undefined)\b/.test(document.getElementById('view').innerText)));
   await f.p.screenshot({ path: `${SHOTS}/settings_people_keeper_1366x768_light.png` });
   // set the keeper's PIN
   await f.p.fill('#view .pinf', '2468');

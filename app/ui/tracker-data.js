@@ -26,7 +26,7 @@ export function agentsNow(agents, jobs) {
   return agents.map(a => {
     const mine = open.filter(j => j.agentId === a.id).sort((x, y) => (x.status === 'running' ? 0 : 1) - (y.status === 'running' ? 0 : 1));
     const j = mine[0];
-    return { id: a.id, name: a.name || 'An agent', busy: !!j, job: j || null, more: Math.max(0, mine.length - 1), text: !j ? 'Not working on anything' : j.status === 'waiting' ? `Waiting for you: ${j.title}` : j.title };
+    return { id: a.id, name: a.name || 'An agent', avatar: a.avatar || null, busy: !!j, job: j || null, more: Math.max(0, mine.length - 1), text: !j ? 'Not working on anything' : j.status === 'waiting' ? `Waiting for you: ${j.title}` : j.title };
   });
 }
 

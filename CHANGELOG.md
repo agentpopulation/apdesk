@@ -213,6 +213,9 @@ Everything below was built and tested on Linux after the 0.1.0 release. The Wind
 - A reply now shows who answered on one clean line above the text, with the rating buttons and the time in one row below. On Windows this line had been squeezed into a thin strip over the reply.
 - The first-start box for a local model always offers a choice. What fits is judged from the PC's whole memory, not from what is free that minute; low free memory gives a "close some programs" note, never a refusal. Seen on a Windows 11 ARM PC on 22 Nov 2026, where the box said too little memory and offered nothing.
 - Every local model is listed with its size and the memory it needs; one too large for this PC can still be chosen after one plain warning. If the hardware scan fails, memory is read from the system's own count, and "Check again" reads it afresh.
+- A new look, "dark and bold": deep indigo surfaces, violet-to-magenta for actions, status colours for live, slow and failed, cards with depth, and a light theme as its daytime twin. Dark is the theme on a new desk; your own choice is kept.
+- Doctor moved from the menu to a small icon beside the network icon. A thin line at the bottom of the window says what the desk is doing now, or "Ready", with the running jobs and the version; a click opens the Tracker.
+- After a change that saves by itself, a small tick appears beside the field, with "Saved" when you point at it; a failed save shows a cross with the reason and keeps the old value.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

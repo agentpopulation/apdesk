@@ -40,8 +40,9 @@ export async function homePage(el, ui) {
     // the note Bench mode left while the owner was away, at the top (the module's own card)
     if (ui.moduleOn('bench')) { try { await (await ui.moduleUi('bench')).homeCard?.(bench, ui); } catch { bench.replaceChildren(); } } else bench.replaceChildren();
     const owners = (list) => list.filter(j => !j.quiet);   // the desk's own upkeep stays in Tasks › Housekeeping
-    const tile = (n, label, page) => h('button', { class: 'card hov stat', onclick: () => ui.go(page) }, h('b', null, String(n)), h('span', null, label));
-    tiles.replaceChildren(tile(d.jobs.summary.running, 'Tasks running', 'tasks'), tile(d.approvals.length + d.jobs.summary.waiting, 'Waiting for you', 'tasks'), tile(d.jobs.summary.done, 'Finished', 'tasks'), tile(d.agents, 'Agents', 'agents'));
+    // a count that is live wears a coloured stripe: blue while tasks run, amber while something waits for the owner
+    const tile = (n, label, page, live = '') => h('button', { class: 'card hov stat' + (live && n ? ' ' + live : ''), onclick: () => ui.go(page) }, h('b', null, String(n)), h('span', null, label));
+    tiles.replaceChildren(tile(d.jobs.summary.running, 'Tasks running', 'tasks', 'run'), tile(d.approvals.length + d.jobs.summary.waiting, 'Waiting for you', 'tasks', 'slow'), tile(d.jobs.summary.done, 'Finished', 'tasks'), tile(d.agents, 'Agents', 'agents'));
     const run = owners(d.jobs.running);
     running.replaceChildren(...(run.length ? run.map(j => h('div', { class: 'line' }, h('div', null, h('b', null, j.title), h('span', { class: 'd' }, `${ui.agent(j.agentId)?.name || 'Agent'} · ${j.detail || 'Working'}`)), meter(j.progress, { live: true, style: { maxWidth: '160px' } }), pill(fmt.pct(j.progress), 'run'))) : [empty('Nothing is running.')]));
     const waits = [...d.approvals.map(a => line(a.title, `${ui.whoAsks(a)} · ${ui.ACTION_WORDS[a.action] || a.action}`, btn('Review', { kind: 'ghost sm', onClick: () => ui.openApprovals() }))),

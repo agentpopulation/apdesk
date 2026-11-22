@@ -7,22 +7,28 @@
 <title>Starting AP Desk</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%231b1464'/%3E%3Cstop offset='.5' stop-color='%236a1fd0'/%3E%3Cstop offset='1' stop-color='%23e0308c'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='8' y='8' width='240' height='240' rx='60' fill='url(%23g)'/%3E%3Cpath d='M60 134 128 74l68 60v58h-44v-42h-48v42H60Z' fill='none' stroke='%23fff' stroke-width='16' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
-:root { --bg: #f4f2fa; --card: #ffffff; --text: #16171a; --muted: #5d626e; --line: #e3e0ee; --accent: #6a1fd0; }
-@media (prefers-color-scheme: dark) { :root { --bg: #111018; --card: #1b1a24; --text: #f1f0f6; --muted: #a9a6b8; --line: #2c2a38; --accent: #a77bff; } }
+:root { --desk: #e9ebf5; --surface: #ffffff; --well: #f0f1f8; --line: #dcdfee; --fg: #12132b; --dim: #545a78; --brand: #6a1fd0; --brand-2: #c4207a;
+  --glow-1: rgba(138,60,240,.12); --glow-2: rgba(40,90,255,.07); --mark-glow: rgba(106,31,208,.25);
+  --shadow: 0 12px 32px rgba(18,19,43,.10), 0 0 0 1px rgba(106,31,208,.10); color-scheme: light; }
+@media (prefers-color-scheme: dark) { :root { --desk: #06061a; --surface: #0f1030; --well: #0a0b24; --line: #23265a; --fg: #eef0ff; --dim: #a7abd6; --brand: #a679ff; --brand-2: #ff5fb0;
+  --glow-1: rgba(138,60,240,.22); --glow-2: rgba(40,90,255,.12); --mark-glow: rgba(138,60,240,.45);
+  --shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 16px 40px rgba(0,0,0,.55), 0 0 0 1px rgba(166,121,255,.18); color-scheme: dark; } }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
-body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif; display: grid; place-items: center; padding: 16px; }
-main { width: 100%; max-width: 420px; background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 36px 28px 30px; text-align: center; }
-.mark { width: 72px; height: 72px; display: block; margin: 0 auto 18px; }
-h1 { font-size: 22px; line-height: 1.25; margin: 0 0 6px; font-weight: 700; }
-.line { margin: 0; color: var(--muted); }
-.bar { position: relative; height: 4px; margin: 24px auto 0; max-width: 220px; border-radius: 2px; background: var(--line); overflow: hidden; }
-.bar::after { content: ""; position: absolute; inset: 0; width: 40%; border-radius: 2px; background: var(--accent); animation: slide 1.6s ease-in-out infinite; }
+body { margin: 0; background: radial-gradient(1200px 500px at 85% -10%, var(--glow-1), transparent 60%), radial-gradient(900px 400px at -10% 30%, var(--glow-2), transparent 60%), var(--desk);
+  color: var(--fg); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; display: grid; place-items: center; padding: 16px; }
+main { width: 100%; max-width: 440px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); padding: 36px 28px 30px; text-align: center; }
+.mark { width: 72px; height: 72px; display: block; margin: 0 auto 18px; filter: drop-shadow(0 8px 24px var(--mark-glow)); }
+h1 { font-size: 24px; line-height: 1.2; margin: 0 0 6px; font-weight: 800; letter-spacing: -.02em; }
+.line { margin: 0; color: var(--dim); }
+.bar { position: relative; height: 6px; margin: 24px auto 0; max-width: 240px; border-radius: 99px; background: var(--well); border: 1px solid var(--line); overflow: hidden; }
+.bar::after { content: ""; position: absolute; inset: 0; width: 40%; border-radius: 99px; background: linear-gradient(90deg, var(--brand), var(--brand-2)); animation: slide 1.6s ease-in-out infinite; }
 @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
 @media (prefers-reduced-motion: reduce) { .bar::after { animation: none; width: 100%; opacity: .45; } }
-.help { margin: 22px 0 0; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; text-align: left; }
+.help { margin: 22px 0 0; padding-top: 18px; border-top: 1px solid var(--line); color: var(--dim); font-size: 14px; text-align: left; }
 .help p { margin: 0 0 8px; }
-.help a { color: var(--accent); }
+.help b { color: var(--fg); font-weight: 600; }
+.help a { color: var(--brand); }
 [hidden] { display: none !important; }
 .done .bar { visibility: hidden; }
 </style>

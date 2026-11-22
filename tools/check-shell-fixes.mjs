@@ -42,17 +42,17 @@ try {
     check(`${w}x${hgt}: no page errors`, errs.length === 0, errs.join(' | ').slice(0, 200));
     await p.close();
   }
-  await barChecks(b); await approvalChecks(b); await trackerChecks(b); await menuChecks(b); await downloadChecks(b); await networkChecks(b); await moduleChecks(b); await settingsChecks(b);
+  await barChecks(b); await approvalChecks(b); await trackerChecks(b); await menuChecks(b); await downloadChecks(b); await networkChecks(b); await moduleChecks(b); await settingsChecks(b); await lookChecks(b);
   await b.close();
 } finally { await t.close(); }
-await firstStartChecks(); await pairChecks();
+await firstStartChecks(); await pairChecks(); await freshThemeChecks();
 console.log(fails ? `${fails} FAILED` : 'all passed'); process.exit(fails ? 1 : 0);
 
 async function open(b, w, hgt, theme = 'light', hash = '#/home', ctxOpts = {}) {
   const ctx = await b.newContext({ viewport: { width: w, height: hgt }, ...ctxOpts }); const p = await ctx.newPage();
   const errs = []; p.on('pageerror', e => errs.push(e.message));
   await p.addInitScript((th) => { try { localStorage.setItem('apd-theme', th); } catch {} }, theme);
-  t.core.settings.set('theme', theme); t.core.settings.set('onboarded', true);
+  t.core.settings.set('theme', theme); t.core.settings.set('ui.themeChosen', true); t.core.settings.set('onboarded', true);
   await p.goto(t.base + '/' + hash); await p.waitForSelector('#menu .nav'); await p.waitForTimeout(700);
   return { ctx, p, errs };
 }
@@ -458,6 +458,84 @@ async function settingsChecks(b) {
     await p.screenshot({ path: `${SHOTS}/settings_slow_chat_1366x768_light.png` });
     check('settings: no page errors', errs.length === 0, errs.join(' | ').slice(0, 200));
   } finally { await ctx.close(); }
+}
+
+// ---- the look: the Doctor icon in the top bar, the footer line, the shared saved tick
+async function lookChecks(b) {
+  for (const [w, hgt] of [[1366, 768], [390, 844]]) {
+    const { ctx, p, errs } = await open(b, w, hgt, 'dark', '#/home');
+    try {
+      t.core.settings.set('ui.doctorLast', null);
+      await p.reload(); await p.waitForSelector('#menu .nav'); await p.waitForTimeout(600);
+      const d = await p.evaluate(() => { const doc = document.getElementById('doc'), net = document.getElementById('net'), r = doc.getBoundingClientRect(), bar = document.querySelector('.bar').getBoundingClientRect();
+        return { shown: !doc.hidden && r.width > 0, beside: doc.nextElementSibling === net, inBar: r.top >= bar.top && r.bottom <= bar.bottom && r.right <= bar.right, inMenu: !!document.querySelector('#menu .nav[data-v="doctor"]'), mark: !!doc.querySelector('.probdot'), name: doc.getAttribute('aria-label'), outline: !!doc.querySelector('svg[fill="none"]') }; });
+      check(`${w}x${hgt}: Doctor is a quiet outline icon beside the network icon, not in the menu, no mark before a check`, d.shown && d.beside && d.inBar && !d.inMenu && !d.mark && d.outline && /Doctor/.test(d.name), JSON.stringify(d));
+      if (w === 1366) {
+        await p.click('#doc'); await p.waitForTimeout(500);
+        check('the Doctor icon opens the Doctor page', await p.evaluate(() => location.hash === '#/doctor' && !!document.getElementById('doc-check')));
+        await p.route('**/api/m/doctor/check', (r) => r.fulfill({ json: { at: new Date().toISOString(), atText: 'now', problems: 2, checks: [{ id: 'a', name: 'A model answers', state: 'problem', line: 'No model answered.' }, { id: 'b', name: 'Disk', state: 'problem', line: 'Low disk.' }], learned: null } }));
+        await p.click('#doc-check'); await p.waitForTimeout(600);
+        const after = await p.evaluate(() => ({ mark: !!document.querySelector('#doc .probdot'), name: document.getElementById('doc').getAttribute('aria-label') }));
+        await p.reload(); await p.waitForSelector('#menu .nav'); await p.waitForTimeout(600);
+        const kept = await p.evaluate(() => !!document.querySelector('#doc .probdot'));
+        check('a check that found problems puts a small mark on the Doctor icon, kept after a reload', after.mark && /2 problems/.test(after.name) && kept, JSON.stringify({ ...after, kept }));
+        await p.unroute('**/api/m/doctor/check');
+        await p.screenshot({ path: `${SHOTS}/doctor_icon_${w}x${hgt}_dark.png`, clip: { x: 0, y: 0, width: w, height: 70 } });
+      }
+      // the footer: one line, Ready when nothing runs, the version, an announced activity while it lasts, a press opens the Tracker
+      await p.evaluate(() => { location.hash = '#/home'; }); await p.waitForTimeout(400);
+      const f = await p.evaluate(() => { const el = document.getElementById('foot'), r = el.getBoundingClientRect(); return { shown: r.height > 0, h: Math.round(r.height), inView: r.left >= 0 && r.right <= innerWidth + 0.5 && r.bottom <= innerHeight + 0.5, now: document.getElementById('foot-now').textContent, ver: document.getElementById('foot-ver').textContent, verShown: document.getElementById('foot-ver').offsetWidth > 0, nowrap: getComputedStyle(el).whiteSpace, pageScroll: document.documentElement.scrollWidth - innerWidth }; });
+      const ver = t.desk.core?.version || (await t.call('/api/state')).json?.version;
+      check(`${w}x${hgt}: the footer is one line inside the window: Ready, and the version where there is room`, f.shown && f.h <= 32 && f.inView && f.now === 'Ready' && f.nowrap === 'nowrap' && f.pageScroll <= 0 && (w < 420 || f.ver === 'Version ' + ver), JSON.stringify({ ...f, want: ver }));
+      const a = await p.evaluate(async () => { const end = window.apd.announce('Scanning this PC…'); await new Promise(r => setTimeout(r, 50)); const on = document.getElementById('foot-now').textContent; const spin = !!document.querySelector('#foot .fspin'); end(); await new Promise(r => setTimeout(r, 50)); return { on, spin, off: document.getElementById('foot-now').textContent }; });
+      check(`${w}x${hgt}: a page announces an activity: the footer says it while it lasts, then Ready`, a.on === 'Scanning this PC…' && a.spin && a.off === 'Ready', JSON.stringify(a));
+      await p.screenshot({ path: `${SHOTS}/footer_${w}x${hgt}_dark.png` });
+      await p.click('#foot'); await p.waitForTimeout(400);
+      check(`${w}x${hgt}: a press on the footer opens the Tracker`, await p.evaluate(() => location.hash === '#/tracker'));
+      check(`${w}x${hgt}: look checks: no page errors`, errs.length === 0, errs.join(' | ').slice(0, 200));
+    } finally { await ctx.close(); }
+  }
+  // the saved tick: Saving…, then a drawn tick named "Saved"; on failure a cross with the reason, and the old value back
+  const { ctx, p, errs } = await open(b, 1366, 768, 'light', '#/settings/general');
+  try {
+    t.core.settings.set('companyName', 'Old name');
+    await p.reload(); await p.waitForSelector('input[data-key="companyName"]');
+    await p.route('**/api/settings', async (r) => { if (r.request().method() === 'POST') await wait(400); r.continue().catch(() => {}); });
+    await p.fill('input[data-key="companyName"]', 'New name'); await p.press('input[data-key="companyName"]', 'Tab');
+    await p.waitForTimeout(120);
+    const busy = await p.evaluate(() => { const m = document.querySelector('input[data-key="companyName"]').parentElement.querySelector('.saved'); return { text: m.textContent, state: m.dataset.saved }; });
+    await p.waitForTimeout(800);
+    const ok = await p.evaluate(() => { const m = document.querySelector('input[data-key="companyName"]').parentElement.querySelector('.saved'); return { state: m.dataset.saved, tick: !!m.querySelector('svg path'), title: m.title, name: m.getAttribute('aria-label'), shownText: [...m.querySelectorAll('span')].filter(x => x.getBoundingClientRect().width > 1).map(x => x.textContent).join(''), weight: getComputedStyle(m).fontWeight }; });
+    check('Settings › General: a field shows Saving… while it saves', busy.state === 'busy' && /Saving…/.test(busy.text), JSON.stringify(busy));
+    check('Settings › General: then a small drawn tick, "Saved" as its hover text and name, no bold', ok.state === 'ok' && ok.tick && ok.title === 'Saved' && ok.name === 'Saved' && ok.shownText === '' && Number(ok.weight) < 600 && t.core.settings.get('companyName') === 'New name', JSON.stringify(ok));
+    await p.screenshot({ path: `${SHOTS}/saved_tick_1366x768_light.png` });
+    await p.unroute('**/api/settings');
+    await p.route('**/api/settings', (r) => r.request().method() === 'POST' ? r.fulfill({ status: 400, json: { error: 'The desk is busy' } }) : r.continue());
+    await p.fill('input[data-key="companyName"]', 'Third name'); await p.press('input[data-key="companyName"]', 'Tab'); await p.waitForTimeout(500);
+    const bad = await p.evaluate(() => { const i = document.querySelector('input[data-key="companyName"]'), m = i.parentElement.querySelector('.saved'); return { state: m.dataset.saved, cross: !!m.querySelector('svg'), text: m.textContent, value: i.value }; });
+    check('Settings › General: a failed save shows a cross with the reason and keeps the old value', bad.state === 'err' && bad.cross && /Not saved: The desk is busy/.test(bad.text) && bad.value === 'New name', JSON.stringify(bad));
+    await p.unroute('**/api/settings');
+    check('saved tick: no page errors', errs.length === 0, errs.join(' | ').slice(0, 200));
+  } finally { await ctx.close(); }
+}
+/** A fresh desk in a browser that never opened it: dark. The owner's own choice of light is kept across a reload. */
+async function freshThemeChecks() {
+  const d = await testDesk({ modules: [] }); const b = await chromium.launch();
+  try {
+    d.core.settings.set('onboarded', true);
+    const ctx = await b.newContext({ viewport: { width: 1366, height: 768 }, colorScheme: 'light' }); const p = await ctx.newPage();
+    await p.goto(d.base + '/#/home'); await p.waitForSelector('#menu .nav'); await p.waitForTimeout(500);
+    const th = await p.evaluate(() => ({ theme: document.documentElement.dataset.theme, bg: getComputedStyle(document.documentElement).getPropertyValue('--desk').trim() }));
+    check('a fresh desk opens in the dark theme, even on a PC in light mode', th.theme === 'dark' && th.bg === '#06061a', JSON.stringify(th));
+    await p.click('#theme'); await p.waitForTimeout(400);
+    await p.reload(); await p.waitForSelector('#menu .nav'); await p.waitForTimeout(500);
+    const kept = await p.evaluate(() => document.documentElement.dataset.theme);
+    const ctx2 = await b.newContext({ viewport: { width: 1366, height: 768 } }); const p2 = await ctx2.newPage();
+    await p2.goto(d.base + '/#/home'); await p2.waitForSelector('#menu .nav'); await p2.waitForTimeout(500);
+    const other = await p2.evaluate(() => document.documentElement.dataset.theme);
+    check('the owner\'s choice of light is kept: after a reload and in another browser', kept === 'light' && other === 'light' && d.core.settings.get('ui.themeChosen') === true, JSON.stringify({ kept, other }));
+    await ctx.close(); await ctx2.close();
+  } finally { await b.close(); await d.close(); }
 }
 
 // ---- 5, 8: first start offers the local model; nothing is downloaded without Save; slow Chat routes

@@ -3,6 +3,10 @@
 // the shell keeps the jobs from its 'job' events (ui.tracker.jobs()) and the downloads from 'downloads' events.
 import { todoLists, agentsNow, deskNow, timeLeft, jobWho } from '/ui/tracker-data.js';
 
+// Each agent's avatar, drawn by the Agents page's helper; a desk without the Agents module keeps the plain line.
+let avatarEl = null;
+const avatarReady = import('/modules/agents/ui.js').then((m) => { avatarEl = m.avatarEl || null; }, () => {});
+
 const ENDED_WORDS = { done: 'Done', failed: 'Did not finish', stopped: 'Stopped', interrupted: 'Cut off when the desk stopped' };
 
 function jobRow(ui, j) {
@@ -31,7 +35,7 @@ export function trackerBody(ui, { full = false } = {}) {
   const desk = deskNow(jobs);
   const deskLine = desk.busy ? h('div', { class: 'line', 'data-tracker-desk': '' }, h('div', null, h('b', null, desk.text), desk.more ? h('span', { class: 'd' }, `and ${desk.more} more`) : null), h('span', { class: 'dot on' })) : null;
   const agentPart = h('section', { class: 'tsec', 'data-tracker': 'agents' }, h('h3', null, 'Agents now'),
-    shownAgents.length || deskLine ? h('div', { class: 'tlist' }, deskLine, shownAgents.map(a => h('div', { class: 'line' }, h('div', null, h('b', null, a.name), h('span', { class: 'd' }, a.text + (a.more ? ` and ${a.more} more` : ''))), h('span', { class: 'dot' + (a.busy ? ' on' : '') })))) : empty(agents.length ? `No agent is working right now. ${agents.length === 1 ? 'One agent is' : agents.length + ' agents are'} free.` : 'No agents yet.'));
+    shownAgents.length || deskLine ? h('div', { class: 'tlist' }, deskLine, shownAgents.map(a => h('div', { class: 'line' }, avatarEl?.(a, 's'), h('div', null, h('b', null, a.name), h('span', { class: 'd' }, a.text + (a.more ? ` and ${a.more} more` : ''))), h('span', { class: 'dot' + (a.busy ? ' on' : '') })))) : empty(agents.length ? `No agent is working right now. ${agents.length === 1 ? 'One agent is' : agents.length + ' agents are'} free.` : 'No agents yet.'));
   const group = (key, title, list, cap) => list.length ? h('div', { class: 'tgroup', 'data-todo': key }, h('h6', null, `${title} (${list.length})`), ...list.slice(0, cap).map(j => jobRow(ui, j)), list.length > cap ? h('p', { class: 'sub' }, `${list.length - cap} more on the Tracker page.`) : null) : null;
   const cap = full ? 200 : 3;
   const any = l.queued.length + l.running.length + l.waiting.length + l.done.length;
@@ -54,7 +58,7 @@ export async function trackerPage(view, ui) {
   let queued = false;
   const paint = () => { queued = false; body.replaceChildren(...trackerBody(ui, { full: true }).map(x => x.tagName === 'SECTION' ? ui.card({ class: 'tcard' }, x) : x)); };
   const soon = () => { if (!queued) { queued = true; requestAnimationFrame(paint); } };
-  await ui.tracker.ready();
+  await Promise.all([ui.tracker.ready(), avatarReady]);
   paint();
   for (const type of ['job', 'downloads', 'agents', 'panic']) ui.on(type, soon);
 }

@@ -50,6 +50,9 @@ const ui = {
   switcher: () => switcherMenu(ui),
   refreshWho: () => refreshWho(),
 };
+// Every page's calls go through here; the Doctor page's check result is kept, so the top bar's Doctor icon can show a
+// mark when the last check found a problem (the Doctor module itself is not changed for it).
+ui.api = async (path, opts) => { const r = await api(path, opts); if (/^\/?(api\/)?m\/doctor\/check(\?|$)/.test(String(path))) doctorSeen(r); return r; };
 window.apd = ui;       // for the console and for acceptance checks
 
 function emitLocal(type, data) { for (const fn of listeners.get(type) || []) { try { fn(data); } catch (e) { console.error(e); } } }
@@ -58,9 +61,11 @@ const globalOn = (type, fn) => { if (!listeners.has(type)) listeners.set(type, n
 // ---------- role labels and menu
 const role = () => state.settings.role ? ROLES[state.settings.role] : null;
 const roleLabel = (page, fallback) => role()?.labels?.[page] || fallback;
+// Places that live in the top bar as an icon, not in the menu (their page still opens by its address)
+const IN_BAR = new Set(['doctor']);
 function basePlaces() {
   const extra = [];
-  for (const m of state.modules) if (m.on) for (const it of m.menu || []) if (!OFFICIAL.some(o => o[0] === it.id)) extra.push({ ...it, module: m.id });
+  for (const m of state.modules) if (m.on) for (const it of m.menu || []) if (!OFFICIAL.some(o => o[0] === it.id) && !IN_BAR.has(it.id)) extra.push({ ...it, module: m.id });
   extra.sort((a, b) => (a.order || 100) - (b.order || 100));
   return [...OFFICIAL.map(([id, label]) => ({ id, label: roleLabel(id, label), official: true })), ...extra];
 }
@@ -114,6 +119,7 @@ const ICON = {
   down: svg('<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/>'),
   track: svg('<path d="M9 6.5h11M9 12h11M9 17.5h11"/><path d="M3.8 6.4l1.2 1.2 2.2-2.4M3.8 11.9l1.2 1.2 2.2-2.4"/><circle cx="5.2" cy="17.5" r="1.3"/>'),
   upd: svg('<circle cx="12" cy="12" r="8.5"/><path d="M12 16.5v-8M8.5 11.5 12 8l3.5 3.5"/>'),
+  doc: svg('<path d="M3 12h4l2-4.5 3.5 9 2.5-6 1.5 1.5H21"/><rect x="2.5" y="3.5" width="19" height="17" rx="4"/>'),
   wifi: (cut) => svg('<path d="M2.5 9.2a14 14 0 0 1 19 0M5.6 12.6a9.4 9.4 0 0 1 12.8 0M8.7 16a5 5 0 0 1 6.6 0"/><circle cx="12" cy="19.3" r=".9" fill="currentColor"/>', cut ? '<path d="M4 3.5 20 20.5"/>' : ''),
 };
 function paintTheme() {
@@ -124,7 +130,7 @@ function paintTheme() {
   b.setAttribute('aria-label', name); b.title = name;
 }
 function paintChrome() {
-  paintTheme(); paintDownloads(); paintNet(); paintTracker(); paintUpdate();
+  paintTheme(); paintDownloads(); paintNet(); paintTracker(); paintUpdate(); paintDoctor(); paintFoot();
   const nameEl = document.querySelector('.bar .name'); if (nameEl && nameEl.textContent !== appName()) nameEl.textContent = appName();
   const halted = !!state.panic.halted;
   document.body.classList.toggle('halted', halted);
@@ -136,11 +142,16 @@ function paintChrome() {
   if ($('#waiting').getAttribute('aria-label') !== words) { $('#waiting').replaceChildren(...(n ? [String(n), h('span', { class: 'wl' }, ' waiting for you')] : [h('span', { class: 'wl' }, 'Stopped by Panic: '), String(st)])); $('#waiting').setAttribute('aria-label', words); }
   paintMenu();
 }
+// Dark is the main theme and what a fresh desk opens in. The owner's own choice (the sun or moon, Settings › Appearance)
+// is kept and marked as his ('ui.themeChosen'), so the stored default ('light') of a desk set up before is not taken for one.
+const themeOf = (settings, mine) => (settings?.['ui.themeChosen'] || mine === 'dark') && (mine === 'light' || mine === 'dark') ? mine : 'dark';
+function applyTheme(th) { if (th !== document.documentElement.dataset.theme) document.documentElement.dataset.theme = th; try { localStorage.setItem('apd-theme', th); } catch {} }
+// before anything is drawn: a browser that has no theme kept yet opens dark (boot.js gives it light)
+try { if (!localStorage.getItem('apd-theme')) applyTheme('dark'); } catch { document.documentElement.dataset.theme = 'dark'; }
 async function setTheme(dark) {
-  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-  try { localStorage.setItem('apd-theme', dark ? 'dark' : 'light'); } catch {}
-  state.settings.theme = dark ? 'dark' : 'light'; paintChrome();
-  api('settings', { body: { theme: state.settings.theme } }).catch(() => {});
+  applyTheme(dark ? 'dark' : 'light');
+  state.settings.theme = dark ? 'dark' : 'light'; state.settings['ui.themeChosen'] = true; paintChrome();
+  api('settings', { body: { theme: state.settings.theme, 'ui.themeChosen': true } }).catch(() => {});
 }
 ui.setTheme = setTheme;
 
@@ -388,6 +399,53 @@ function netRows() {
 $('#net').onclick = () => { togglePop('network'); if (popKind() === 'network') loadNet({ calls: true }); };
 window.addEventListener('online', () => paintNet()); window.addEventListener('offline', () => paintNet());
 
+// ---------- Doctor in the top bar: a quiet outline icon beside the network icon; a small mark when its last check found a
+// problem. A press opens the Doctor page. Shown while the Doctor module is on.
+function doctorSeen(r) {
+  if (!r || !Array.isArray(r.checks)) return;
+  const last = { problems: Number(r.problems) || 0, at: r.at || new Date().toISOString() };
+  state.settings['ui.doctorLast'] = last; paintDoctor();
+  api('settings', { body: { 'ui.doctorLast': last } }).catch(() => {});
+}
+function paintDoctor() {
+  const b = $('#doc'); if (!b) return;
+  b.hidden = !ui.moduleOn('doctor');
+  if (b.hidden) return;
+  const last = state.settings['ui.doctorLast'], n = Number(last?.problems) || 0;
+  const key = n ? 'p' : 'f';
+  if (b.dataset.mark !== key || !b.firstChild) { b.innerHTML = ICON.doc; if (n) b.append(h('span', { class: 'probdot', 'aria-hidden': 'true' })); b.dataset.mark = key; }
+  const name = n ? `Doctor: the last check found ${n === 1 ? 'a problem' : n + ' problems'}${last.at ? ' (' + kit.fmt.when(last.at) + ')' : ''}. Open Doctor` : last ? 'Doctor: the last check found no problem. Open Doctor' : 'Doctor: check your desk';
+  b.setAttribute('aria-label', name); b.title = name;
+  b.toggleAttribute('aria-current', state.route.page === 'doctor');
+}
+$('#doc').onclick = () => ui.go('doctor');
+
+// ---------- the footer line: at the left what the desk is doing now (an activity a page announced, a running job, a
+// download; else Ready), at the right the count of running jobs and the version. One line; a press opens the Tracker.
+function footWords() {
+  if (state.panic.halted) return { text: 'Everything is stopped', busy: false };
+  const acts = kit.activities(); if (acts.length) return { text: acts.at(-1).text, busy: true };
+  const run = [...tracked.jobs.values()].filter(j => j.status === 'running' && !j.quiet).sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')));
+  if (run.length) return { text: `${jobWho(state.agents, run[0])}: ${run[0].title || 'a job'}`, busy: true };
+  const d = dls.list.find(x => x.state === 'running');
+  if (d) return { text: `Downloading ${d.title}${d.total ? ', ' + Math.round((d.done / d.total) * 100) + '%' : ''}`, busy: true };
+  return { text: 'Ready', busy: false };
+}
+function paintFoot() {
+  const f = $('#foot'); if (!f) return;
+  const { text, busy } = footWords(), n = runningCount(tracked.jobs.values());
+  const ver = state.version || document.querySelector('meta[name="apd-version"]')?.content || '';
+  const jobs = n ? (n === 1 ? '1 job running' : `${n} jobs running`) : '';
+  if ($('#foot-now').textContent !== text) $('#foot-now').textContent = text;
+  if (f.dataset.busy !== (busy ? '1' : '0')) { f.dataset.busy = busy ? '1' : '0'; f.querySelector('.now').firstElementChild.className = busy ? 'fspin' : 'fdot'; }
+  $('#foot-jobs').textContent = jobs;
+  $('#foot-ver').textContent = /^\d/.test(ver) ? 'Version ' + ver : '';
+  const name = `${text}.${jobs ? ' ' + jobs + '.' : ''} Open the Tracker`;
+  f.setAttribute('aria-label', name); f.title = name;
+}
+$('#foot').onclick = () => ui.go('tracker');
+kit.onActivity(() => paintFoot());
+
 // ---------- routing and pages
 function parseHash() {
   const raw = location.hash.replace(/^#\/?/, ''); const [pathPart, q] = raw.split('?');
@@ -415,7 +473,7 @@ async function render() {
   // Each render draws into a fresh element, so a slower earlier render can never add to the page on screen.
   const old = $('#view'); const view = document.createElement('section'); view.id = 'view'; view.className = 'view'; old.replaceWith(view);
   const stale = () => seq !== renderSeq; $('#pane').scrollTop = 0; showPop(null, false);
-  paintMenu();
+  paintMenu(); paintDoctor();
   try {
     if (page === 'home') return await homePage(view, ui);
     if (page === 'settings') return await settingsPage(view, ui);
@@ -655,7 +713,7 @@ async function refresh() {
   const s = await api('state');
   Object.assign(state, { settings: s.settings, security: s.security, panic: s.panic, modules: s.modules, agents: s.agents, jobs: s.jobs, pendingApprovals: s.pendingApprovals, tools: s.tools, version: s.version });
   kit.setPrefs({ timeZone: s.settings.timeZone, locale: s.settings.locale, currency: s.settings.currency });
-  if (s.settings.theme && s.settings.theme !== document.documentElement.dataset.theme) { document.documentElement.dataset.theme = s.settings.theme; try { localStorage.setItem('apd-theme', s.settings.theme); } catch {} }
+  applyTheme(themeOf(s.settings, s.settings.theme));
   await refreshStopped();
   paintChrome();
 }
@@ -686,7 +744,7 @@ globalOn('agents', () => api('agents').then(r => { state.agents = r.agents; }).c
 globalOn('security', (s) => { if (s?.level) { state.security = s; paintChrome(); } });
 globalOn('toast', (t) => toast(t.text || String(t), t.kind || ''));
 globalOn('job', jobFinished);
-globalOn('job', (j) => { mergeJob(tracked.jobs, j); paintTracker(); });
+globalOn('job', (j) => { mergeJob(tracked.jobs, j); paintTracker(); paintFoot(); });
 globalOn('job', jobNeedsYou);
 globalOn('update', (st) => { updateOk = updateReady(st); paintUpdate(); });
 globalOn('downloads', ({ download, summary } = {}) => {
@@ -696,7 +754,7 @@ globalOn('downloads', ({ download, summary } = {}) => {
     else if (OPEN_DL.has(download.state)) dls.told.delete(download.id);
   }
   if (summary) dls.summary = summary;
-  paintDownloads();
+  paintDownloads(); paintFoot();
 });
 globalOn('settings', (ch) => { if (ch && 'online' in ch) { state.settings.online = ch.online; paintNet(); } });
 globalOn('network', () => loadNet());
@@ -730,7 +788,7 @@ async function startDesk() {
   if (!me) { kit.setSession(''); return showChooser(ui, { mode: 'enter' }); }
   kit.setSession(token);          // keep this window on this person across a reload
   state.me = me.person;
-  if (me.theme && me.theme !== document.documentElement.dataset.theme) { document.documentElement.dataset.theme = me.theme; try { localStorage.setItem('apd-theme', me.theme); } catch {} }
+  if (me.theme === 'dark') applyTheme('dark');   // a light theme waits for the settings: it may be only the stored default
   takeEntryNotice();              // wrong tries or a PIN reset, told once on entry
   await boot();
 }

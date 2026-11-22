@@ -247,7 +247,7 @@ function myPinCard(ui, me) {
     } catch (e) { err.textContent = e.status === 429 ? 'Too many wrong tries. Try again in a moment.' : (me.hasPin ? 'That current PIN is not right.' : e.message); }
   };
   box.append(h('p', { class: 'sub' }, me.hasPin ? 'Change your PIN. It keeps your desk to yourself.' : 'Set a PIN so only you open your desk. Without one, your desk opens straight away.'),
-    me.hasPin ? h('label', { class: 'f' }, 'Current PIN', current) : null,
+    me.hasPin ? h('label', { class: 'f' }, 'Current PIN', current) : '',   // DOM append writes null as the word "null"
     h('label', { class: 'f' }, me.hasPin ? 'New PIN' : 'PIN', next), err,
     h('div', { class: 'row' }, h('span', { class: 'grow' }), btn(me.hasPin ? 'Change PIN' : 'Set PIN', { onClick: save })));
   return box;

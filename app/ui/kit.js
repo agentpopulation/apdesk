@@ -75,6 +75,45 @@ export function table(cols, rows, { onRow, empty: emptyText = 'Nothing here yet.
     h('tbody', null, rows.map(r => h('tr', { class: onRow ? 'pick' : '', onclick: onRow ? () => onRow(r) : null }, cols.map(c => h('td', null, c.render ? c.render(r) : (r[c.key] ?? ''))))))));
 }
 
+/** A status chip: kind live (answers, on, saved) | slow | run (running) | fail | off. */
+export const statusChip = (text, kind = 'off') => h('span', { class: 'schip ' + kind }, text);
+
+// ---- the mark beside a field that saves by itself. Every automatic save answers back at once, in plain sight:
+// "Saving…" while it saves, then a small drawn tick whose hover text and name say "Saved", or a cross with the reason when
+// it did not save (the field gets its old value back). One helper, so every page shows a save the same way.
+const TICK = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 10.5 8.3 14 15.5 6"/></svg>';
+const CROSS = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M5.5 5.5l9 9M14.5 5.5l-9 9"/></svg>';
+export function savedMark() {
+  const m = h('span', { class: 'saved', role: 'status', 'aria-live': 'polite' });
+  const show = (state, html, words, title) => {
+    clearTimeout(m._t); m.className = 'saved' + (state ? ' ' + state : ''); m.dataset.saved = state || '';
+    m.innerHTML = html; if (words) m.append(h('span', { class: state === 'ok' ? 'vh' : '' }, words));
+    if (title) { m.title = title; m.setAttribute('aria-label', title); } else { m.removeAttribute('title'); m.removeAttribute('aria-label'); }
+  };
+  m.saving = () => show('busy', '<span class="spin" aria-hidden="true"></span>', 'Saving…', 'Saving…');
+  m.ok = (word = 'Saved') => { show('ok', TICK, word, word); m._t = setTimeout(() => show('', '', '', ''), 4000); };
+  m.fail = (reason) => show('err', CROSS, 'Not saved: ' + (reason || 'it did not save'), 'Not saved: ' + (reason || 'it did not save'));
+  m.clear = () => show('', '', '', '');
+  /** Run one save: Saving…, then the tick or the cross. With field, a failed save puts the field's old value back. */
+  m.run = async (save, { field, old, word } = {}) => {
+    m.saving();
+    try { const r = await save(); if (r === false) throw new Error('it did not save'); m.ok(word); return true; }
+    catch (e) { if (field && old !== undefined) { if (field.type === 'checkbox') field.checked = !!old; else field.value = old ?? ''; } m.fail(e?.message); return false; }
+  };
+  return m;
+}
+
+// ---- what the desk is doing now, for the footer line: a page announces an activity when it starts and ends it when done.
+//   const end = ui.announce('Scanning this PC…'); try { … } finally { end(); }
+const acts = new Map(); const actFns = new Set(); let actSeq = 0;
+const tellActs = () => { for (const fn of actFns) { try { fn(activities()); } catch {} } };
+export function announce(text) {
+  const id = ++actSeq; acts.set(id, { id, text: String(text || ''), at: Date.now() }); tellActs();
+  let ended = false; return () => { if (ended) return; ended = true; acts.delete(id); tellActs(); };
+}
+export const activities = () => [...acts.values()];
+export const onActivity = (fn) => { actFns.add(fn); return () => actFns.delete(fn); };
+
 // ---- feedback
 export function toast(text, kind = '', ms = 0) { const t = h('div', { class: 'toast ' + kind }, text); $('#toasts').append(t); setTimeout(() => t.remove(), ms || (kind === 'err' ? 7000 : 3500)); return t; }
 export function modal({ title, body, actions = [], wide = false, onClose } = {}) {

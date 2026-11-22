@@ -52,19 +52,18 @@ export function pairCard(ui) {
 export const coreSettingsSections = {
   general: { title: 'General', render(el, ui) {
     const { h, api, card, line } = ui; const s = ui.state.settings;
-    // Every field here saves by itself when the owner leaves it (or presses Enter): a short "Saved" beside it says so,
-    // or the reason in plain words when it did not save.
-    const save = async (patch, mark) => {
-      try {
-        const r = await api('settings', { body: patch }); ui.state.settings = r.settings; ui.setPrefs(r.settings); await ui.refresh();
-        if (mark) { mark.textContent = 'Saved'; mark.className = 'saved ok'; clearTimeout(mark._t); mark._t = setTimeout(() => { mark.textContent = ''; }, 2000); }
-        return true;
-      } catch (e) { if (mark) { clearTimeout(mark._t); mark.textContent = 'Not saved: ' + e.message; mark.className = 'saved err'; } else ui.toast(e.message, 'err'); return false; }
+    // Every field here saves by itself when the owner leaves it (or presses Enter): the shared saved mark beside it says
+    // "Saving…", then shows a drawn tick ("Saved"), or a cross with the reason, and the field gets its old value back.
+    const save = async (patch, mark, field, old) => {
+      const run = async () => { const r = await api('settings', { body: patch }); ui.state.settings = r.settings; ui.setPrefs(r.settings); await ui.refresh(); };
+      if (mark) return mark.run(run, { field, old });
+      try { await run(); return true; } catch (e) { ui.toast(e.message, 'err'); return false; }
     };
-    const mark = () => h('span', { class: 'saved', role: 'status', 'aria-live': 'polite' });
-    const text = (key, ph) => { const m = mark(); return h('span', { class: 'field' }, h('input', { type: 'text', value: s[key] ?? '', placeholder: ph, 'data-key': key, onchange: (e) => save({ [key]: e.target.value }, m) }), m); };
+    const mark = () => ui.savedMark();
+    const was = (key) => ui.state.settings[key] ?? '';
+    const text = (key, ph) => { const m = mark(); return h('span', { class: 'field' }, h('input', { type: 'text', value: s[key] ?? '', placeholder: ph, 'data-key': key, onchange: (e) => save({ [key]: e.target.value }, m, e.target, was(key)) }), m); };
     const roleMark = mark();
-    const roleSel = h('select', { onchange: async (e) => { if (await save({ role: e.target.value || null, onboarded: true }, roleMark)) setTimeout(() => location.reload(), 700); } }, h('option', { value: '' }, 'Everything'), Object.entries(ROLES).map(([id, r]) => h('option', { value: id, selected: s.role === id }, r.name)));
+    const roleSel = h('select', { onchange: async (e) => { if (await save({ role: e.target.value || null, onboarded: true }, roleMark, e.target, was('role'))) setTimeout(() => location.reload(), 700); } }, h('option', { value: '' }, 'Everything'), Object.entries(ROLES).map(([id, r]) => h('option', { value: id, selected: s.role === id }, r.name)));
     const notifyOn = s.notifications !== false;
     const canAsk = typeof Notification !== 'undefined';
     const notifyMark = mark();
@@ -72,13 +71,13 @@ export const coreSettingsSections = {
     const perm = !canAsk ? 'This browser has no desktop notifications.' : Notification.permission === 'granted' ? 'Desktop notifications are allowed.' : Notification.permission === 'denied' ? 'Desktop notifications are blocked in this browser; the notice and the menu count still show.' : 'Switch it on to allow desktop notifications.';
     // "What you do": the owner's own words about his business, for leads, drafts and research. Up to 600 characters.
     const aboutMark = mark();
-    const about = h('textarea', { id: 'about', rows: 3, maxlength: String(ABOUT_MAX), placeholder: 'For example: Payroll software for small firms. HR heads buy it. Pune and Mumbai.', 'aria-label': 'What you do', onchange: (e) => save({ 'business.about': e.target.value }, aboutMark) });
+    const about = h('textarea', { id: 'about', rows: 3, maxlength: String(ABOUT_MAX), placeholder: 'For example: Payroll software for small firms. HR heads buy it. Pune and Mumbai.', 'aria-label': 'What you do', onchange: (e) => save({ 'business.about': e.target.value }, aboutMark, e.target, was('business.about')) });
     about.value = s['business.about'] || '';
     const aboutBox = h('div', { class: 'line about' }, h('div', null, h('b', null, 'What you do'), h('span', { class: 'd' }, ABOUT_HELP), about, h('span', { class: 'field' }, aboutMark)));
     // how long answers should be: kept by the Chat module (its own routes), saved on change like the fields above
-    const lengthLine = () => { const m = mark(); const sel = h('select', { id: 'answer-length', 'aria-label': 'How long answers should be', disabled: true, onchange: async (e) => { try { await api('m/chat/answer-length', { method: 'PUT', body: { value: e.target.value || null } }); m.textContent = 'Saved'; m.className = 'saved ok'; clearTimeout(m._t); m._t = setTimeout(() => { m.textContent = ''; }, 2000); } catch (err) { clearTimeout(m._t); m.textContent = 'Not saved: ' + err.message; m.className = 'saved err'; } } }, [['…', 'Reading…'], ['', 'Not chosen'], ['short', 'Short'], ['detailed', 'Detailed']].map(([v, n]) => h('option', { value: v, hidden: v === '…' }, n))); sel.value = '…';
+    const lengthLine = () => { const m = mark(); const sel = h('select', { id: 'answer-length', 'aria-label': 'How long answers should be', disabled: true, onchange: (e) => { const t = e.target; m.run(() => api('m/chat/answer-length', { method: 'PUT', body: { value: t.value || null } }).then(() => { t._old = t.value; }), { field: t, old: t._old ?? '' }); } }, [['…', 'Reading…'], ['', 'Not chosen'], ['short', 'Short'], ['detailed', 'Detailed']].map(([v, n]) => h('option', { value: v, hidden: v === '…' }, n))); sel.value = '…';
       // the Chat module answers this; while it is slow the field says so and the rest of the page is already there
-      api('m/chat/answer-length').then(r => { sel.value = r.value || ''; }).catch(() => { sel.value = ''; m.textContent = 'Could not read it now'; m.className = 'saved'; }).finally(() => { sel.disabled = false; }); return line('How long answers should be', 'How your agents write their answers to you', h('span', { class: 'field' }, sel, m)); };
+      api('m/chat/answer-length').then(r => { sel.value = r.value || ''; sel._old = sel.value; }).catch(() => { sel.value = ''; m.textContent = 'Could not read it now'; m.className = 'saved'; }).finally(() => { sel.disabled = false; }); return line('How long answers should be', 'How your agents write their answers to you', h('span', { class: 'field' }, sel, m)); };
     el.append(h('p', { class: 'sub', id: 'saves-note' }, 'Changes are saved when you leave a field.'),
       card(h('h3', null, 'You'), line('Your name', 'Agents use it when they write for you', text('ownerName', 'Your name')), line('Your business', 'Agents use it when they write in its name', text('companyName', 'Business name')), line('What you mainly use the desk for', 'Renames some places and changes the suggestions', h('span', { class: 'field' }, roleSel, roleMark)), ui.moduleOn('chat') ? lengthLine() : null),
       card(h('h3', null, 'This desk'), line('Name of this desk', 'Shown in the top bar and the window title', text('appName', 'AP Desk')), aboutBox, addressLine(ui), line('About', 'AP Desk is short for Agent Population Desk. On X: @agentpopulation', h('span', { class: 'val' }, '@agentpopulation')), line('Tell me when a job finishes', 'A notice, a count on the menu place and, when the window is in the background, a desktop notification. ' + perm, h('span', { class: 'field' }, notifySw, notifyMark))),
@@ -92,14 +91,13 @@ export const coreSettingsSections = {
   people: { title: 'People', render(el, ui) { return peopleSettings(el, ui); } },
   menu: { title: 'Menu', render(el, ui) {
     const { h, btn, sw, card, line, toast } = ui;
-    const mark = h('span', { class: 'saved', role: 'status', 'aria-live': 'polite' });
+    const mark = ui.savedMark();
     const rows = h('div', { class: 'mrows', role: 'list', 'aria-label': 'Menu places' });
     const firstSel = h('select', { id: 'menu-first', 'aria-label': 'The place that opens first' });
     const now = () => cleanMenu(ui.state.settings[MENU_KEY]);
     const save = async (menu, what = 'Saved') => {
-      try { await ui.saveMenu(menu); mark.textContent = what; mark.className = 'saved ok'; clearTimeout(mark._t); mark._t = setTimeout(() => { mark.textContent = ''; }, 2000); }
-      catch (e) { clearTimeout(mark._t); mark.textContent = 'Not saved: ' + e.message; mark.className = 'saved err'; }
-      paint();
+      const ok = await mark.run(() => ui.saveMenu(menu), { word: what });
+      paint(); return ok;
     };
     // a new order keeps the places of switched-off modules where the owner put them (they come back there)
     const withOrder = (ids) => { const m = now(); return { ...m, order: [...ids, ...m.order.filter(x => !ids.includes(x))] }; };

@@ -148,6 +148,14 @@ test('tracker: each agent says what it is doing now', () => {
   assert.deepEqual(a.map(x => [x.name, x.busy, x.text]), [['Scout', true, 'Deep research'], ['Closer', true, 'Waiting for you: Lead list'], ['Coder', false, 'Not working on anything']]);
 });
 
+test('tracker: each agent line shows its own avatar, drawn by the Agents page\'s helper', () => {
+  const a = agentsNow([{ id: 'scout', name: 'Scout', avatar: { look: 'owl', colour: 'teal' } }, { id: 'coder', name: 'Coder' }], []);
+  assert.deepEqual(a.map(x => x.avatar), [{ look: 'owl', colour: 'teal' }, null]);
+  const page = fs.readFileSync(path.join(ROOT, 'app', 'ui', 'pages', 'tracker.js'), 'utf8');
+  assert.match(page, /import\('\/modules\/agents\/ui\.js'\)/, 'the helper is loaded, and a desk without it keeps the plain line');
+  assert.match(page, /avatarEl\?\.\(a, 's'\)|avatarEl \? avatarEl\(a, 's'\)/);
+});
+
 test('tracker: a running job with no agent is the desk\'s own work and is said so; quiet upkeep and agents\' jobs are not', () => {
   assert.equal(deskNow(JOBS).busy, false, 'only an agent\'s job and quiet upkeep run');
   const more = [...JOBS, { id: 'i', title: 'Get the maps pack', status: 'running', created: ago(2) }, { id: 'j', title: 'Older desk job', status: 'running', created: ago(4) }, { id: 'k', title: 'Asks first', status: 'waiting', created: ago(1) }];
