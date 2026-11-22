@@ -5,7 +5,7 @@
 //   GET  /api/downloads                       every download with its state, and { active, total } for the top bar
 //   POST /api/downloads/:id/pause|resume|cancel   owner only
 //   GET  /api/local-engine                    the engine card: state, model, sizes, licence
-//   GET  /api/local-engine/plan[?model=id]    what would be downloaded for this PC (the first-start box shows this)
+//   GET  /api/local-engine/plan[?model=id][&fresh=1]   what would be downloaded for this PC (the first-start box shows this); fresh=1 scans the memory again
 //   POST /api/local-engine/get { model? }     start both downloads; each asks the owner first. Owner only.
 //   POST /api/local-engine/choose { model }   pick another model from the list. Owner only.
 //   POST /api/local-engine/stop | remove      owner only; remove deletes <data>/llama and frees its space
@@ -30,7 +30,7 @@ export function downloadRoutes(core, sessionOk) {
     'POST /api/downloads/:id/resume': (req, res, { params }) => owner(req, res) && answer(res, () => dl.resume(params.id)),
     'POST /api/downloads/:id/cancel': (req, res, { params }) => owner(req, res) && answer(res, () => dl.cancel(params.id)),
     'GET /api/local-engine': (req, res) => sendJson(res, eng.status()),
-    'GET /api/local-engine/plan': (req, res, { query }) => answer(res, () => eng.plan(query.model ? String(query.model) : null)),
+    'GET /api/local-engine/plan': (req, res, { query }) => answer(res, () => eng.plan(query.model ? String(query.model) : null, { fresh: query.fresh === '1' })),
     'POST /api/local-engine/get': (req, res, { body }) => owner(req, res) && answer(res, () => eng.get({ owner: true, modelId: body?.model ? String(body.model) : null })),
     'POST /api/local-engine/choose': (req, res, { body }) => owner(req, res) && answer(res, () => eng.choose(String(body?.model || ''), true)),
     'POST /api/local-engine/stop': (req, res) => owner(req, res) && answer(res, async () => { await eng.stop('owner'); return eng.status(); }),

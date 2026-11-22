@@ -211,6 +211,8 @@ Everything below was built and tested on Linux after the 0.1.0 release. The Wind
 - A reading service is never used to get past a no: not for a never-open or unapproved ask-first site, not where robots.txt disallows the page (checked again after a redirect), not after the site refused or showed a bot check, and not while Offline or after Panic. The card says plainly that the page address is sent to the service and may count against an allowance. Checked once without a key on example.com; not checked with a paid key.
 - In Chat the right panel shows when a chat opens, folds away by itself after 3 seconds, and comes back from a small icon, a pin, or when a background task or a new file appears.
 - A reply now shows who answered on one clean line above the text, with the rating buttons and the time in one row below. On Windows this line had been squeezed into a thin strip over the reply.
+- The first-start box for a local model always offers a choice. What fits is judged from the PC's whole memory, not from what is free that minute; low free memory gives a "close some programs" note, never a refusal. Seen on a Windows 11 ARM PC on 22 Nov 2026, where the box said too little memory and offered nothing.
+- Every local model is listed with its size and the memory it needs; one too large for this PC can still be chosen after one plain warning. If the hardware scan fails, memory is read from the system's own count, and "Check again" reads it afresh.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

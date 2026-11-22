@@ -331,8 +331,14 @@ export const pages = {
         const act = (path, body, msg) => async () => { try { const r = await ui.api('local-engine/' + path, { body: body || {} }); if (msg) ui.toast(typeof msg === 'function' ? msg(r) : msg, 'ok'); st.plan = null; await drawEngine(); await load(); } catch (err) { ui.toast(err.message, 'err'); } };
         const [word, kind] = PHASE[e.phase] || [e.phase, ''];
         const m = e.model || plan.model; const here = e.phase === 'ready' || e.phase === 'running' || e.phase === 'stopped' || e.phase === 'starting';
-        const pick = ui.h('select', { 'aria-label': 'Model for this PC', 'data-apd': 'engine-model' }, ...(plan.choices || []).map(c => ui.h('option', { value: c.id, disabled: !c.fits, selected: c.id === (plan.model?.id) }, `${c.name} · ${c.sizeText}${c.fits ? (c.id === plan.recommended ? ' · best fit' : '') : ' · too large for this PC'}`)));
-        pick.onchange = async () => { try { await ui.api('local-engine/choose', { body: { model: pick.value } }); st.plan = null; await drawEngine(); } catch (err) { ui.toast(err.message, 'err'); } };
+        // every model in the list, with its size and the memory it needs; one too large for this PC can be chosen after one warning
+        const pick = ui.h('select', { 'aria-label': 'Model for this PC', 'data-apd': 'engine-model' }, plan.model ? null : ui.h('option', { value: '', selected: true, disabled: true }, 'Choose a model'),
+          ...(plan.choices || []).map(c => ui.h('option', { value: c.id, 'data-fits': String(!!c.fits), selected: c.id === (plan.model?.id) }, `${c.name} · ${c.sizeText} · needs about ${c.needsGb} GB${c.fits ? (c.id === plan.recommended ? ' · best fit' : '') : ' · more than this PC has'}`)));
+        pick.onchange = async () => {
+          const c = (plan.choices || []).find(x => x.id === pick.value);
+          if (c && !c.fits && !await ui.confirm('This model needs more memory than this PC has. It may be very slow or not start.', { title: `Choose ${c.name}?`, ok: 'Choose it' })) { pick.value = plan.model?.id || ''; return; }
+          try { await ui.api('local-engine/choose', { body: { model: pick.value } }); st.plan = null; await drawEngine(); } catch (err) { ui.toast(err.message, 'err'); }
+        };
         const get = ui.btn(here && e.model && plan.model && e.model.id !== plan.model.id ? `Get ${plan.model.name} (${plan.totalText})` : e.phase === 'failed' ? `Try again (${plan.totalText})` : `Get a local model (${plan.totalText})`, { kind: 'sm', 'data-apd': 'engine-get', disabled: !plan.ok || !e.on, title: plan.ok ? null : plan.reason, onClick: act('get', { model: pick.value }, 'Each download asks you first. You can keep working meanwhile.') });
         const dls = (e.downloads || []).map(d => ui.h('div', { class: 'mdl-dl', 'data-apd': 'engine-download' },
           ui.h('b', { class: 'mdl-dl-title', title: d.title }, d.title), ui.h('span', { class: 'sub', 'data-apd': 'engine-progress' }, d.state === 'waiting' ? 'Waiting for your approval' : d.state === 'paused' ? 'Paused' : d.state === 'queued' ? 'Next in line' : `${d.doneText} of ${d.totalText}${d.speedText ? ' · ' + d.speedText : ''}${d.secondsLeft != null ? ' · ' + left(d.secondsLeft) : ''}`),
@@ -340,8 +346,8 @@ export const pages = {
           d.reason && d.state !== 'waiting' ? ui.h('span', { class: 'sub mdl-reason' }, d.reason) : null,
           ui.h('div', { class: 'row' }, d.state === 'paused' ? ui.btn('Resume', { kind: 'ghost sm', onClick: () => ui.api(`downloads/${d.id}/resume`, { body: {} }).then(drawEngine).catch(err => ui.toast(err.message, 'err')) }) : d.state === 'running' || d.state === 'queued' ? ui.btn('Pause', { kind: 'ghost sm', onClick: () => ui.api(`downloads/${d.id}/pause`, { body: {} }).then(drawEngine).catch(err => ui.toast(err.message, 'err')) }) : null,
             ui.btn('Cancel', { kind: 'ghost sm', onClick: () => ui.api(`downloads/${d.id}/cancel`, { body: {} }).then(drawEngine).catch(err => ui.toast(err.message, 'err')) }))));
-        const hwLine = plan.hardware?.line ? `${plan.hardware.line}${plan.hardware.budgetGb != null ? ` About ${plan.hardware.budgetGb} GB is free for a model now.` : ''}` : null;
-        const facts = m ? `${m.name} · ${m.sizeText} · ${m.licence}${m.publisher ? ' · by ' + m.publisher : ''} · ${m.tools ? 'can use tools' : 'chat only, no tools'}` : 'No model fits this PC.';
+        const hwLine = plan.hardware?.line ? `${plan.hardware.line}${plan.hardware.budgetGb != null ? ` About ${plan.hardware.budgetGb} GB of its memory can go to a model.` : ''}${plan.hardware.memoryLine ? ' ' + plan.hardware.memoryLine : ''}` : null;
+        const facts = m ? `${m.name} · ${m.sizeText} · ${m.licence}${m.publisher ? ' · by ' + m.publisher : ''} · ${m.tools ? 'can use tools' : 'chat only, no tools'}` : 'No model is recommended for this PC. One can still be chosen from the list.';
         const eng = e.engine ? `llama.cpp ${e.engine.release} (${e.engine.licence}) · ${e.engine.label}` : plan.engine ? `llama.cpp ${plan.engine.name.replace('llama.cpp ', '')} (${plan.engine.licence}) · ${plan.engine.label} · ${plan.engine.sizeText}` : null;
         return ui.card({ class: 'mdl-eng', 'data-apd': 'engine-card', 'data-phase': e.phase },
           ui.h('div', { class: 'row' }, ui.h('b', null, 'Local model on this PC'), ui.pill(word, kind), ui.h('span', { class: 'grow' }),
@@ -350,6 +356,8 @@ export const pages = {
           eng ? ui.h('div', { class: 'sub' }, eng) : null,
           hwLine ? ui.h('div', { class: 'sub' }, hwLine) : null,
           plan.note ? ui.h('p', { class: 'sub', 'data-apd': 'engine-note' }, plan.note) : null,
+          plan.freeNote && !here ? ui.h('p', { class: 'sub', 'data-apd': 'engine-free' }, plan.freeNote) : null,
+          plan.warning && !here ? ui.h('p', { class: 'mdl-warn', 'data-apd': 'engine-warning' }, plan.warning) : null,
           e.reason ? ui.h('p', { class: e.phase === 'failed' || e.phase === 'off' ? 'mdl-warn' : 'sub', 'data-apd': 'engine-reason' }, e.reason) : null,
           !plan.ok && plan.reason && !here ? ui.h('p', { class: 'mdl-warn' }, plan.reason) : null,
           ...dls,

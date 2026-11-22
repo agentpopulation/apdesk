@@ -174,6 +174,28 @@ test('the small-model note is shown: the engine card and the first-start box bot
   assert.match(box, /h\('span', \{ class: 'd', 'data-apd': 'local-model-note', hidden: true \}\)/);
 });
 
+test('the first-start box never leaves a low-memory PC with nothing to do: it offers Check again, which reads the memory afresh', async () => {
+  const fs = await import('node:fs');
+  const shell = fs.readFileSync(new URL('../../app/ui/shell.js', import.meta.url), 'utf8');
+  const box = shell.slice(shell.indexOf('function localModelBox()'), shell.indexOf('async function firstStep('));
+  assert.match(box, /'Check again'/);
+  assert.match(box, /plan\.lowMemory/);
+  assert.match(box, /fresh=1/);
+  assert.match(box, /Close some programs/);
+  const routes = fs.readFileSync(new URL('../../app/core/downloads-routes.js', import.meta.url), 'utf8');
+  assert.match(routes, /fresh: query\.fresh === '1'/);
+});
+
+test('the first-start box: Check again keeps the owner\'s untick; only a model he picks ticks the box again', async () => {
+  const fs = await import('node:fs');
+  const shell = fs.readFileSync(new URL('../../app/ui/shell.js', import.meta.url), 'utf8');
+  const box = shell.slice(shell.indexOf('function localModelBox()'), shell.indexOf('async function firstStep('));
+  assert.match(box, /again\.onclick = [^\n]*read\(pick\.id, true\)/, 'Check again reads afresh for the same model');
+  assert.match(box, /show\(plan, !!id && !fresh\)/, 'a fresh read is not a pick');
+  assert.match(box, /cb\.onchange = \(\) => \{ unticked = !cb\.checked; \}/, 'the owner\'s untick is remembered');
+  assert.match(box, /cb\.checked = picked \|\| !unticked;/, 'the box is ticked again only by a pick, or when he never unticked it');
+});
+
 test('an Ollama model card says where it comes from: the Ollama registry, or the host named in the model', async () => {
   const t = await testDesk({ modules: ['models'] });
   try {

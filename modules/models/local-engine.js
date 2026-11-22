@@ -4,6 +4,7 @@
 // Nothing is fetched until the owner asks (Get a local model, or the first-start box); every download asks him first.
 // Panic stops the program at once and it is not started again by itself; the owner's next ask starts it.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import crypto from 'node:crypto';
@@ -44,7 +45,8 @@ export class LocalEngine {
   async hardware() {
     if (this.hw && Date.now() - this.hw.t < 10 * 60000) return this.hw.v;
     let v = null;
-    try { v = this.hardwareFn ? await this.hardwareFn() : await (await import('./hardware.js')).scan(); } catch (e) { v = { ramGb: 0, ramFreeGb: 0, gpu: null, line: 'The hardware scan did not work: ' + e.message }; }
+    try { v = this.hardwareFn ? await this.hardwareFn() : await (await import('./hardware.js')).scan(); } catch (e) { v = { gpu: null, line: 'The hardware scan did not work: ' + e.message }; }
+    v = withMemory(v);
     this.hw = { t: Date.now(), v }; return v;
   }
   /** The plain processor build, or a graphics build only where the scan is sure: Windows with a dedicated card of 4 GB or more. */
@@ -53,11 +55,14 @@ export class LocalEngine {
     const gpuSure = this.platform === 'win32' && hw?.gpu && hw.gpu.dedicated !== false && Number(hw.gpu.vramGb) >= 4;
     return (gpuSure && mine.find(b => b.gpu === 'vulkan')) || mine.find(b => b.gpu === 'cpu' || b.gpu === 'metal') || null;
   }
-  /** Memory the model may use: graphics memory for a graphics build, else the smaller of 60% of RAM and 85% of free RAM. */
+  /** Memory the model may use: 90% of graphics memory for a graphics build, else 60% of the PC's whole memory.
+   *  Cause of the empty first-start box (Windows on ARM, 22 Nov 2026): this was the smaller of 60% of all memory and 85% of
+   *  the memory free at that very moment. At first start the installer has just run and a browser is open, so free memory
+   *  is low and a PC with plenty of memory was told nothing fits, with nothing to choose. The model is fetched to disk and
+   *  used later, so memory free now is only a note (freeNote in plan), never a reason to refuse. */
   budget(hw, build) {
     if (build?.gpu === 'vulkan' && hw?.gpu) return Number(hw.gpu.vramGb) * 0.9;
-    const ram = Number(hw?.ramGb) || 0; const free = Number(hw?.ramFreeGb ?? ram) || 0;
-    return Math.min(ram * 0.6, free * 0.85);
+    return (Number(hw?.ramGb) || 0) * 0.6;
   }
   fits(m, hw, build) { return m.needsGb <= this.budget(hw, build); }
   /** The largest model that fits. With no graphics card the engine can use (a processor build), at most noGpuMax. */
@@ -69,8 +74,11 @@ export class LocalEngine {
   pin(id) { return this.pins.models.list.find(m => m.id === id) || null; }
   nameOf(id) { return this.pin(id)?.name || id; }
 
-  /** What would be downloaded for this PC: the answer the first-start box and the Get button show. */
-  async plan(modelId = null) {
+  /** What would be downloaded for this PC: the answer the first-start box and the Get button show.
+   *  fresh: scan again now. Free memory changes from minute to minute, and the scan is kept for ten minutes,
+   *  so without it a "Check again" after closing programs would read the same low figure. */
+  async plan(modelId = null, { fresh = false } = {}) {
+    if (fresh) this.hw = null;
     const hw = await this.hardware(); const build = this.pickBuild(hw); const c = this.cfg();
     const rec = build ? this.pickModel(hw, build) : null;
     const cap = this.noGpuCap(build); const uncapped = build ? this.pickModel(hw, build, { capped: false }) : null;
@@ -80,20 +88,30 @@ export class LocalEngine {
     const engineHere = !!(c.engine && build && c.engine.build === build.id && fs.existsSync(this.serverPath(c.engine)));
     const modelHere = !!(want && c.model && c.model.id === want.id && fs.existsSync(this.modelPath(c.model)));
     const engineBytes = build && !engineHere ? build.size : 0; const modelBytes = want && !modelHere ? want.size : 0;
+    const smallest = Math.min(...this.pins.models.list.map(m => m.needsGb)); const room = build ? round1(this.budget(hw, build)) : null;
     const reason = !build ? `There is no ready-made llama.cpp build for this PC (${this.platform} ${this.arch}).`
-      : !rec ? `This PC has too little free memory for the smallest model (${this.pins.models.list.map(m => m.needsGb).sort((a, b) => a - b)[0]} GB needed, about ${round1(this.budget(hw, build))} GB free for it).` : null;
+      : !rec && !want ? (build.gpu === 'vulkan' ? `The graphics card has too little memory for the smallest model (it needs about ${smallest} GB, about ${room} GB can go to a model), so none is recommended.`
+        : `This PC has ${round1(Number(hw.ramGb) || 0)} GB of memory, too little for the smallest model (it needs about ${smallest} GB, about ${room} GB can go to a model), so none is recommended.`) : null;
+    // memory free right now: a note, never a refusal (a graphics build runs in the card's own memory)
+    const free = Number(hw?.ramFreeGb);
+    const freeNote = build && want && build.gpu !== 'vulkan' && Number.isFinite(free) && want.needsGb > free ? `Close some programs before you use it: it needs about ${want.needsGb} GB and about ${round1(free)} GB is free right now.` : null;
     return {
-      ok: !reason && !!want && this.fits(want, hw, build), reason: reason || (want && !this.fits(want, hw, build) ? `${want.name} needs about ${want.needsGb} GB, more than this PC has free for it (about ${round1(this.budget(hw, build))} GB).` : null),
+      ok: !reason && !!want, reason,
+      warning: build && want && !this.fits(want, hw, build) ? TOO_BIG : null, freeNote,
       engine: build ? { id: build.id, name: `llama.cpp ${this.pins.engine.release}`, label: build.label, gpu: build.gpu, size: build.size, sizeText: sizeText(build.size), here: engineHere, licence: this.pins.engine.licence } : null,
       model: want ? this.modelOut(want, hw, build, modelHere) : null,
-      recommended: rec?.id || null, note,
+      recommended: rec?.id || null, note, lowMemory: !!freeNote,
       choices: this.pins.models.list.map(m => this.modelOut(m, hw, build, !!(c.model && c.model.id === m.id && fs.existsSync(this.modelPath(c.model))))),
       engineBytes, modelBytes, totalBytes: engineBytes + modelBytes, totalText: sizeText(engineBytes + modelBytes),
       licences: [`llama.cpp ${this.pins.engine.release} (${this.pins.engine.licence}) from github.com/ggml-org/llama.cpp`, ...(want ? [`${want.name} by ${want.publisher} (${want.licence}) from huggingface.co/${want.repo}`] : [])],
-      hardware: { line: hw?.line || null, ramGb: hw?.ramGb ?? null, ramFreeGb: hw?.ramFreeGb ?? null, gpu: hw?.gpu ? { name: hw.gpu.name, vramGb: hw.gpu.vramGb } : null, budgetGb: build ? round1(this.budget(hw, build)) : null },
+      hardware: { line: hw?.line || null, ramGb: hw?.ramGb ?? null, ramFreeGb: hw?.ramFreeGb ?? null, gpu: hw?.gpu ? { name: hw.gpu.name, vramGb: hw.gpu.vramGb } : null, budgetGb: room, memoryFrom: hw?.memoryFrom || null, memoryLine: hw?.memoryLine || null },
     };
   }
-  modelOut(m, hw, build, here) { return { id: m.id, name: m.name, size: m.size, sizeText: sizeText(m.size), licence: m.licence, publisher: m.publisher, tools: !!m.tools, needsGb: m.needsGb, fits: !!build && this.fits(m, hw, build), why: m.why, here }; }
+  modelOut(m, hw, build, here) {
+    const fits = !!build && this.fits(m, hw, build);
+    const notFit = build && !fits ? `Needs about ${m.needsGb} GB, more than this PC has for a model (about ${round1(this.budget(hw, build))} GB${build.gpu === 'vulkan' ? ' of graphics memory' : ''}).` : null;
+    return { id: m.id, name: m.name, size: m.size, sizeText: sizeText(m.size), licence: m.licence, publisher: m.publisher, tools: !!m.tools, needsGb: m.needsGb, fits, notFit, why: m.why, here };
+  }
 
   // ---------- getting (the owner's click only)
   /** Start the downloads for the engine and the model. Each one asks the owner (install) before a byte is fetched. */
@@ -306,6 +324,17 @@ export class LocalEngine {
 }
 
 export const LOCAL_NAME = NAME;
+const TOO_BIG = 'This model needs more memory than this PC has. It may be very slow or not start.';
+const GiB = 1024 ** 3;
+/** The scan's memory figures when they are usable; else the system's own count (os.totalmem, os.freemem), and the plan says so.
+ *  On Windows the scan reads the same count, but a scan that fails or answers 0 there would otherwise leave nothing that fits. */
+function withMemory(v) {
+  v = v || {}; const ram = Number(v.ramGb), free = Number(v.ramFreeGb);
+  const okRam = Number.isFinite(ram) && ram >= 0.25 && ram < 65536; const okFree = Number.isFinite(free) && free >= 0 && (!okRam || free <= ram);
+  if (okRam && okFree) return { ...v, memoryFrom: v.memoryFrom || 'scan', memoryLine: v.memoryLine || null };
+  return { ...v, ramGb: okRam ? ram : round1(os.totalmem() / GiB), ramFreeGb: okRam && okFree ? free : round1(os.freemem() / GiB), memoryFrom: 'system',
+    memoryLine: 'Memory was read from the system\'s own count, because the hardware scan gave no usable figure.' };
+}
 function freePort() { return new Promise((res, rej) => { const s = net.createServer(); s.unref(); s.on('error', rej); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); }); }
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const round1 = (x) => Math.round(x * 10) / 10;

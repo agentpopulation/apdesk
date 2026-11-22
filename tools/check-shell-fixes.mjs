@@ -471,6 +471,7 @@ async function firstStartChecks() {
     if (opts.plan) await p.route('**/api/local-engine/plan*', (r) => r.fulfill({ json: opts.plan }));
     if (opts.slowChat) await p.route('**/api/m/chat/**', async (r) => { await wait(6000); r.continue().catch(() => {}); });
     if (opts.offline) d.core.settings.set('online', false);
+    if (opts.hw) { d.core.localEngine.hardwareFn = typeof opts.hw === 'function' ? opts.hw : async () => opts.hw; d.core.localEngine.hw = null; }
     await p.goto(d.base + '/#/chat'); await p.waitForSelector('#roles .role');
     const t0 = Date.now(); await p.click(`#roles .role >> nth=${opts.role ?? 1}`);
     await p.waitForSelector('#onb-about', { timeout: 3000 }).catch(() => {});
@@ -515,6 +516,60 @@ async function firstStartChecks() {
     check('no build fits: unticked and disabled with the plain reason', !bx.checked && bx.disabled && /no ready-made llama\.cpp build/.test(bx.text), bx.text.slice(0, 160));
     await f.p.click('#onb .btn:has-text("Save")'); await f.p.waitForTimeout(800);
     check('then Save downloads nothing', f.gets.length === 0);
+    await f.close();
+    // what fits is decided from the whole memory; free memory now is only a note; there is always a choice
+    const radios = (p) => p.evaluate(() => [...document.querySelectorAll('[name="onb-model"]')].map(r => ({ id: r.value, fits: r.dataset.fits === 'true', disabled: r.disabled, visible: !!r.offsetParent, text: r.closest('label').textContent })));
+    const extra = (p) => p.evaluate(() => { const g = (k) => document.querySelector(`[data-apd="${k}"]`); return { free: g('local-model-free')?.hidden ? '' : g('local-model-free')?.textContent, warn: g('local-model-warn')?.hidden ? '' : g('local-model-warn')?.textContent, open: !!g('local-model-open') && !g('local-model-open').hidden }; });
+    const pickAndSave = async (f, id, label) => {
+      await f.p.evaluate(() => { const b = [...document.querySelectorAll('[data-apd="local-model"] button')].find(x => x.textContent === 'Choose another'); if (b && b.getAttribute('aria-expanded') !== 'true') b.click(); });
+      await f.p.check(`[name="onb-model"][value="${id}"]`); await until(async () => (await box(f.p)).text.includes('Granite') && !(await box(f.p)).text.includes('Checking…'), 4000); await f.p.waitForTimeout(200);
+      const bx = await box(f.p), x = await extra(f.p);
+      await f.p.click('#onb .btn:has-text("Save")'); await until(() => f.p.evaluate(() => document.getElementById('onb').hidden), 4000);
+      check(`${label}: a choice can be made and Save asks for it`, bx.checked && !bx.disabled && f.gets.length === 1 && f.gets[0].model === id, JSON.stringify({ gets: f.gets, bx: bx.text.slice(0, 120) }));
+      return x;
+    };
+    f = await fresh({ hw: { ramGb: 16, ramFreeGb: 1.5, gpu: null, line: 'Test PC with 16 GB of memory.' } });
+    const nPins = f.d.core.localEngine.pins.models.list.length;
+    await until(async () => (await box(f.p)).disabled === false, 8000); bx = await box(f.p); let x = await extra(f.p); let rs = await radios(f.p);
+    check('16 GB PC with 1.5 GB free: a model is ticked, with the "close some programs" note, and every model listed', bx.checked && /Granite 4\.2 3B and its engine/.test(bx.text) && /^Close some programs before you use it: it needs about 3\.2 GB and about 1\.5 GB is free right now\.$/.test(x.free) && rs.length === nPins && rs.every(r => !r.disabled && /needs about [\d.]+ GB/i.test(r.text)), JSON.stringify({ text: bx.text.slice(0, 200), x, n: rs.length }));
+    await f.p.screenshot({ path: `${SHOTS}/first_start_little_free_1366x768_light.png` });
+    await pickAndSave(f, 'granite-4.0-1b', '16 GB PC with 1.5 GB free');
+    check('16 GB PC: no page errors', f.errs.length === 0, f.errs.join(' | ').slice(0, 200)); await f.close();
+    // the owner unticks the box, then presses Check again: his untick stays, and Save asks for no model
+    f = await fresh({ hw: { ramGb: 16, ramFreeGb: 1.5, gpu: null, line: 'Test PC with 16 GB of memory.' } });
+    await until(async () => (await box(f.p)).disabled === false, 8000);
+    await f.p.uncheck('#onb-local');
+    const againShown = await f.p.isVisible('[data-apd="local-model"] button:has-text("Check again")');
+    await f.p.click('[data-apd="local-model"] button:has-text("Check again")');
+    await until(async () => !(await box(f.p)).text.includes('Checking…'), 4000); await f.p.waitForTimeout(300); bx = await box(f.p);
+    check('16 GB PC: Check again after an untick leaves the box unticked', againShown && !bx.checked && !bx.disabled, JSON.stringify({ againShown, bx: { checked: bx.checked, disabled: bx.disabled } }));
+    await f.p.click('#onb .btn:has-text("Save")'); await until(() => f.p.evaluate(() => document.getElementById('onb').hidden), 4000);
+    check('16 GB PC: then Save asks for no model', f.gets.length === 0, JSON.stringify(f.gets)); await f.close();
+    f = await fresh({ hw: { ramGb: 8, ramFreeGb: 6, gpu: null, line: 'Test PC with 8 GB of memory.' } });
+    await until(async () => (await box(f.p)).disabled === false, 8000); bx = await box(f.p); rs = await radios(f.p);
+    const big = rs.find(r => r.id === 'granite-4.2-8b');
+    check('8 GB PC with no graphics card: the 3B is the most offered; the 8B is listed with the reason and can be picked', bx.checked && /Granite 4\.2 3B and its engine/.test(bx.text) && big && !big.fits && !big.disabled && /more than this PC has/.test(big.text), JSON.stringify({ text: bx.text.slice(0, 160), big }));
+    x = await pickAndSave(f, 'granite-4.2-8b', '8 GB PC, the 8B by hand');
+    check('8 GB PC: choosing the 8B shows the one plain warning', x.warn === 'This model needs more memory than this PC has. It may be very slow or not start.', JSON.stringify(x));
+    await f.close();
+    f = await fresh({ hw: { ramGb: 2, ramFreeGb: 1, gpu: null, line: 'Test PC with 2 GB of memory.' } });
+    await until(async () => (await radios(f.p)).length > 0, 8000); await f.p.waitForTimeout(300); bx = await box(f.p); x = await extra(f.p); rs = await radios(f.p);
+    check('2 GB PC: none recommended, unticked, why in one line, the list shown and Open Models', !bx.checked && /2 GB of memory/.test(bx.text) && /none is recommended/.test(bx.text) && rs.length === nPins && rs.every(r => r.visible && !r.disabled && !r.fits) && x.open, JSON.stringify({ text: bx.text.slice(0, 220), x, rs: rs.map(r => r.id) }));
+    await f.p.screenshot({ path: `${SHOTS}/first_start_none_fits_1366x768_light.png` });
+    x = await pickAndSave(f, 'granite-4.0-1b', '2 GB PC, the 1B by hand');
+    check('2 GB PC: choosing one shows the warning', /needs more memory than this PC has/.test(x.warn), JSON.stringify(x));
+    check('2 GB PC: no page errors', f.errs.length === 0, f.errs.join(' | ').slice(0, 200)); await f.close();
+    f = await fresh({ hw: { ramGb: 2, ramFreeGb: 1, gpu: null } }); await f.p.setViewportSize({ width: 390, height: 844 });
+    await until(async () => (await extra(f.p)).open, 8000);
+    await f.p.screenshot({ path: `${SHOTS}/first_start_none_fits_390x844_light.png` });
+    await f.p.click('[data-apd="local-model-open"]'); await until(() => f.p.evaluate(() => document.getElementById('onb').hidden), 4000);
+    check('2 GB PC: Open Models saves the step without the model and opens Models', f.gets.length === 0 && await f.p.evaluate(() => document.getElementById('onb').hidden && location.hash === '#/models'), await f.p.evaluate(() => location.hash));
+    await f.close();
+    f = await fresh({ hw: async () => { throw new Error('no answer'); } });
+    await until(async () => (await radios(f.p)).length > 0, 8000); rs = await radios(f.p);
+    const scanPlan = (await f.d.call('/api/local-engine/plan')).json;
+    check('a hardware scan that fails: memory from the system count, the list is still there', scanPlan.hardware.memoryFrom === 'system' && rs.length === nPins, JSON.stringify({ from: scanPlan.hardware.memoryFrom, n: rs.length }));
+    await pickAndSave(f, 'granite-4.0-1b', 'a scan that fails');
     await f.close();
     // phone width: the card fits
     f = await fresh(); await f.p.setViewportSize({ width: 390, height: 844 }); await until(async () => (await box(f.p)).disabled === false, 8000);

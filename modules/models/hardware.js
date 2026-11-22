@@ -1,18 +1,31 @@
 // Hardware scan with systeminformation, and the rules for which local model sizes fit.
+import os from 'node:os';
 import si from 'systeminformation';
 import { OLLAMA_PICKS, UNSAFE_NAME } from './catalog.js';
 const GiB = 1024 ** 3;
 
 export async function scan() {
-  const [cpu, mem, gfx, os] = await Promise.all([si.cpu(), si.mem(), si.graphics().catch(() => ({ controllers: [] })), si.osInfo().catch(() => ({}))]);
+  // each part may fail on its own (a processor or graphics query on Windows on ARM, say) without losing the memory figures
+  const [cpu, mem, gfx, osi] = await Promise.all([si.cpu().catch(() => ({})), si.mem().catch(() => null), si.graphics().catch(() => ({ controllers: [] })), si.osInfo().catch(() => ({}))]);
   const gpus = (gfx.controllers || []).map(c => {
     // On Windows the WMI figure caps at 4 GB; systeminformation also reads nvidia-smi (memoryTotal, MiB). Take the larger.
     const mib = Math.max(Number(c.vram) || 0, Number(c.memoryTotal) || 0);
     return { name: [c.vendor, c.model].filter(Boolean).join(' ').replace(/^NVIDIA Corporation /, 'NVIDIA ').trim() || c.name || 'Graphics', vramGb: Math.round(mib / 1024 * 10) / 10, dedicated: c.vramDynamic === false || /nvidia|amd|radeon/i.test(c.vendor + c.model) };
   }).filter(g => g.name);
   const best = gpus.filter(g => g.dedicated && g.vramGb >= 2).sort((a, b) => b.vramGb - a.vramGb)[0] || null;
-  const ramGb = Math.round(mem.total / GiB * 10) / 10;
-  return { at: new Date().toISOString(), cpu: { name: [cpu.manufacturer, cpu.brand].filter(Boolean).join(' '), cores: cpu.physicalCores || cpu.cores, threads: cpu.cores }, ramGb, ramFreeGb: Math.round(mem.available / GiB * 10) / 10, gpus, gpu: best, os: [os.distro, os.release].filter(Boolean).join(' '), ...recommend({ ramGb, gpu: best }) };
+  const m = readMemory(mem);
+  return { at: new Date().toISOString(), cpu: { name: [cpu.manufacturer, cpu.brand].filter(Boolean).join(' '), cores: cpu.physicalCores || cpu.cores, threads: cpu.cores }, ...m, gpus, gpu: best, os: [osi.distro, osi.release].filter(Boolean).join(' '), ...recommend({ ramGb: m.ramGb, gpu: best }) };
+}
+
+/** The scan's memory figures (bytes) when they make sense; else the system's own count (os.totalmem, os.freemem), and which was used. */
+export function readMemory(mem, sys = os) {
+  const total = Number(mem?.total), avail = Number(mem?.available);
+  const okTotal = Number.isFinite(total) && total >= GiB / 4 && total < 65536 * GiB;
+  const okAvail = Number.isFinite(avail) && avail >= 0 && okTotal && avail <= total;
+  const gb = (b) => Math.round(b / GiB * 10) / 10;
+  if (okTotal && okAvail) return { ramGb: gb(total), ramFreeGb: gb(avail), memoryFrom: 'scan', memoryLine: null };
+  const t = okTotal ? total : sys.totalmem(); const f = Math.min(sys.freemem(), t);
+  return { ramGb: gb(t), ramFreeGb: gb(f), memoryFrom: 'system', memoryLine: 'Memory was read from the system\'s own count, because the hardware scan gave no usable figure.' };
 }
 
 /** Which local model sizes fit. Budget: 90% of graphics memory with a GPU, else 60% of RAM (slow on CPU). */

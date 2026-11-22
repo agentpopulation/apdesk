@@ -539,35 +539,57 @@ async function hasFastModel() {
   try { const r = await api('model/active'); return (r.active || []).some(p => (p.kind === 'keyed' && p.keys) || (p.kind === 'local' && p.ok && (p.models || []).length) || p.kind === 'lan'); } catch { return false; }
 }
 /** The first-start offer of a local model: what /api/local-engine/plan says fits this PC, ticked when it can be had.
- *  Nothing is fetched here; Save asks the desk to start the downloads, and each one still asks the owner first. */
+ *  Nothing is fetched here; Save asks the desk to start the downloads, and each one still asks the owner first.
+ *  There is always a choice: every model in the list is shown with its size and the memory it needs. One too large
+ *  for this PC can still be picked, after one plain warning. Memory free right now is a note, never a refusal. */
 function localModelBox() {
   const cb = h('input', { type: 'checkbox', id: 'onb-local', disabled: true, 'aria-describedby': 'onb-local-d' });
   const what = h('span', { class: 'd', id: 'onb-local-d' }, 'Checking what fits this PC…');
   const choose = h('button', { type: 'button', class: 'link', hidden: true, 'aria-expanded': 'false' }, 'Choose another');
+  // memory free now changes from minute to minute: after closing programs the owner can read it again
+  const again = h('button', { type: 'button', class: 'link', hidden: true }, 'Check again');
+  // nothing recommended: Models is where the owner can look further; it saves this step without the model, as the model note does
+  const models = h('button', { type: 'button', class: 'link', hidden: true, 'data-apd': 'local-model-open' }, 'Open Models');
   const note = h('span', { class: 'd', 'data-apd': 'local-model-note', hidden: true });
+  const free = h('span', { class: 'd', 'data-apd': 'local-model-free', hidden: true });   // plan.freeNote: "Close some programs before you use it: …"
+  const warn = h('span', { class: 'd', 'data-apd': 'local-model-warn', role: 'status', hidden: true });
   const list = h('div', { class: 'choices', hidden: true, role: 'radiogroup', 'aria-label': 'Local model' });
   const box = h('div', { class: 'localbox', 'data-apd': 'local-model' },
     h('label', { class: 'tick' }, cb, h('span', null, h('b', null, 'Download a local model in the background'), what,
-      h('span', { class: 'd' }, 'It runs on this PC and works without the internet.'), note)), h('div', { class: 'row', style: { paddingLeft: '22px' } }, choose), list);
+      h('span', { class: 'd' }, 'It runs on this PC and works without the internet.'), note, free, warn)), h('div', { class: 'row', style: { paddingLeft: '22px' } }, choose, again, models), list);
   const pick = { id: null, ok: false };
-  const off = (why) => { note.hidden = true; cb.checked = false; cb.disabled = true; pick.ok = false; what.textContent = why; choose.hidden = true; list.hidden = true; box.classList.add('off'); };
-  const show = (plan) => {
+  // the owner's untick holds: a fresh read (Check again) is not a pick, so only a model he picks ticks the box again
+  let unticked = false; cb.onchange = () => { unticked = !cb.checked; };
+  const off = (why, retry = false) => { again.hidden = !retry; models.hidden = true; note.hidden = free.hidden = warn.hidden = true; cb.checked = false; cb.disabled = true; pick.ok = false; what.textContent = why; choose.hidden = true; list.hidden = true; box.classList.add('off'); };
+  const line = (c) => c.fits ? `${c.sizeText} download, needs about ${c.needsGb} GB of memory.${c.why ? ' ' + c.why[0].toUpperCase() + c.why.slice(1) + '.' : ''}` : `${c.sizeText} download. ${c.notFit || `Needs about ${c.needsGb} GB, more than this PC has.`}`;
+  const show = (plan, picked = false) => {
     if (state.settings.online === false) return off('Not now: the desk is Offline. Switch it online first, then get it on the Models page.');
     if (state.panic.halted) return off('Not now: everything is stopped. Press Resume first.');
-    if (!plan.ok || !plan.model) return off(plan.reason || 'No local model fits this PC.');
-    if (!plan.totalBytes) return off(`${plan.model.name} is already on this PC.`);
-    pick.id = plan.model.id; pick.ok = true; box.classList.remove('off');
-    if (cb.disabled) { cb.disabled = false; cb.checked = true; }
+    const choices = plan.choices || [];
+    if ((!plan.ok || !plan.model) && !choices.length) return off(plan.reason || 'No local model fits this PC.');
+    if (plan.model && !plan.totalBytes) return off(`${plan.model.name} is already on this PC.`);
+    list.replaceChildren(...choices.map(c => h('label', { class: 'tick' }, h('input', { type: 'radio', name: 'onb-model', value: c.id, checked: c.id === plan.model?.id, 'data-fits': String(!!c.fits), onchange: () => choice(c.id) }),
+      h('span', null, h('b', null, c.name + (c.id === plan.recommended ? ' (best fit)' : '')), h('span', { class: 'd' }, line(c))))));
+    choose.hidden = choices.length < 2; box.classList.remove('off');
+    if (!plan.ok || !plan.model) {
+      // nothing recommended: unticked, why in one line, the list open, and Models one press away
+      pick.ok = false; cb.checked = false; cb.disabled = true; what.textContent = plan.reason || 'No model is recommended for this PC.';
+      note.hidden = free.hidden = warn.hidden = again.hidden = true; models.hidden = false; list.hidden = false; choose.setAttribute('aria-expanded', 'true');
+      return;
+    }
+    pick.id = plan.model.id; pick.ok = true; models.hidden = plan.recommended != null;
+    if (picked) unticked = false;
+    if (cb.disabled || picked) { cb.disabled = false; cb.checked = picked || !unticked; }
     what.textContent = `${plan.model.name}${plan.engineBytes ? ' and its engine' : ''}, ${plan.totalText}`;
     note.textContent = plan.note || ''; note.hidden = !plan.note;
-    const others = (plan.choices || []).filter(c => c.fits);
-    choose.hidden = others.length < 2;
-    list.replaceChildren(...(plan.choices || []).map(c => h('label', { class: 'tick' }, h('input', { type: 'radio', name: 'onb-model', value: c.id, checked: c.id === pick.id, disabled: !c.fits, onchange: () => choice(c.id) }),
-      h('span', null, h('b', null, c.name), h('span', { class: 'd' }, c.fits ? `${c.sizeText}${c.why ? '. ' + c.why[0].toUpperCase() + c.why.slice(1) + '.' : ''}` : `${c.sizeText}. Too large for this PC.`)))));
+    free.textContent = plan.freeNote || ''; free.hidden = !plan.freeNote; again.hidden = !plan.lowMemory;
+    warn.textContent = plan.warning || ''; warn.hidden = !plan.warning;
   };
-  const read = async (id) => { const [plan, eng] = await Promise.all([api('local-engine/plan' + (id ? '?model=' + encodeURIComponent(id) : '')), api('local-engine').catch(() => null)]); if (eng && eng.on === false) return off('The local engine is switched off on the Models page.'); show(plan); };
+  const read = async (id, fresh = false) => { const q = [id && 'model=' + encodeURIComponent(id), fresh && 'fresh=1'].filter(Boolean).join('&'); const [plan, eng] = await Promise.all([api('local-engine/plan' + (q ? '?' + q : '')), api('local-engine').catch(() => null)]); if (eng && eng.on === false) return off('The local engine is switched off on the Models page.'); show(plan, !!id && !fresh); };
   const choice = (id) => { what.textContent = 'Checking…'; read(id).catch(e => off('Could not check it now: ' + e.message)); };
+  again.onclick = () => { again.hidden = true; what.textContent = 'Checking…'; read(pick.id, true).catch(e => off('Could not check it now: ' + e.message, true)); };
   choose.onclick = () => { list.hidden = !list.hidden; choose.setAttribute('aria-expanded', String(!list.hidden)); };
+  models.onclick = () => { cb.checked = false; pick.ok = false; const save = [...(box.closest('.card')?.querySelectorAll('.btn') || [])].find(b => b.textContent === 'Save'); ui.go('models'); save?.click(); };
   read(null).catch(e => off('Could not check what fits this PC: ' + e.message));
   return { el: box, wanted: () => pick.ok && cb.checked && !cb.disabled ? pick.id : null };
 }

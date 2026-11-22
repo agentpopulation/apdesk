@@ -42,7 +42,7 @@ async function deskWith(host, opts = {}) {
 const freeOwnPort = (port, host) => new Promise((res) => { const s = net.connect({ port, host }); s.on('connect', () => { s.destroy(); res(true); }); s.on('error', () => res(false)); });
 const ask = (t, extra = {}) => t.core.model.chat({ model: { provider: 'llama' }, messages: [{ role: 'user', content: 'Reply with one word: ready' }], purpose: 'small', ...extra });
 
-test('local engine: picks a build and the largest model that fits, never one that needs more than the PC has free', () => {
+test('local engine: picks a build and the largest model that fits the whole memory of the PC', () => {
   const e = Object.create(LocalEngine.prototype); e.pins = PINS;
   e.platform = 'win32'; e.arch = 'x64';
   assert.equal(e.pickBuild({ gpu: null }).id, 'win-cpu-x64');
@@ -58,9 +58,10 @@ test('local engine: picks a build and the largest model that fits, never one tha
   e.platform = 'win32'; e.arch = 'x64'; const gpu = { ramGb: 16, ramFreeGb: 12, gpu: { dedicated: true, vramGb: 8 } };
   assert.equal(e.pickModel(gpu, e.pickBuild(gpu)).id, 'granite-4.2-8b', 'a graphics card: the largest that fits');
   e.platform = 'linux'; e.arch = 'x64';
-  assert.equal(e.pickModel({ ramGb: 16, ramFreeGb: 4 }, b).id, 'granite-4.2-3b', 'free memory counts, not only the total');
-  assert.equal(e.pickModel({ ramGb: 8, ramFreeGb: 3 }, b).id, 'granite-4.0-1b');
-  assert.equal(e.pickModel({ ramGb: 4, ramFreeGb: 1 }, b), null, 'nothing that needs more than the PC has free');
+  assert.equal(e.pickModel({ ramGb: 16, ramFreeGb: 1.5 }, b).id, 'granite-4.2-3b', 'memory free this minute does not decide what fits');
+  assert.equal(e.pickModel({ ramGb: 8, ramFreeGb: 1 }, b).id, 'granite-4.2-3b');
+  assert.equal(e.pickModel({ ramGb: 4, ramFreeGb: 0.5 }, b).id, 'granite-4.0-1b');
+  assert.equal(e.pickModel({ ramGb: 2, ramFreeGb: 1 }, b), null, 'nothing that needs more than the whole memory of the PC');
   for (const m of PINS.models.list) { assert.match(m.sha256, /^[0-9a-f]{64}$/); assert.ok(m.size > 0); assert.ok(/^Apache-2\.0$|^MIT$/.test(m.licence)); assert.ok(m.url.includes(m.commit) && m.url.endsWith('/' + m.file)); }
   for (const x of PINS.engine.builds) { assert.match(x.sha256, /^[0-9a-f]{64}$/); assert.ok(x.url.endsWith('/' + x.file)); }
 });
@@ -82,6 +83,78 @@ test('local engine: no graphics card, the plan offers 3B at most and says why in
   const small = await e.plan(); assert.equal(small.recommended, 'granite-4.2-3b'); assert.equal(small.note, null);
 });
 
+test('local engine: little free memory is a note, not a refusal, and a fresh check reads the memory again instead of the ten-minute copy', async () => {
+  const e = Object.create(LocalEngine.prototype);
+  Object.assign(e, { pins: PINS, platform: 'linux', arch: 'x64', hw: null, dir: path.join(os.tmpdir(), 'apd-no-engine-here'), cfg: () => ({ on: true, choice: null, engine: null, model: null, downloads: {} }) });
+  let free = 1.5; e.hardwareFn = async () => ({ ramGb: 8, ramFreeGb: free, gpu: null });
+  const low = await e.plan();
+  assert.equal(low.ok, true); assert.equal(low.recommended, 'granite-4.2-3b'); assert.match(low.freeNote, /Close some programs/); assert.equal(low.lowMemory, true, 'the box can offer to check again');
+  free = 5;
+  assert.equal((await e.plan()).lowMemory, true, 'a plain read keeps the cached scan');
+  const again = await e.plan(null, { fresh: true });
+  assert.equal(again.ok, true); assert.equal(again.lowMemory, false); assert.equal(again.freeNote, null); assert.equal(again.recommended, 'granite-4.2-3b');
+});
+
+const planner = (hw, platform = 'linux', arch = 'x64') => { const e = Object.create(LocalEngine.prototype); Object.assign(e, { pins: PINS, platform, arch, hw: null, dir: path.join(os.tmpdir(), 'apd-no-engine-here'), cfg: () => ({ on: true, choice: null, engine: null, model: null, downloads: {} }) }); e.hardwareFn = typeof hw === 'function' ? hw : async () => hw; return e; };
+const WARN = 'This model needs more memory than this PC has. It may be very slow or not start.';
+
+test('local engine: a 16 GB PC with 1.5 GB free gets a model, with a note to close some programs, never a refusal', async () => {
+  const e = planner({ ramGb: 16, ramFreeGb: 1.5, gpu: null });
+  const p = await e.plan();
+  assert.equal(p.recommended, 'granite-4.2-3b'); assert.equal(p.model.id, 'granite-4.2-3b'); assert.equal(p.ok, true); assert.equal(p.reason, null);
+  assert.equal(p.freeNote, 'Close some programs before you use it: it needs about 3.2 GB and about 1.5 GB is free right now.');
+  assert.equal(p.choices.length, PINS.models.list.length, 'every model in the pin list');
+  for (const c of p.choices) { assert.ok(c.sizeText && c.needsGb > 0); assert.equal(c.fits, true, c.id); }
+  const roomy = await planner({ ramGb: 16, ramFreeGb: 12, gpu: null }).plan(); assert.equal(roomy.freeNote, null, 'no note when there is room now');
+});
+
+test('local engine: an 8 GB PC with no graphics card keeps the 3B cap; the 8B is listed with the reason and can be chosen with the warning', async () => {
+  for (const [platform, arch] of [['win32', 'arm64'], ['win32', 'x64'], ['linux', 'x64']]) {
+    const e = planner({ ramGb: 8, ramFreeGb: 6, gpu: null }, platform, arch);
+    const p = await e.plan(); assert.equal(p.recommended, 'granite-4.2-3b', platform + arch); assert.equal(p.ok, true);
+    const big = p.choices.find(c => c.id === 'granite-4.2-8b'); assert.equal(big.fits, false); assert.match(big.notFit, /6\.6 GB/); assert.match(big.notFit, /4\.8 GB/);
+    const byHand = await e.plan('granite-4.2-8b'); assert.equal(byHand.ok, true); assert.equal(byHand.warning, WARN);
+  }
+  const big = await planner({ ramGb: 32, ramFreeGb: 2, gpu: null }).plan(); assert.equal(big.recommended, 'granite-4.2-3b', 'the cap holds on a big PC too');
+});
+
+test('local engine: a 2 GB PC: none recommended, said plainly in one line, every model still listed and choosable with the warning', async () => {
+  const e = planner({ ramGb: 2, ramFreeGb: 1, gpu: null }, 'win32', 'arm64');
+  const p = await e.plan();
+  assert.equal(p.recommended, null); assert.equal(p.model, null); assert.equal(p.ok, false);
+  assert.match(p.reason, /2 GB of memory/); assert.match(p.reason, /1\.7 GB/); assert.match(p.reason, /none is recommended/); assert.ok(!p.reason.includes('\n'));
+  assert.equal(p.choices.length, PINS.models.list.length); assert.ok(p.choices.every(c => !c.fits && c.notFit));
+  const one = await e.plan('granite-4.0-1b'); assert.equal(one.ok, true); assert.equal(one.model.id, 'granite-4.0-1b'); assert.equal(one.warning, WARN);
+});
+
+test('local engine: a hardware scan that fails or reads 0 falls back to the system memory count and says so', async () => {
+  for (const hw of [async () => { throw new Error('no answer'); }, { ramGb: 0, ramFreeGb: 0, gpu: null }, { ramGb: NaN, ramFreeGb: -1, gpu: null }]) {
+    const p = await planner(hw, 'win32', 'arm64').plan();
+    assert.equal(p.hardware.memoryFrom, 'system'); assert.match(p.hardware.memoryLine, /system/);
+    assert.equal(p.hardware.ramGb, Math.round(os.totalmem() / 1024 ** 3 * 10) / 10);
+    assert.ok(p.choices.length === PINS.models.list.length, 'the list is still there');
+  }
+  const good = await planner({ ramGb: 16, ramFreeGb: 4, gpu: null }).plan(); assert.equal(good.hardware.memoryFrom, 'scan'); assert.equal(good.hardware.memoryLine, null);
+  const { readMemory } = await import('./hardware.js');
+  assert.equal(readMemory({ total: 16 * 1024 ** 3, available: 2 * 1024 ** 3 }).memoryFrom, 'scan');
+  assert.deepEqual(readMemory({ total: 16 * 1024 ** 3, available: 2 * 1024 ** 3 }).ramGb, 16);
+  for (const odd of [null, { total: 0, available: 0 }, { total: 16 * 1024 ** 3, available: 20 * 1024 ** 3 }, { total: 'x' }]) {
+    const r = readMemory(odd); assert.equal(r.memoryFrom, 'system', JSON.stringify(odd)); assert.ok(r.ramGb > 0 && r.ramFreeGb >= 0 && r.ramFreeGb <= r.ramGb); assert.match(r.memoryLine, /system/);
+  }
+});
+
+test('local engine: the Models page engine card and the first-start box list every model, none greyed out, a too-large one after the warning', () => {
+  const ui = fs.readFileSync(path.join(HERE, 'ui.js'), 'utf8');
+  const card = ui.slice(ui.indexOf('function engineCard('), ui.indexOf('const dls ='));
+  assert.ok(card.length > 100 && !/disabled: !c\.fits/.test(card), 'no option is disabled for not fitting');
+  assert.match(card, /needs about \$\{c\.needsGb\} GB/); assert.match(card, /ui\.confirm\('This model needs more memory than this PC has\. It may be very slow or not start\.'/);
+  assert.match(ui, /plan\.freeNote/); assert.match(ui, /plan\.warning/); assert.match(ui, /memoryLine/);
+  const shell = fs.readFileSync(path.join(HERE, '..', '..', 'app', 'ui', 'shell.js'), 'utf8');
+  const box = shell.slice(shell.indexOf('function localModelBox()'), shell.indexOf('async function firstStep('));
+  assert.ok(!/disabled: !c\.fits/.test(box), 'no radio is disabled for not fitting');
+  assert.match(box, /'Open Models'/); assert.match(box, /plan\.warning/); assert.match(box, /plan\.freeNote/); assert.match(box, /list\.hidden = false/);
+});
+
 test('local engine: the plan for the first-start box, refused without the owner, and the full flow to an answer on loopback', { skip: NO_SH }, async () => {
   const host = await startDownloadHost({}); const t = await deskWith(host, { desk: { modules: ['models'] } }); const ok = autoApprove(t.core);
   try {
@@ -91,7 +164,9 @@ test('local engine: the plan for the first-start box, refused without the owner,
     assert.ok(plan.licences.some(l => /llama\.cpp b-test \(MIT\)/.test(l)) && plan.licences.some(l => /Test Small by Test \(Apache-2\.0\)/.test(l)));
     assert.equal((await t.call('/api/local-engine/get', { body: {}, session: false })).status, 403, 'not without the owner');
     await assert.rejects(t.core.localEngine.get({ owner: false }), /Only the owner/);
-    assert.equal((await t.call('/api/local-engine/get', { body: { model: 'test-huge' } })).status, 409, 'a model that does not fit is refused');
+    const huge = (await t.call('/api/local-engine/plan?model=test-huge')).json;
+    assert.equal(huge.ok, true, 'a model too large for this PC can still be chosen'); assert.equal(huge.model.fits, false);
+    assert.equal(huge.warning, 'This model needs more memory than this PC has. It may be very slow or not start.');
     assert.equal(t.core.localEngine.status().phase, 'none');
     const got = (await t.call('/api/local-engine/get', { body: {} })).json;
     assert.equal(got.phase, 'downloading'); assert.equal(got.downloads.length, 2);
