@@ -226,6 +226,8 @@ Everything below was built and tested on Linux after the 0.1.0 release. The Wind
 - Windows: install.bat now opens a visual installer in your browser, with the logo, a Browse button for the folder, switches for the Desktop icon, the Apps entry and start at sign-in, and a progress view. The plain console installer stays as a fallback (install.bat /console). Not yet run on Windows.
 - npm warnings are no longer shown during install (they are kept in the install log), and the Node.js download shows one tidy progress bar.
 - Starting AP Desk at the end of an install, from the Start menu or the Desktop icon leaves no console window behind.
+- When the free models are busy, your own free keys are now reached before a small local model for research and for turns that use tools; the free models on "auto" count as one step, and steps that were skipped no longer use up the tries.
+- When a small local model does write a research answer, the reply says so ("Written by a small local model; check the facts"), and a reply shows which model wrote it and which chose the searches when they differ.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

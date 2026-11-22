@@ -34,6 +34,18 @@ const NOTICE = /reached its budget|raise the key budget|enter\.pollinations\.ai|
  *  A candidate with fewer than `minCalls` calls there is not ranked; the table is read again after `ttlMs`. */
 export const LEARN = Object.freeze({ days: 7, minCalls: 5, ttlMs: 60000 });
 const DEFAULT_CHAIN = ['router', 'ollama', 'keyed'];
+/** A local model at or under this many billion parameters is small: for research and tool turns it goes behind the keys. */
+export const SMALL_PARAMS_B = 4;
+/** The kinds of call a small local model goes behind the keys for: a research answer and the plan of a research turn. */
+const SMALL_LAST = new Set(['research', 'plan']);
+/** Is a local model small? By the size Ollama reports ("1.2B"), else the engine's own file size, else a size in its name (":1b"). */
+export function smallModel({ params, bytes, name } = {}) {
+  const p = String(params || '').match(/^\s*(\d+(?:\.\d+)?)\s*([BM])\b/i);
+  if (p) return (p[2].toUpperCase() === 'M' ? Number(p[1]) / 1000 : Number(p[1])) <= SMALL_PARAMS_B;
+  if (Number(bytes) > 0) return Number(bytes) < 3e9;   // a 4B model in 4-bit is about 2.5 GB
+  const n = String(name || '').match(/[:\-_ ](\d+(?:\.\d+)?)b\b/i);
+  return n ? Number(n[1]) <= SMALL_PARAMS_B : false;
+}
 const ENV_KEYS = ['OPENROUTER_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GROQ_API_KEY', 'GEMINI_API_KEY', 'MISTRAL_API_KEY', 'DEEPSEEK_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'CEREBRAS_API_KEY', 'XAI_API_KEY'];
 
 const BIG = { input: 1e6, output: 1e6 };
@@ -178,19 +190,60 @@ export class ModelDoor {
       else if (PROVIDERS[step]) { if (this.keysFor(step).some(k => k.enabled)) chain.push({ provider: step, model: null, why: 'default key' }); }
       else if (step === 'keyed') { for (const pid of Object.keys(PROVIDERS)) if (this.keysFor(pid).some(k => k.enabled)) chain.push({ provider: pid, model: null, why: 'default key' }); for (const n of this.settings.get('network.lanNodes') || []) if (n?.enabled !== false && n?.baseUrl) chain.push({ provider: 'lan:' + n.id, model: n.model || null, why: 'lan' }); }
     }
-    const seen = new Set(); const uniq = chain.filter(c => { const k = c.provider + '|' + (c.model || ''); if (seen.has(k)) return false; seen.add(k); return true; }).map(c => ({ ...c, name: this.label(c.provider) }));
+    // the Free API on "auto" is the same step as the Free API with no model named: it is tried once
+    const stepKey = (c) => c.provider + '|' + (c.provider === 'router' && c.model === 'auto' ? '' : c.model || '');
+    const seen = new Set(); const uniq = chain.filter(c => { const k = stepKey(c); if (seen.has(k)) return false; seen.add(k); return true; }).map(c => ({ ...c, name: this.label(c.provider) }));
     // Offline: the chain that will really be used holds only local models. The full list is kept for the screen.
     const online = this.online;
     return { main: a?.model?.main || null, fallback: a?.model?.fallback || null, online, chain: online ? uniq : uniq.filter(c => this.isLocal(c.provider)), whenOnline: uniq };
   }
   isLocal(provider) { return provider === 'ollama' || provider === 'llama' || String(provider).startsWith('lan:'); }
+  /** The steps a call walks, in order. For research, and for any call with tools, a small local model (Ollama's reported size,
+   *  the engine's file size, or a size in its name) goes behind the keyed models, so a free key writes before a 1B model does.
+   *  The plan of a research turn (purpose 'plan') is treated the same way.
+   *  A plain chat keeps the owner's order. The owner turns the rule off with model.smallLocalLast = false. */
+  async chainFor(agentId, opts = {}) {
+    let chain = this.learnedChain(this.resolve(agentId).chain, opts.purpose);
+    // the Ollama default step that is the same model as a step named before it is that step again: tried once
+    const ol = chain.some(c => c.provider === 'ollama') ? await this.ollamaModels() : null;
+    const olName = (c) => c.model || (ol?.ok ? this.ollamaDefault(ol.models) : null);
+    const seen = new Set(); chain = chain.filter(c => { if (c.provider !== 'ollama') return true; const n = olName(c); if (n && seen.has(n)) return false; if (n) seen.add(n); return true; });
+    if (!(SMALL_LAST.has(opts.purpose) || opts.tools?.length) || this.settings.get('model.smallLocalLast') === false) return chain;
+    const small = [];
+    for (const c of chain) if (await this.isSmallStep(c)) small.push(c);
+    return small.length ? [...chain.filter(c => !small.includes(c)), ...small] : chain;
+  }
+  /** Is this chain step a small local model? Unknown is not small. */
+  async isSmallStep(c) {
+    try {
+      if (c.provider === 'ollama') {
+        const r = await this.ollamaModels(); if (!r.ok) return false;
+        const name = c.model || this.ollamaDefault(r.models); const m = (r.models || []).find(x => x.name === name);
+        return !!name && smallModel({ params: m?.parameters, name });
+      }
+      if (c.provider === 'llama') {
+        const e = this.localEngine; if (!e?.usable?.()) return false;
+        const st = e.status?.(); return smallModel({ bytes: st?.model?.size, name: e.modelId?.() });
+      }
+    } catch {}
+    return false;
+  }
+  /** What an Ollama model says it can do (/api/show "capabilities"), or null when this Ollama does not say. */
+  async ollamaCaps(model) {
+    const v = await this.probe('ollama-show:' + model, async () => {
+      const r = await this.http(this.settings.get('ollama.baseUrl') + '/api/show', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model }) }, 2500);
+      if (!r.ok) return { caps: null };
+      const j = await r.json(); return { caps: Array.isArray(j.capabilities) ? j.capabilities : null };
+    }, 300000);
+    return v?.caps || null;
+  }
 
   // ---------- the call
   async chat(opts) {
     if (this.panic.halted) throw new ModelError('halted', 'Everything is stopped. Press Resume first.');
     const signal = this.panic.child(opts.signal);
     const online = this.online;
-    let chain = opts.model?.provider ? [{ ...opts.model, why: 'explicit' }] : this.learnedChain(this.resolve(opts.agentId).chain, opts.purpose);
+    let chain = opts.model?.provider ? [{ ...opts.model, why: 'explicit' }] : await this.chainFor(opts.agentId, opts);
     if (!online) chain = chain.filter(c => this.isLocal(c.provider));   // an explicit pick of an online model is refused offline too
     if (!chain.length) throw new ModelError(online ? 'no_provider' : 'offline', online ? 'No model is set up. Add a key or start Ollama or the router in Models.' : 'The desk is offline and no local model is running. Start Ollama or go online.');
     const attempts = [];
@@ -200,8 +253,10 @@ export class ModelDoor {
     let shown = false;   // a target already streamed text: the caller is told to clear it before the next one streams
     const onDelta = opts.onDelta ? (d) => { shown = true; opts.onDelta(d); } : undefined;
     const hopOpts = { ...opts, onDelta };
+    // only real tries count toward the limit: a step that was not available, or was skipped, costs nothing
+    const tried = () => attempts.filter(a => !a.skipped).length;
     for (const step of chain) {
-      if (attempts.length >= MAX_ATTEMPTS) break;
+      if (tried() >= MAX_ATTEMPTS) break;
       if (signal.aborted) throw new ModelError('aborted', 'Stopped.', { attempts });
       if (Date.now() >= deadline) { late = true; break; }
       const targets = await this.targets(step, opts, { signal, leftMs: deadline - Date.now() });
@@ -209,14 +264,14 @@ export class ModelDoor {
       if (!targets.length) {
         const until = step.provider === 'router' ? this.routerBusyUntil(!!opts.tools?.length) : 0;
         if (until) busyUntil = busyUntil ? Math.min(busyUntil, until) : until;   // skipped, not tried: no attempt, no waiting
-        else attempts.push({ provider: step.provider, model: step.model, ok: false, error: step.provider === 'llama' && this.llamaWhy ? this.llamaWhy : 'not available' });
+        else attempts.push({ provider: step.provider, model: step.model, ok: false, skipped: true, error: (step.provider === 'llama' && this.llamaWhy) || (step.provider === 'ollama' && this.ollamaWhy) || 'not available' });
         continue;
       }
       for (const t of targets) {
-        if (attempts.length >= MAX_ATTEMPTS) break;
+        if (tried() >= MAX_ATTEMPTS) break;
         if (Date.now() >= deadline) { late = true; break; }
         // a paid model is not called once today's or this month's spend has reached the owner's limit
-        if (t.key && this.estimate(t.provider, t.model, BIG, t.keyId) !== 0) { const over = this.overLimit(); if (over) { attempts.push({ provider: t.provider, model: t.model, ok: false, error: `not called: your ${over} is reached` }); continue; } }
+        if (t.key && this.estimate(t.provider, t.model, BIG, t.keyId) !== 0) { const over = this.overLimit(); if (over) { attempts.push({ provider: t.provider, model: t.model, ok: false, skipped: true, error: `not called: your ${over} is reached` }); continue; } }
         const t0 = Date.now();
         if (t.via) this.lastPick.set(t.keyId, t0);
         try {
@@ -227,7 +282,7 @@ export class ModelDoor {
           this.last.set(t.provider, { ok: true, at: now(), model: t.model, ms });
           if (t.provider === 'llama') this.localEngine?.touch?.();
           this.record({ ...opts, provider: t.provider, model: t.model, keyId: t.keyId, ok: true, ms, usage: r.usage });
-          return { ...r, provider: t.provider, model: t.model, via: t.via || null, label: this.label(t.provider, t.model, t.viaName), ms, attempts, fallbackUsed: attempts.length > 1 };
+          return { ...r, provider: t.provider, model: t.model, via: t.via || null, label: this.label(t.provider, t.model, t.viaName), ms, attempts, fallbackUsed: attempts.length > 1, ...(t.small ? { small: true } : {}) };
         } catch (e) {
           const ms = Date.now() - t0;
           if (signal.aborted || e.name === 'AbortError' || e.code === 'aborted') throw new ModelError('aborted', 'Stopped.', { attempts });
@@ -243,8 +298,7 @@ export class ModelDoor {
       }
       if (late) break;
     }
-    const tried = attempts.filter(a => a.error !== 'not available');
-    if (busyUntil && !tried.length) throw new ModelError('all_failed', busyLine(busyUntil), { attempts, retryAt: new Date(busyUntil).toISOString() });
+    if (busyUntil && !tried()) throw new ModelError('all_failed', busyLine(busyUntil), { attempts, retryAt: new Date(busyUntil).toISOString() });
     throw new ModelError('all_failed', (busyUntil ? busyLine(busyUntil) + ' ' : '') + (late ? `No model answered within ${limit / 1000} seconds. ` : 'No model answered. ') + attempts.map(a => `${this.label(a.provider, a.model)}: ${a.error}`).join('; '), { attempts, ...(busyUntil ? { retryAt: new Date(busyUntil).toISOString() } : {}) });
   }
   /** How long a free host-and-model is skipped after this failure, and why. */
@@ -304,24 +358,29 @@ export class ModelDoor {
       try {
         const t = await e.target({ signal: call.signal, waitMs: Math.max(1000, Math.min(LOCAL_FIRST_MS, call.leftMs ?? LOCAL_FIRST_MS)) });
         if (!t) return [];
-        return [{ provider: 'llama', api: 'openai', baseUrl: t.baseUrl, model: t.model, headers: { authorization: 'Bearer ' + t.key }, local: true }];
+        return [{ provider: 'llama', api: 'openai', baseUrl: t.baseUrl, model: t.model, headers: { authorization: 'Bearer ' + t.key }, local: true, ...(smallModel({ bytes: e.status?.()?.model?.size, name: t.model }) ? { small: true } : {}) }];
       } catch (err) { if (call.signal?.aborted) return []; this.llamaWhy = String(err?.message || err).slice(0, 200); return []; }
     }
     if (p === 'router') {
       if (!this.settings.get('router.enabled') || !this.online) return [];
       const r = await this.routerModels();
-      if (r.ok) return [{ provider: 'router', api: 'openai', baseUrl: this.settings.get('router.baseUrl'), model: step.model || this.routerDefault(r.models), headers: this.routerHeaders() }];
+      const want = step.model === 'auto' ? null : step.model;   // "auto" is the same as no model named
+      if (r.ok) return [{ provider: 'router', api: 'openai', baseUrl: this.settings.get('router.baseUrl'), model: want || this.routerDefault(r.models), headers: this.routerHeaders() }];
       if (this.settings.get('router.builtin') === false) return [];
       await this.readLiveUpstreams();
-      const list = this.builtinRouterTargets(step.model, !!opts.tools?.length, step.via || null);
+      const list = this.builtinRouterTargets(want, !!opts.tools?.length, step.via || null);
       // a model picked for this step (agent, explicit, the owner's Test of one host) is used as it is; else the record decides
-      if (step.via || step.model || opts.model?.provider) return list;
+      if (step.via || want || opts.model?.provider) return list;
       return this.learnedOrder(list, opts.purpose, (t) => 'router|' + t.model);
     }
     if (p === 'ollama') {
+      this.ollamaWhy = null;
       const r = await this.ollamaModels(); if (!r.ok) return [];
       const model = step.model || this.ollamaDefault(r.models); if (!model) return [];
-      return [{ provider: 'ollama', api: 'openai', baseUrl: this.settings.get('ollama.baseUrl') + '/v1', model, headers: {}, local: true }];
+      // a model Ollama says cannot call tools is skipped for a turn with tools, as the llama step does
+      if (opts.tools?.length) { const caps = await this.ollamaCaps(model); if (caps && !caps.includes('tools')) { this.ollamaWhy = 'this local model cannot use tools'; return []; } }
+      const m = (r.models || []).find(x => x.name === model);
+      return [{ provider: 'ollama', api: 'openai', baseUrl: this.settings.get('ollama.baseUrl') + '/v1', model, headers: {}, local: true, ...(smallModel({ params: m?.parameters, name: model }) ? { small: true } : {}) }];
     }
     if (p.startsWith('lan:')) {
       const n = (this.settings.get('network.lanNodes') || []).find(x => 'lan:' + x.id === p); if (!n || !n.baseUrl) return [];

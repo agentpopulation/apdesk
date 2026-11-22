@@ -14,8 +14,8 @@ export function freePort() { return new Promise((res, rej) => { const s = net.cr
 
 /** A desk: either one this runner starts as a child process (`node app/server.js`), or one already running (--url, --data). */
 export class Desk {
-  constructor({ url, data, backups, root = APD, port, logFile, chain = true }) {
-    Object.assign(this, { base: url ? url.replace(/\/$/, '') : null, data, backups, root, port, logFile, chain, child: null, external: !!url, restarts: 0, stopping: false, cookie: null, pairer: null });
+  constructor({ url, data, backups, root = APD, port, logFile, chain = true, fallback = null }) {
+    Object.assign(this, { base: url ? url.replace(/\/$/, '') : null, data, backups, root, port, logFile, chain, fallback, child: null, external: !!url, restarts: 0, stopping: false, cookie: null, pairer: null });
     if (url) this.port = Number(new URL(url).port);
   }
   get url() { return this.base; }
@@ -40,8 +40,16 @@ export class Desk {
     spawnOnce();
     await this.waitUp(45000);
     this.external = false;
-    if (this.chain) await this.call('/api/settings', { body: { 'model.defaultChain': ['gemini', 'router', 'openrouter', 'keyed', 'ollama'] } });
+    // chain 'owner': the owner's own order (every agent on the Free API on auto, then his local fallback, then his keys)
+    if (this.chain === 'owner') await this.ownerChain(this.fallback);
+    else if (this.chain) await this.call('/api/settings', { body: { 'model.defaultChain': ['gemini', 'router', 'openrouter', 'keyed', 'ollama'] } });
     return this;
+  }
+  /** The owner's chain: router (auto), then `fallback` ({ provider, model }) for every agent, then the default steps and keys. */
+  async ownerChain(fallback = null) {
+    await this.call('/api/settings', { body: { 'model.defaultChain': ['router', 'ollama', 'keyed'] } });
+    const agents = (await this.call('/api/agents')).json?.agents || [];
+    for (const a of agents) await this.call(`/api/agents/${a.id}`, { method: 'PATCH', body: { model: { main: { provider: 'router', model: 'auto' }, fallback } } });
   }
   async waitUp(ms = 45000) {
     const t0 = Date.now(); this.sessionToken = null;
