@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { SEED } from '../../app/core/agents.js';
-import { ADVISORS } from './advisors.js';
+import { ADVISORS, WELCOME } from './advisors.js';
 
 // The desk's own agents besides the Coordinator. Retiring one keeps its profile here so one click hires it back as it was.
 // The four advisor roles are built in too, but start off the team.
@@ -60,7 +60,8 @@ export async function activate(ctx) {
     let id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'agent';
     if (ctx.agents.get(id)) { let n = 2; while (ctx.agents.get(`${id}-${n}`)) n++; id = `${id}-${n}`; }
     const a = ctx.agents.create({ id, name, role: String(body?.role || pack?.role || '').slice(0, 200), personality: String(body?.personality || pack?.personality || '').slice(0, 600), instructions: String(body?.instructions || pack?.instructions || '').slice(0, 4000), meta: { skills: pack ? pack.skills : [], hired: true, pack: pack?.id || null } });
-    ctx.json(res, a);
+    const { uses: _u, ...line } = hiredLine(a, `${a.name} is hired`, `${a.name} is hired.`);
+    ctx.json(res, { ...a, ...line });
   });
   ctx.route('DELETE', '/agents/:id', (req, res, { params, owner }) => {
     if (!owner) return ownerOnly(res);
@@ -69,10 +70,30 @@ export async function activate(ctx) {
     if (BUILT_IN.some(b => b.id === a.id)) ctx.kv.set('retired', { ...retired(), [a.id]: a });
     ctx.agents.remove(params.id); ctx.json(res, { ok: true });
   });
+  /** The hire's answer: who joined, and the first model it will try in plain words (its own main model, else the first step
+   *  of the desk default route), so the owner knows it can answer at once. The page shows `message` in the one-line toast,
+   *  which cuts after about 56 characters at 390 px: the cause of the model name never showing was a long sentence there.
+   *  So `message` is short with the model name early; the full sentence is `detail`, and a first hire's note carries it too. */
+  function hiredLine(a, short, first) {
+    const c = ctx.model.resolve(a.id)?.chain?.[0];
+    if (!c) return { model: null, message: `${short}. Choose a model in Models.`, detail: `${first} No model answers yet: choose one in Models.` };
+    const m = c.model || (c.provider === 'router' ? (ctx.settings.get('router.model') || 'auto') : null);
+    const model = m ? `${ctx.model.label(c.provider)} (${m})` : ctx.model.label(c.provider);
+    const the = c.provider === 'router' ? 'the ' : '';
+    return { model, message: `${short}. Model: ${model}.`, detail: `${first} It will answer with ${the}${model} until you choose another model.`, uses: `${the}${model}` };
+  }
+  /** A first hire's welcome note in its own chat: the role's fixed text (advisors.js), no model call, with the model it will
+   *  answer with after the opening line. Chat off: no note. */
+  function postWelcome(agentId, uses) {
+    if (!WELCOME[agentId]) return false;
+    const [open, ...rest] = WELCOME[agentId].split('\n\n');
+    const text = [open, uses ? `I will answer with ${uses} until you choose another model on my page.` : 'No model answers for me yet: choose one on my page or in Models.', ...rest].join('\n\n');
+    try { return !!ctx.modules.api('chat')?.postMessage?.('dm-' + agentId, { agentId, text }); } catch (e) { ctx.log('welcome note failed', e.message); return false; }
+  }
   // built-in agents not on the team: as they were when retired, or as the desk first made them
   const retired = () => ctx.kv.get('retired', {}) || {};
   const offTeam = () => BUILT_IN.filter(b => !ctx.agents.get(b.id)).map(b => ({ ...b, ...(retired()[b.id] || {}) }));
-  ctx.route('GET', '/retired', (req, res) => ctx.json(res, { agents: offTeam().map(a => ({ id: a.id, name: a.name, role: a.role })) }));
+  ctx.route('GET', '/retired', (req, res) => ctx.json(res, { agents: offTeam().map(a => ({ id: a.id, name: a.name, role: a.role, avatar: a.avatar || null })) }));
   ctx.route('POST', '/retired/:id/hire', (req, res, { params, owner }) => {
     if (!owner) return ownerOnly(res);
     if (!BUILT_IN.some(b => b.id === params.id)) return noAgent(res);
@@ -80,7 +101,11 @@ export async function activate(ctx) {
     const back = !!retired()[params.id];   // retired before: it comes back; never on the team before: it joins
     const a = ctx.agents.create(offTeam().find(b => b.id === params.id));
     const { [a.id]: _, ...rest } = retired(); ctx.kv.set('retired', rest);
-    ctx.json(res, { ...a, back, message: back ? `${a.name} is back on your team.` : `${a.name} joined your team.` });
+    // The cause of a hired agent seeming to have no model: the hire said nothing about one. An agent with no model of its own
+    // already answers with the desk default route; the hire now names that route (or the model it kept from before).
+    const r = hiredLine(a, back ? `${a.name} is back` : `${a.name} joined`, back ? `${a.name} is back on your team.` : `${a.name} joined your team.`);
+    const noted = !back && postWelcome(a.id, r.uses);
+    ctx.json(res, { ...a, back, noted, model: r.model, message: r.message, detail: [r.detail, noted && 'It left you a note in its chat.'].filter(Boolean).join(' ') });
   });
   /** One of the owner's own skills (text). It is on for no agent until he ticks it on an agent's page. */
   function addSkill(body) {

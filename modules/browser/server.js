@@ -3,6 +3,21 @@ import { Computer } from './computer.js';
 import { runLoop, shortUrl } from './agent-loop.js';
 import { launchChoice } from './launch.js';
 import { leavesThisPc, OFFLINE_LINE } from './guard.js';
+import fs from 'node:fs';
+import path from 'node:path';
+
+// The cause of "no last screenshot": a computer keeps its picture in memory only, so it is gone after a restart.
+// The last one is kept per agent in that agent's own profile folder (the folder launchChoice names) and read back from there.
+const shotFile = (dataDir, agentId) => path.join(launchChoice({ agentId, dataDir }).userDataDir, 'last-shot.jpg');
+/** Keep a computer's last picture on disk with the time it was taken. Returns true when one was kept. */
+export function keepLastShot(dataDir, agentId, { frame, frameAt } = {}) {
+  if (!frame?.length || !frameAt) return false;
+  try { const f = shotFile(dataDir, agentId); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, frame); fs.writeFileSync(f + '.json', JSON.stringify({ at: new Date(frameAt).toISOString() })); return true; } catch { return false; }
+}
+/** The last kept picture { jpeg, at } or null. */
+export function lastShot(dataDir, agentId) {
+  try { const f = shotFile(dataDir, agentId); return { jpeg: fs.readFileSync(f), at: JSON.parse(fs.readFileSync(f + '.json', 'utf8')).at }; } catch { return null; }
+}
 
 export async function activate(ctx) {
   const computers = new Map();     // agentId -> Computer
@@ -16,7 +31,8 @@ export async function activate(ctx) {
     if (!computers.has(agentId)) computers.set(agentId, new Computer({ agentId, dataDir: ctx.dataDir, log: ctx.log, emit, guardOpts }));
     return computers.get(agentId);
   };
-  const closeAll = async () => { await Promise.all([...computers.values()].map(c => c.close().catch(() => {}))); for (const c of computers.values()) { c.mode = 'idle'; c.jobId = null; } };
+  const keep = (c) => { if (c?.frame && c.frameAt !== c._keptAt) { c._keptAt = c.frameAt; keepLastShot(ctx.dataDir, c.agentId, c); } };
+  const closeAll = async () => { for (const c of computers.values()) keep(c); await Promise.all([...computers.values()].map(c => c.close().catch(() => {}))); for (const c of computers.values()) { c.mode = 'idle'; c.jobId = null; } };
   const offPanic = ctx.panic.onStop(async () => { await closeAll(); return { browser: 'closed' }; });
 
   const ask = (r) => ctx.approval.request({ signal: ctx.panic.signal, ...r });
@@ -65,7 +81,7 @@ export async function activate(ctx) {
           if (job.signal.aborted || e.code === 'aborted') { c.step('stopped', 'Stopped.'); card('stopped', 'Stopped', null); throw Object.assign(new Error('Stopped'), { code: 'aborted' }); }
           c.step('failed', e.message); card('failed', e.message, null); throw e;
         } finally {
-          c.takeOver = prevTake; c.handBack = prevBack; c.approveNav = null;
+          c.takeOver = prevTake; c.handBack = prevBack; c.approveNav = null; keep(c);
           job.signal.removeEventListener('abort', onStop);
           if (c.jobId === job.id) c.jobId = null;
         }
@@ -102,10 +118,17 @@ export async function activate(ctx) {
     if (!c?.frame || Number(query.after || -1) >= c.frameNo) { res.writeHead(204, { 'cache-control': 'no-store', 'x-frame': String(c?.frameNo || 0) }); return res.end(); }
     res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store', 'x-frame': String(c.frameNo) }); res.end(c.frame);
   });
+  ctx.route('GET', '/:agentId/last-shot', (req, res, { params, owner }) => {
+    if (!ownerOnly(res, owner)) return;
+    const c = computers.get(params.agentId);
+    const s = c?.frame && c.frameAt ? { jpeg: c.frame, at: new Date(c.frameAt).toISOString() } : lastShot(ctx.dataDir, params.agentId);
+    if (!s) { res.writeHead(204, { 'cache-control': 'no-store' }); return res.end(); }
+    res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store', 'x-taken': s.at }); res.end(s.jpeg);
+  });
   ctx.route('POST', '/:agentId/takeover', async (req, res, { params, owner }) => { if (!ownerOnly(res, owner)) return; const c = computer(params.agentId); if (!c.open) await c.start(); c.takeOver(); await c.snap(); ctx.json(res, c.status()); });
-  ctx.route('POST', '/:agentId/handback', (req, res, { params, owner }) => { if (!ownerOnly(res, owner)) return; const c = computer(params.agentId); const note = c.handBack(); ctx.json(res, { ...c.status(), note }); });
+  ctx.route('POST', '/:agentId/handback', (req, res, { params, owner }) => { if (!ownerOnly(res, owner)) return; const c = computer(params.agentId); const note = c.handBack(); keep(c); ctx.json(res, { ...c.status(), note }); });
   ctx.route('POST', '/:agentId/input', async (req, res, { params, body, owner }) => { if (!ownerOnly(res, owner)) return; try { ctx.json(res, await computer(params.agentId).input(body || {})); } catch (e) { ctx.json(res, { error: e.message }, e.code === 'not_owner' ? 409 : 400); } });
-  ctx.route('POST', '/:agentId/stop', async (req, res, { params, owner }) => { if (!ownerOnly(res, owner)) return; const c = computers.get(params.agentId); if (c?.jobId) ctx.jobs.stop(c.jobId, 'Stopped by owner'); await c?.close(); if (c) c.mode = 'idle'; ctx.json(res, status(params.agentId)); });
+  ctx.route('POST', '/:agentId/stop', async (req, res, { params, owner }) => { if (!ownerOnly(res, owner)) return; const c = computers.get(params.agentId); if (c?.jobId) ctx.jobs.stop(c.jobId, 'Stopped by owner'); keep(c); await c?.close(); if (c) c.mode = 'idle'; ctx.json(res, status(params.agentId)); });
   ctx.route('POST', '/:agentId/window', async (req, res, { params, body, owner }) => { if (!ownerOnly(res, owner)) return; if (process.platform !== 'win32') return ctx.json(res, { error: 'The real window is offered on the Windows PC only.' }, 409); const c = computer(params.agentId); await c.setHeaded(!!body?.on); ctx.json(res, c.status()); });
   ctx.route('POST', '/:agentId/task', async (req, res, { params, body, owner }) => { if (!ownerOnly(res, owner)) return; port(req); try { const j = await runTask({ agentId: params.agentId, goal: body?.goal, startUrl: body?.startUrl || null, chatId: body?.chatId || null }); ctx.json(res, j); } catch (e) { ctx.json(res, { error: e.message }, 409); } });
   ctx.route('POST', '/allow-host', (req, res, { body, owner }) => {

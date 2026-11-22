@@ -216,6 +216,9 @@ Everything below was built and tested on Linux after the 0.1.0 release. The Wind
 - A new look, "dark and bold": deep indigo surfaces, violet-to-magenta for actions, status colours for live, slow and failed, cards with depth, and a light theme as its daytime twin. Dark is the theme on a new desk; your own choice is kept.
 - Doctor moved from the menu to a small icon beside the network icon. A thin line at the bottom of the window says what the desk is doing now, or "Ready", with the running jobs and the version; a click opens the Tracker.
 - After a change that saves by itself, a small tick appears beside the field, with "Saved" when you point at it; a failed save shows a cross with the reason and keeps the old value.
+- Agents can have an avatar: pick one of 24 drawn characters and a colour on the agent's Profile tab, or keep the letter. It shows on the Agents page, the Tracker and beside Closer's notes in Sales, and stays with an agent that is off the team.
+- The agent page is redesigned: a header with the avatar, role and state, and cards for who it is, what it always does, what it is good at and what it did lately.
+- The Computer tab says "<Agent>'s browser starts when it is needed" in place of "is not running", and shows the last screenshot of its last run with the time.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

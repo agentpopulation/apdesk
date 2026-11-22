@@ -6,11 +6,27 @@ export function renderComputer(el, ui, agent) {
   const { h, btn, pill, api, toast, fmt } = ui;
   const id = agent?.id || 'operator'; const name = agent?.name || id;
   const base = `/api/m/browser/${encodeURIComponent(id)}`;
-  let st = { mode: 'idle', steps: [], open: false }; let frameNo = -1; let alive = true; let objUrl = null; let typed = ''; let typeTimer = null;
+  let st = { mode: 'idle', steps: [], open: false }; let frameNo = -1; let alive = true; let objUrl = null; let typed = ''; let typeTimer = null; let wasOpen = null;
 
-  const img = h('img', { alt: `${name}'s browser`, draggable: 'false', style: { width: '100%', height: '100%', objectFit: 'fill', display: 'block', userSelect: 'none' } });
-  const blank = h('div', { class: 'sub', style: { position: 'absolute', inset: '0', display: 'grid', placeItems: 'center', textAlign: 'center', padding: '20px' } }, `${name}'s browser is not running. Give it a task below, or press Take over to drive it yourself.`);
+  const img = h('img', { alt: `${name}'s browser`, draggable: 'false', hidden: true, style: { width: '100%', height: '100%', objectFit: 'fill', display: 'block', userSelect: 'none' } });
+  // The browser starts on demand, so a closed one is the normal state, not a fault: say so, and show its last picture.
+  const lastImg = h('img', { alt: `The last page ${name}'s browser showed`, draggable: 'false', hidden: true, style: { position: 'absolute', inset: '0', width: '100%', height: '100%', objectFit: 'cover', opacity: '.32', filter: 'saturate(.8)' } });
+  const lastCap = h('span', { class: 'sub', style: { fontSize: '12.5px' } }, 'No pages opened yet.');
+  const blank = h('div', { class: 'bblank', style: { position: 'absolute', inset: '0', display: 'grid', placeItems: 'center', textAlign: 'center', padding: '20px' } }, lastImg,
+    h('div', { style: { position: 'relative', display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'center', maxWidth: '440px', padding: '14px 18px', borderRadius: 'var(--r)', background: 'color-mix(in srgb, var(--surface) 86%, transparent)', border: '1px solid var(--line)' } },
+      h('span', null, `${name}'s browser starts when it is needed. Give it a task below, or press Take over to drive it yourself.`), lastCap));
   const stage = h('div', { class: 'bstage', tabindex: '0', 'aria-label': `${name}'s browser screen`, style: { position: 'relative', aspectRatio: '16 / 10', width: '100%', maxWidth: 'calc((100vh - 300px) * 1.6)', margin: '0 auto', background: 'var(--bubble)', outline: 'none', overflow: 'hidden' } }, img, blank);
+  let lastUrl = null; let lastAt = null;
+  async function loadLast() {
+    try {
+      const r = await api(`${base}/last-shot`, { raw: true });
+      const at = r.status === 200 ? r.headers.get('x-taken') : null;
+      if (!at) { lastImg.hidden = true; lastCap.textContent = 'No pages opened yet.'; return; }
+      if (at === lastAt) return;
+      const u = URL.createObjectURL(await r.blob()); if (lastUrl) URL.revokeObjectURL(lastUrl); lastUrl = u; lastAt = at;
+      lastImg.src = u; lastImg.hidden = false; lastCap.textContent = `Last picture from its browser: ${fmt.when(at)}.`;
+    } catch {}
+  }
   const urlBar = h('div', { class: 'url' }, 'about:blank');
   const modePill = pill('Idle');
   const framesPill = pill('');
@@ -53,9 +69,11 @@ export function renderComputer(el, ui, agent) {
     modePill.textContent = w; modePill.className = 'pill ' + k;
     urlBar.textContent = st.url || 'about:blank';
     offPill.hidden = !st.offline;
-    framesPill.textContent = st.open ? (st.browser ? `${st.browser}, own profile` : 'Running') : 'Not running';
+    framesPill.textContent = st.open ? (st.browser ? `${st.browser}, own profile` : 'Running') : 'Starts when needed';
     goalLine.textContent = st.goal ? 'Task: ' + st.goal : 'No task yet.';
     blank.hidden = !!st.open && frameNo >= 0;
+    if (!st.open && wasOpen !== false) loadLast();
+    wasOpen = !!st.open;
     bTake.hidden = driving(); bBack.hidden = !driving(); bStop.hidden = !st.open && !st.jobId;
     bWin.hidden = !st.canOpenWindow || !st.open; bWin.textContent = st.headed ? 'Hide the real window' : 'Open the real window';
     stage.style.cursor = driving() ? 'crosshair' : 'default';
@@ -70,7 +88,7 @@ export function renderComputer(el, ui, agent) {
       if (st.open && document.visibilityState === 'visible') {
         try {
           const r = await api(`${base}/frame?after=${frameNo}`, { raw: true });
-          if (r.status === 200) { const b = await r.blob(); frameNo = Number(r.headers.get('x-frame')) || frameNo + 1; const u = URL.createObjectURL(b); img.src = u; if (objUrl) URL.revokeObjectURL(objUrl); objUrl = u; blank.hidden = true; }
+          if (r.status === 200) { const b = await r.blob(); frameNo = Number(r.headers.get('x-frame')) || frameNo + 1; const u = URL.createObjectURL(b); img.src = u; img.hidden = false; if (objUrl) URL.revokeObjectURL(objUrl); objUrl = u; blank.hidden = true; }
         } catch {}
       }
       await new Promise(r => setTimeout(r, st.open ? 250 : 1500));
@@ -90,7 +108,7 @@ export function renderComputer(el, ui, agent) {
   ui.on?.('browser', (e) => { if (e?.agentId === id) refresh(); });
   ui.on?.('panic', () => refresh());
   ui.on?.('settings', () => refresh());
-  const cleanup = () => { alive = false; clearInterval(statTimer); if (objUrl) URL.revokeObjectURL(objUrl); };
+  const cleanup = () => { alive = false; clearInterval(statTimer); if (objUrl) URL.revokeObjectURL(objUrl); if (lastUrl) URL.revokeObjectURL(lastUrl); };
   ui.onLeave?.(cleanup);
   return cleanup;
 }

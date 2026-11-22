@@ -1,6 +1,8 @@
 // Sales page: totals, the pipeline board (drag and drop or Move), the lead panel, Leads, Outreach, and a coach note.
 // Tabs: Leads (all of the above), Contacts, Companies, Deals (ui-crm.js).
 import { mountCrm, CRM_STYLE } from './ui-crm.js';
+// Closer's own avatar beside the coach note, drawn by the Agents page's helper (letters when that page is not there)
+let agentAvatar = null; import('/modules/agents/ui.js').then((m) => { agentAvatar = m.avatarEl || null; }, () => {});
 const STAGES = [['new', 'New'], ['researched', 'Researched'], ['drafted', 'Drafted'], ['talks', 'In talks']];
 const S_IDX = Object.fromEntries(STAGES.map(([id], i) => [id, i]));
 const CHANNEL = { email: 'Email draft', linkedin: 'LinkedIn message', whatsapp: 'WhatsApp message', text: 'Text' };
@@ -112,7 +114,7 @@ export const pages = {
       }
       function paintCoach() {
         const c = st.data.coach;
-        coachBox.replaceChildren(ui.av('Closer'), c?.text ? h('p', null, c.text, ' ', h('span', { class: 'sub' }, `· ${c.label} · ${fmt.ago(c.at)}`)) : h('p', { class: 'sub' }, 'Ask Closer what to do next with the pipeline.'),
+        coachBox.replaceChildren(agentAvatar && ui.agent('closer') ? agentAvatar(ui.agent('closer'), 's') : ui.av('Closer'), c?.text ? h('p', null, c.text, ' ', h('span', { class: 'sub' }, `· ${c.label} · ${fmt.ago(c.at)}`)) : h('p', { class: 'sub' }, 'Ask Closer what to do next with the pipeline.'),
           btn(c?.text ? 'Ask again' : 'Ask Closer', { kind: 'ghost sm', onClick: async (e) => { const b = e.currentTarget; b.disabled = true; b.replaceChildren(ui.spinner(), ' Thinking'); try { st.data.coach = await api('m/sales/coach', { method: 'POST' }); } catch (x) { toast(x.message, 'err'); } paintCoach(); } }));
       }
       function leadCard(l) {

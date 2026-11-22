@@ -1,5 +1,6 @@
 // The roster. Core owns the table because the model door, approvals and jobs name agents.
 import { now } from './storage.js';
+import { avatarValue } from '../../modules/agents/ui-avatars.js';
 
 export const SEED = [
   { id: 'coordinator', name: 'Coordinator', role: 'Routes every ask to the right agent and answers simple questions itself', personality: 'Calm, brief, plain words. Never guesses facts it has not checked.', instructions: 'You are the Coordinator of Agent Population Desk, a local desk of agents working for the owner. Answer plainly. When a job needs an agent or a tool, use the tool. Name what you did not check.' },
@@ -19,7 +20,8 @@ export class Agents {
   row(r) {
     if (!r) return null;
     const j = (x, f) => { try { return x ? JSON.parse(x) : f; } catch { return f; } };
-    return { id: r.id, name: r.name, role: r.role || '', personality: r.personality || '', instructions: r.instructions || '', model: { main: j(r.model_main, null), fallback: j(r.model_fallback, null) }, tools: j(r.tools, []), enabled: !!r.enabled, created: r.created, updated: r.updated, meta: j(r.meta, {}) };
+    const meta = j(r.meta, {});
+    return { id: r.id, name: r.name, role: r.role || '', personality: r.personality || '', instructions: r.instructions || '', model: { main: j(r.model_main, null), fallback: j(r.model_fallback, null) }, tools: j(r.tools, []), enabled: !!r.enabled, created: r.created, updated: r.updated, meta, avatar: avatarValue(meta.avatar) };
   }
   list() {
     // the seed is made in one go, so its agents can share a time; they keep the seed's order, also after one is hired back
@@ -37,7 +39,12 @@ export class Agents {
   }
   update(id, patch) {
     const cur = this.get(id); if (!cur) return null;
-    const next = { ...cur, ...patch, model: { ...cur.model, ...(patch.model || {}) }, meta: { ...cur.meta, ...(patch.meta || {}) } };
+    // The avatar is kept in meta (no new column); a choice outside the drawn set is refused, null goes back to letters.
+    const av = patch.avatar === undefined ? undefined : patch.avatar === null ? null : avatarValue(patch.avatar);
+    if (av === null && patch.avatar !== null && patch.avatar !== undefined) throw Object.assign(new Error('That avatar is not one of the choices.'), { status: 400 });
+    const meta = { ...cur.meta, ...(patch.meta || {}), ...(av !== undefined ? { avatar: av } : {}) };
+    const { avatar: _a, ...rest } = patch;
+    const next = { ...cur, ...rest, model: { ...cur.model, ...(patch.model || {}) }, meta };
     this.s.run('UPDATE agents SET name = ?, role = ?, personality = ?, instructions = ?, model_main = ?, model_fallback = ?, tools = ?, enabled = ?, updated = ?, meta = ? WHERE id = ?',
       next.name, next.role, next.personality, next.instructions, next.model.main ? JSON.stringify(next.model.main) : null, next.model.fallback ? JSON.stringify(next.model.fallback) : null, JSON.stringify(next.tools || []), next.enabled ? 1 : 0, now(), JSON.stringify(next.meta || {}), id);
     this.events?.emit('agents', { id, change: 'update' });
