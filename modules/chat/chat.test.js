@@ -2,6 +2,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { testDesk } from '../../test/helpers/desk.js';
+/** These tests are about the Coordinator's own turn: their group chats are set to "Who answers: The Coordinator". */
+const coordinatorAnswers = async (t) => { for (const id of ['everyone', 'sales-room', 'build-room']) await t.call(`/api/m/chat/chats/${id}`, { method: 'PATCH', body: { settings: { whoAnswers: 'coordinator' } } }); };
 
 const waitReply = async (t, chatId, ms = 15000) => {
   const t0 = Date.now();
@@ -37,6 +39,7 @@ test('no native call, a tool named: falls back to JSON decisions; in a group han
     return /Result of fx_echo/.test(last) ? (/UNTRUSTED CONTENT/.test(last) ? '{"answer":"Echo done."}' : '{"answer":"unwrapped"}') : '{"tool":"fx_echo","args":{"x":"hi"}}';
   } });
   try {
+    await coordinatorAnswers(t);
     fixtureTool(t, seen);
     await t.call('/api/m/chat/chats/everyone/send', { body: { text: 'please run fx_echo' } });
     const { last } = await waitReply(t, 'everyone');
@@ -136,6 +139,7 @@ test('a reply that claims a job with no tool call is not stored: the JSON retry 
     return 'I have started a job for Scout to find 20 leads. [Job: Find leads, done, Done]';
   } });
   try {
+    await coordinatorAnswers(t);
     fixtureTool(t, seen);
     await t.call('/api/m/chat/chats/everyone/send', { body: { text: 'Find 20 leads with sources' } });
     const { last } = await waitReply(t, 'everyone');
@@ -150,6 +154,7 @@ test('a model that keeps claiming without a tool gets the honest sentence, a Try
   let calls = 0;
   const t = await testDesk({ modules: ['chat', 'agents'], script: () => { calls++; return calls <= 2 ? 'I have started a job to find leads. It is running in the background.' : 'Paris is the capital of France.'; } });
   try {
+    await coordinatorAnswers(t);
     fixtureTool(t, []);
     await t.call('/api/m/chat/chats/everyone/send', { body: { text: 'Find 20 leads' } });
     let { last, all } = await waitReply(t, 'everyone');
@@ -234,6 +239,7 @@ test('"Draft outreach to the top five." always reaches outreach_draft with top 5
   const got = [];
   const t = await testDesk({ modules: ['chat', 'agents'], script: (b) => /what you made/.test(String(b.messages.at(-1).content)) ? 'Five drafts are waiting for you in Sales.' : "I'm ready to draft the outreach, but what product are you offering?" });
   try {
+    await coordinatorAnswers(t);
     t.core.modules.tools.set('outreach_draft', { module: 'sales', name: 'outreach_draft', description: 'drafts', parameters: { type: 'object', properties: { top: { type: 'integer' } } }, async run(args) { got.push(args); return { ok: true, text: '5 drafts' }; } });
     await t.call('/api/m/chat/chats/sales-room/send', { body: { text: 'Draft outreach to the top five.' } });
     const { last } = await waitReply(t, 'sales-room');
@@ -312,6 +318,7 @@ test('"As a background task …": a model that only claims still ends with a rea
   const started = [];
   const t = await testDesk({ modules: ['chat', 'agents'], script: () => CLAIM });
   try {
+    await coordinatorAnswers(t);
     t.core.modules.tools.set('task_create', { module: 'tasks', name: 'task_create', description: 'background task', parameters: { type: 'object', properties: { prompt: { type: 'string' }, title: { type: 'string' } } }, async run(args, call) {
       const j = await t.core.jobs.start({ kind: 'tasks.run', title: args.title || 'Task', agentId: 'coordinator', chatId: call.chatId, run: async () => ({ text: 'The bicycle brief (fixture).' }) });
       started.push({ args, jobId: j.id }); return { ok: true, started: j.title };
@@ -500,6 +507,7 @@ test('offline: web tools are neither offered nor forced, and the reply says the 
   const ran = []; const offeredLog = [];
   const t = await testDesk({ modules: ['chat', 'agents'], script: (b) => { offeredLog.push((b.tools || []).map(x => x.function.name)); return 'I can list the leads you already saved.'; } });
   try {
+    await coordinatorAnswers(t);
     t.core.settings.set('ollama.baseUrl', t.fake.ollamaUrl);   // the only model a desk may use offline is a local one
     t.core.settings.set('online', false);
     t.core.modules.tools.set('web_search', { module: 'search', name: 'web_search', description: 'search', parameters: { type: 'object', properties: {} }, async run() { ran.push('web_search'); return { results: [] }; } });
@@ -525,6 +533,7 @@ test('a failed ask is never revived: the next turn holds only the new message, a
     return /brief me/i.test(String(b.messages.at(-1).content)) ? 'Nothing is running and nothing waits for you.' : 'Paris is the capital of France.';
   } });
   try {
+    await coordinatorAnswers(t);
     t.core.modules.tools.set('leads_find', { module: 'sales', name: 'leads_find', description: 'find leads', parameters: { type: 'object', properties: {} }, async run(args) { ran.push(args); return { ok: true, jobId: 'job_abcdefgh' }; } });
     await t.call('/api/m/chat/chats/everyone/send', { body: { text: 'Find 5 leads with sources: bakeries in Pune' } });
     let r = await waitReply(t, 'everyone');
@@ -689,6 +698,7 @@ test('fix 6: a draft claim is checked against what the tool made: zero drafts is
     return offered.includes('outreach_draft') ? { toolCalls: [{ name: 'outreach_draft', args: { top: 5 } }] } : claim;
   } });
   try {
+    await coordinatorAnswers(t);
     t.core.modules.tools.set('outreach_draft', { module: 'sales', name: 'outreach_draft', description: 'drafts', parameters: { type: 'object', properties: { top: { type: 'integer' } } }, async run() { const n = drafts.length; return { ok: true, jobId: 'job_abcdefgh', drafts, text: `${n} draft${n === 1 ? '' : 's'} waiting for you in Outreach. Nothing is sent until you press Approve and send.` }; } });
     await t.call('/api/m/chat/chats/dm-closer/send', { body: { text: 'Draft outreach to the top five leads.' } });
     let { last } = await waitReply(t, 'dm-closer');
@@ -820,6 +830,7 @@ test('one background task per ask: a repeat (same work, other title or wording) 
     return 'The task has started.';
   } });
   try {
+    await coordinatorAnswers(t);
     taskTool(t, started);
     // an earlier exchange in the chat, so the task's prompt carries a context note (the stored args then differ from the model's)
     await t.call('/api/m/chat/chats/everyone/send', { body: { text: 'hi' } }); await waitReply(t, 'everyone');
@@ -890,6 +901,7 @@ test('count, language and chatId come from the owner\'s words to outreach_draft,
   const got = [];
   const t = await testDesk({ modules: ['chat', 'agents'], script: (b) => b.messages.at(-1).role === 'tool' ? 'Done.' : (b.tools || []).some(x => x.function.name === 'outreach_draft') ? { toolCalls: [{ name: 'outreach_draft', args: { top: 5, channel: 'email', language: 'English' } }] } : 'ok' });
   try {
+    await coordinatorAnswers(t);
     t.core.modules.tools.set('outreach_draft', { module: 'sales', name: 'outreach_draft', description: 'drafts', parameters: { type: 'object', properties: { top: { type: 'integer' } } }, async run(args) { got.push(args); return { ok: true, text: 'drafts' }; } });
     await t.call('/api/m/chat/chats/sales-room/send', { body: { text: 'Draft a WhatsApp message in Hindi for the top lead.' } }); await waitReply(t, 'sales-room');
     assert.deepEqual(got[0], { top: 1, channel: 'whatsapp', language: 'Hindi', chatId: 'sales-room' });
@@ -961,6 +973,7 @@ test('languageOf takes a language only from a clear instruction, never a place o
   const lang = { v: 'Tamil' };
   const t = await testDesk({ modules: ['chat', 'agents'], script: (b) => b.messages.at(-1).role === 'tool' ? 'Done.' : (b.tools || []).some(x => x.function.name === 'outreach_draft') ? { toolCalls: [{ name: 'outreach_draft', args: { language: lang.v } }] } : 'ok' });
   try {
+    await coordinatorAnswers(t);
     t.core.modules.tools.set('outreach_draft', { module: 'sales', name: 'outreach_draft', description: 'drafts', parameters: { type: 'object', properties: { top: { type: 'integer' } } }, async run(args) { got.push(args); return { ok: true, text: 'drafts' }; } });
     await t.call('/api/m/chat/chats/sales-room/send', { body: { text: 'Draft outreach emails for my leads in Tamil Nadu.' } }); await waitReply(t, 'sales-room');
     assert.equal(got[0].language, 'Tamil', 'the owner wrote "Tamil": the model\'s value stands');
@@ -984,6 +997,7 @@ test('ownerTop reads a count only from clear words; otherwise the model\'s count
   const got = []; const top = { v: 5 };
   const t = await testDesk({ modules: ['chat', 'agents'], script: (b) => b.messages.at(-1).role === 'tool' ? 'Done.' : (b.tools || []).some(x => x.function.name === 'outreach_draft') ? { toolCalls: [{ name: 'outreach_draft', args: top.v == null ? {} : { top: top.v } }] } : 'ok' });
   try {
+    await coordinatorAnswers(t);
     t.core.modules.tools.set('outreach_draft', { module: 'sales', name: 'outreach_draft', description: 'drafts', parameters: { type: 'object', properties: { top: { type: 'integer' } } }, async run(args) { got.push(args.top); return { ok: true, text: 'drafts' }; } });
     const ask = async (text, v) => { top.v = v; await t.call('/api/m/chat/chats/sales-room/send', { body: { text } }); await waitReply(t, 'sales-room'); };
     await ask('Draft 3 emails for my top leads.', 5);
@@ -1227,14 +1241,15 @@ const offerDesk = async () => {
 };
 const HEAVY_NAMES = ['research_deep', 'research_swarm', 'council_ask', 'leads_find', 'browser_task'];
 
-test('plain asks are offered no heavy tool, with one line that says those start only when asked; a light search stays', async () => {
+test('plain asks are offered no heavy tool, with one line that says to answer fully instead of offering them; a light search stays', async () => {
   const { t, offer } = await offerDesk();
   try {
     for (const ask of ['Give me a simple three-step plan to start a balcony herb garden. Keep it short.', 'Plan a two-day trip to Jaipur for a family of four. Keep it short: a small table with day, morning, afternoon and evening.']) {
       const o = await offer('dm-coordinator', ask);
       assert.deepEqual(o.tools.filter(n => HEAVY_NAMES.includes(n)), [], ask);
       assert.ok(o.tools.includes('web_search'), 'a quick web search stays: ' + ask);
-      assert.match(o.sys, /start only when the owner asks for them; if one would help, say so in one sentence\./);
+      assert.match(o.sys, /are not offered in this turn\. Answer the ask fully with the tools you have; never offer those instead of an answer\./);
+      assert.doesNotMatch(o.sys, /start only when the owner asks|brief by default|tools are optional/);
     }
     const r = await offer('dm-coordinator', 'Research in depth: how have perovskite cells changed since 2009? Give a cited report.');
     assert.ok(r.tools.includes('research_deep')); assert.ok(!r.tools.includes('council_ask'));
@@ -1245,7 +1260,7 @@ test('plain asks are offered no heavy tool, with one line that says those start 
     assert.ok(c.tools.includes('leads_find') && !c.tools.includes('research_deep'), JSON.stringify(c.tools));
     // nothing held back: no line
     const all = await offer('dm-scout', 'Ask the council, then find leads and research it in a swarm of agents; use your browser.');
-    assert.ok(HEAVY_NAMES.every(n => all.tools.includes(n))); assert.doesNotMatch(all.sys, /start only when the owner asks/);
+    assert.ok(HEAVY_NAMES.every(n => all.tools.includes(n))); assert.doesNotMatch(all.sys, /are not offered in this turn/);
   } finally { await t.close(); }
 });
 

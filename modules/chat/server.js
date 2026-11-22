@@ -1,7 +1,7 @@
 // Chat and Coordinator: chats, messages, cards, the Coordinator turn, and the API other modules post into.
 import fs from 'node:fs';
 import path from 'node:path';
-import { makeStore, SEED_GROUPS } from './store.js';
+import { makeStore, SEED_GROUPS, EVERYONE, EVERYONE_LINE } from './store.js';
 import { makeCoordinator, cardKey, RESEARCH_JOBS, deliverableFor, NOT_NOW } from './coordinator.js';
 import { aboutOf, clipAbout, ABOUT_KEY, ASK_ABOUT, ASK_ABOUT_SITE, savedLine, siteAddressOf, siteProposal } from './business.js';
 import { dropFileClaims, previewText, cutAtWord, bareStart, BARE_LINES, NEXT_LINE } from './ui-text.js';
@@ -178,7 +178,7 @@ export async function activate(ctx) {
   ctx.route('PATCH', '/chats/:id', (req, res, { params, body }) => {
     const c = resolveChat(params.id); if (!c) return ctx.json(res, { error: 'That chat is gone.' }, 404);
     if (body?.title != null) store.rename(c.id, body.title);
-    if (body?.settings && typeof body.settings === 'object') { const p = {}; for (const k of ['deepResearch', 'swarm', 'remember']) if (k in body.settings) p[k] = body.settings[k]; store.setSettings(c.id, p); }
+    if (body?.settings && typeof body.settings === 'object') { const p = {}; for (const k of ['deepResearch', 'swarm', 'remember']) if (k in body.settings) p[k] = body.settings[k]; if (['everyone', 'coordinator'].includes(body.settings.whoAnswers)) p.whoAnswers = body.settings.whoAnswers; store.setSettings(c.id, p); }
     emit({ type: 'chats' }); ctx.json(res, store.chat(c.id));
   });
   ctx.route('DELETE', '/chats/:id', (req, res, { params, owner }) => {
@@ -192,6 +192,7 @@ export async function activate(ctx) {
   ctx.route('GET', '/chats/:id/members', (req, res, { params }) => { const c = resolveChat(params.id); c ? ctx.json(res, { members: c.members, everyone: c.everyone }) : ctx.json(res, { error: 'That chat is gone.' }, 404); });
   ctx.route('PUT', '/chats/:id/members', (req, res, { params, body }) => {
     const c = resolveChat(params.id); if (!c) return ctx.json(res, { error: 'That chat is gone.' }, 404);
+    if (c.id === EVERYONE) return ctx.json(res, { error: EVERYONE_LINE, code: 'everyone' }, 400);   // Everyone always holds every agent
     const everyone = body?.everyone === true;
     const members = everyone ? null : (Array.isArray(body?.members) ? [...new Set(body.members)].filter(id => ctx.agents.get(id)) : []);
     if (!everyone && !members.length) return ctx.json(res, { error: 'A chat needs at least one agent.' }, 400);
@@ -234,7 +235,7 @@ export async function activate(ctx) {
       // the chat waits for what the owner sells: his next message is that answer, unless it is plainly a new ask of its own
       // (a chip he pressed, an ask for leads, drafts or research, or a question)
       store.setSettings(c.id, { awaitBusiness: null });
-      if (chip || newAsk(text)) p = co.turn(c.id, text, { speaker: body?.agentId });
+      if (chip || newAsk(text)) p = co.send(c.id, text, { speaker: body?.agentId });
       else {
         const about = ctx.settings.setOwnerText(ABOUT_KEY, clipAbout(text));
         const um = store.add(c.id, { role: 'user', text, meta: { aboutAnswer: true } }); bus.emitMessage(um);
@@ -249,7 +250,7 @@ export async function activate(ctx) {
       store.setSettings(c.id, { awaitBusiness: { text, at: new Date().toISOString() } });
       bus.emitMessage(q); store.touch(c.id, ASK_ABOUT_SITE); emit({ type: 'chats' });
       return ctx.json(res, { ok: true, chatId: c.id, replyId: q.id, asked: true });
-    } else p = co.turn(c.id, text, { speaker: body?.agentId, userMeta: chip ? { chip: true } : {} });
+    } else p = co.send(c.id, text, { speaker: body?.agentId, userMeta: chip ? { chip: true } : {} });
     // the reply that finished the desk's first exchange gets one line under it, once, that points at the suggestions
     p.then((m) => { offerLength(c, m); if (!first || m?.status !== 'done' || ctx.kv.get('chat.nextShown', false) || !deskStarted()) return; ctx.kv.set('chat.nextShown', true); bus.emitMessage(store.add(c.id, { role: 'system', text: NEXT_LINE, meta: { firstNext: true } })); emit({ type: 'chats' }); }, e => ctx.log('turn failed', e.message));
     await new Promise(r => setImmediate(r));
@@ -357,7 +358,8 @@ export async function activate(ctx) {
     postCard: (chatId, card) => bus.postCard(chatId, card),
     postMessage(chatId, { agentId = 'coordinator', text = '', cards = [], label = null } = {}) {
       const c = resolveChat(chatId); if (!c) return null;
-      const m = store.add(c.id, { role: 'assistant', agentId, text: String(text || ''), cards: (cards || []).filter(x => x && typeof x === 'object'), label });
+      // posted: a note a module wrote (a new agent's welcome, a job's line), not a model's answer: it gets no rating controls
+      const m = store.add(c.id, { role: 'assistant', agentId, text: String(text || ''), cards: (cards || []).filter(x => x && typeof x === 'object'), label, meta: { posted: true } });
       store.touch(c.id, text || cards?.[0]?.title || ''); bus.emitMessage(m); emit({ type: 'chats' });
       return { chatId: c.id, messageId: m.id };
     },

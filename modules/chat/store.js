@@ -9,6 +9,10 @@ export const SEED_GROUPS = [
   { id: 'build-room', title: 'Build room', members: ['coordinator', 'coder', 'operator'] },
 ];
 
+/** The Everyone chat always holds every agent on the roster: hires and retirements follow by themselves, and it is never edited. */
+export const EVERYONE = 'everyone';
+export const EVERYONE_LINE = 'Everyone always holds all your agents. To talk to fewer, make a new group.';
+
 export function makeStore(ctx) {
   const db = ctx.db;
   db.migrate(1, `
@@ -19,8 +23,11 @@ export function makeStore(ctx) {
   const roster = () => ctx.agents.list().map(a => a.id);
   const chatRow = (r) => {
     if (!r) return null;
-    const members = r.members === null || r.members === 'null' ? roster() : j(r.members, []).filter(id => ctx.agents.get(id));
-    return { id: r.id, title: r.title, kind: members.length === 1 ? 'direct' : 'group', members, everyone: r.members === null || r.members === 'null', settings: { deepResearch: true, swarm: 5, remember: true, ...j(r.opts, {}) }, created: r.created, updated: r.updated, last: r.last || '', seeded: !!r.seeded };
+    // Everyone is the roster whatever its row holds: an older desk that saved a fixed list there (the cause of "Everyone · Everyone"
+    // in the header: the chat no longer matched the Everyone choice) gets every agent again
+    const all = r.id === EVERYONE || r.members === null || r.members === 'null';
+    const members = all ? roster() : j(r.members, []).filter(id => ctx.agents.get(id));
+    return { id: r.id, title: r.title, kind: members.length === 1 ? 'direct' : 'group', members, everyone: all, settings: { deepResearch: true, swarm: 5, remember: true, whoAnswers: 'everyone', ...j(r.opts, {}) }, created: r.created, updated: r.updated, last: r.last || '', seeded: !!r.seeded };
   };
   const msgRow = (r) => r && ({ id: r.id, chatId: r.chat_id, role: r.role, agentId: r.agent_id, text: r.text || '', cards: j(r.cards, []), label: r.label || null, status: r.status || 'done', meta: j(r.meta, {}), at: r.at, updated: r.updated });
 

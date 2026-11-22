@@ -172,6 +172,32 @@ export function stepChips(steps, nameOf = (id) => id || '', replyStatus = 'done'
   return out.map(c => `${c.head}${c.n > 1 ? ` ${c.n} times` : ''}${c.tail}`);
 }
 
+const DONE_N = {
+  web_search: (n) => n === 1 ? 'searched the web once' : `searched the web ${n} times`,
+  web_read: (n) => n === 1 ? 'read a page' : `read ${n} pages`,
+  find: (n) => n === 1 ? 'read pages with Finder once' : `read pages with Finder ${n} times`,
+};
+const andList = (a) => a.length > 1 ? a.slice(0, -1).join(', ') + ' and ' + a.at(-1) : a[0] || '';
+/** The one line under a reply, built from the record of the turn (who wrote it, which agents ran which tools), never from the
+ *  model's words: "Coordinator answered · Scout searched the web 3 times, read 6 pages". null for a pass or a time-out line. */
+export function recordLine(m, nameOf = (id) => id || '') {
+  const meta = m?.meta || {};
+  if (!m || meta.passed || meta.late) return null;
+  if (meta.groupSummary) return `${nameOf(m.agentId)} summed up ${andList((meta.of || []).map(nameOf)) || 'the replies'}`;
+  const head = `${nameOf(m.agentId)} ${m.status === 'stopped' ? 'was stopped' : m.status === 'error' ? 'did not finish' : 'answered'}`;
+  const by = new Map();
+  for (const st of (meta.steps || []).filter(x => x && x.tool)) { if (!by.has(st.agentId)) by.set(st.agentId, []); by.get(st.agentId).push(st); }
+  const parts = [];
+  for (const [agent, list] of by) {
+    const done = new Map(); for (const st of list.filter(x => x.status === 'done')) done.set(st.tool, (done.get(st.tool) || 0) + 1);
+    const did = [...done].map(([tool, n]) => DONE_N[tool] ? DONE_N[tool](n) : (TOOL_WORDS[tool] || 'used ' + tool.replace(/_/g, ' ')) + (n > 1 ? ` ${n} times` : ''));
+    const other = stepChips(list.filter(x => x.status !== 'done'), () => '', m.status).map(c => c.trim());
+    const text = [did.join(', '), other.join('; ')].filter(Boolean).join('; ');
+    if (text) parts.push(`${nameOf(agent)} ${text}`);
+  }
+  return [head, ...parts].join(' · ');
+}
+
 const TABLE_RULE = /^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?\s*$/;
 const TABLE_ROW = /^\s*\|(.*)\|\s*$/;
 /** A Markdown table as plain words: the rule lines go, each row's cells are joined with " · ", rows too. */
@@ -239,7 +265,29 @@ export function lastAsk(messages = []) {
   return (t.toLowerCase().startsWith(p.toLowerCase()) ? t.slice(p.length) : t).trim() || null;
 }
 /** The one line under the reply that finished the desk's first exchange. */
-export const NEXT_LINE = 'Next, pick one of the suggestions above the message box, or type what you need.';
+export const NEXT_LINE = 'Next, type what you need, or open a chat with one agent to see what it can start on.';
+
+/** Starters above the message box: three per agent role, one set for a group, three general ones for an agent the owner
+ *  made. They fit the chat they show in, and show only until the owner writes there (an agent's welcome note does not count).
+ *  { text, needsBusiness } marks an ask about the owner's own business: it waits for what he sells, as the Home chips do. */
+export const STARTERS = {
+  coordinator: ['Tell me what each agent on my team can do', 'Make a short to-do list for today from my tasks', 'Explain a topic to me in simple words'],
+  scout: [{ text: 'Research my main competitors, with sources', needsBusiness: true }, 'Research this company before my call', { text: 'What changed in my market this month? With sources', needsBusiness: true }],
+  closer: [{ text: 'Find 20 leads with sources for my product', needsBusiness: true }, 'Draft outreach to the top five leads', 'Draft a polite follow-up to a lead who went quiet'],
+  operator: ['Compare three products for me before I buy', 'Open a website and list what it offers', 'Check a web page for me and tell me what changed'],
+  coder: ['Make a table file of my leads', 'Write a small script that renames files by date', 'Sort the files in my inbox into folders'],
+  'ai-officer': [{ text: 'Where could AI save me time in my business?', needsBusiness: true }, 'What should I approve by hand before an agent does it?', 'What is this desk missing for my business?'],
+  'product-lead': [{ text: 'Review what I sell and what to change first', needsBusiness: true }, 'Turn my customer replies into what they really say', 'Pick the next three changes to my product, smallest first'],
+  'sales-lead': ['Review my leads and tell me who to contact next', { text: 'Describe the buyers I should go after', needsBusiness: true }, 'Plan my follow-ups for the next two weeks'],
+  'co-founder': [{ text: 'Make a 30-day plan for my business', needsBusiness: true }, 'What should I stop, keep and try?', 'Look at my income and costs: what stands out?'],
+  group: ['Who on the team should help me with what?', { text: 'Find leads for my product and draft the first message', needsBusiness: true }, 'Plan my week across the team'],
+  other: ['Tell me in two lines what you can do for me', 'What do you need from me to get started?', 'Help me with my first task'],
+};
+export function startersFor(chat, messages = []) {
+  if (!chat || messages.some(m => m.role === 'user')) return [];
+  if (chat.members.length !== 1) return STARTERS.group;
+  return STARTERS[chat.members[0]] || STARTERS.other;
+}
 
 /** The card that asks, once, how long answers should be: the same everyday question answered short (A) and in full (B). */
 export const LENGTH_ASK = {

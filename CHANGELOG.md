@@ -228,6 +228,10 @@ Everything below was built and tested on Linux after the 0.1.0 release. The Wind
 - Starting AP Desk at the end of an install, from the Start menu or the Desktop icon leaves no console window behind.
 - When the free models are busy, your own free keys are now reached before a small local model for research and for turns that use tools; the free models on "auto" count as one step, and steps that were skipped no longer use up the tries.
 - When a small local model does write a research answer, the reply says so ("Written by a small local model; check the facts"), and a reply shows which model wrote it and which chose the searches when they differ.
+- A question that needs facts is researched in steps in the chat when "Deep research in chat" is on: the parts of the question are shown, each part is searched and its pages are read, one answer covers every part with sources, and a part no page supported is named as not answered. Until now that switch did nothing when on. On real runs with free models (22 Nov 2026) results still varied from run to run.
+- In a group, every agent answers from its own role or passes in one quiet line, and the Coordinator then writes a short summary. Under "This chat" you can choose "The Coordinator" to get one answer as before. Everyone answering takes more model calls and is slower on free models.
+- Every reply says who did the work in one line, taken from the record of the turn. Everyone always holds all your agents and cannot be edited, and its doubled title is gone.
+- Rating a reply is two dim thumbs beside the time, with the research rating, reasons and a note after a rating. Agents show their avatars in the chat list and in replies, and the chat panel has a Close button on a phone.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

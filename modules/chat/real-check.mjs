@@ -5,7 +5,11 @@
 // The fixture tools below exist only in this check (no other module is on); production code registers nothing fake.
 import { testDesk } from '../../test/helpers/desk.js';
 
-const t = await testDesk({ real: true, modules: ['chat', 'agents'] });
+// CHAIN=owner runs on the owner's own order: the Free API on auto, then a local fallback (APD_FALLBACK=provider:model, a small
+// free model standing in for his 1B local model when no Ollama is here), then his keys.
+const OWNER = process.env.CHAIN === 'owner';
+const fb = String(process.env.APD_FALLBACK || '').match(/^([\w:-]+?):(.+)$/);
+const t = await testDesk({ real: true, modules: ['chat', 'agents'], chain: OWNER ? 'owner' : null, fallback: OWNER && fb ? { provider: fb[1], model: fb[2] } : null });
 // The shared Gemini key is out of quota for 3.6 and 3.5 flash today; the owner's pick in Models would be flash-lite. (Door: a 429 cools the whole key for 60 s.)
 t.core.settings.set('provider.gemini.model', process.env.APD_GEMINI_MODEL || 'gemini-3.5-flash-lite');
 const results = [];

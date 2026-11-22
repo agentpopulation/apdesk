@@ -3,6 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { testDesk } from '../../test/helpers/desk.js';
+/** These tests are about the Coordinator's own turn: their group chats are set to "Who answers: The Coordinator". */
+const coordinatorAnswers = async (t) => { for (const id of ['everyone', 'sales-room', 'build-room']) await t.call(`/api/m/chat/chats/${id}`, { method: 'PATCH', body: { settings: { whoAnswers: 'coordinator' } } }); };
 
 const chatIds = async (t) => (await t.call('/api/m/chat/chats')).json.chats.map(c => c.id);
 const settle = async (t, chatId, ms = 15000) => {
@@ -53,6 +55,7 @@ test('Skip, and a desk that is already set up: five agents and three groups, unt
 test('work meant for a retired agent: the Coordinator does it and says so in one plain line, no error', async () => {
   const t = await testDesk({ modules: ['chat', 'agents'], script: (b) => b.messages.at(-1).role === 'tool' ? 'The research has started.' : ((b.tools || []).some(x => x.function.name === 'fx_research') ? { toolCalls: [{ name: 'fx_research', args: { q: 'edge data centres' } }] } : 'no tool') });
   try {
+    await coordinatorAnswers(t);
     const ran = [];
     t.core.modules.tools.set('fx_research', { module: 'research', name: 'fx_research', description: 'research for tests', parameters: { type: 'object', properties: { q: { type: 'string' } } }, async run(args, call) { ran.push(call.agentId); return { ok: true, text: 'started' }; } });
     await t.call('/api/m/agents/agents/scout', { method: 'DELETE' });

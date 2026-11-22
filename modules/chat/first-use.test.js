@@ -4,6 +4,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { testDesk } from '../../test/helpers/desk.js';
+/** These tests are about the Coordinator's own turn: their group chats are set to "Who answers: The Coordinator". */
+const coordinatorAnswers = async (t) => { for (const id of ['everyone', 'sales-room', 'build-room']) await t.call(`/api/m/chat/chats/${id}`, { method: 'PATCH', body: { settings: { whoAnswers: 'coordinator' } } }); };
 
 const waitReply = async (t, chatId, ms = 15000) => {
   const t0 = Date.now();
@@ -28,7 +30,7 @@ test('a new desk has had no exchange; the first finished one starts it, in any c
     assert.equal(await started(t), true);
     const after = all.slice(all.findIndex(m => m.id === last.id) + 1);
     assert.equal(after.length, 1); assert.equal(after[0].role, 'system');
-    assert.match(after[0].text, /suggestions above the message box/); assert.equal(after[0].text.split(/(?<=[.!?])\s+/).length, 1, 'one sentence');
+    assert.match(after[0].text, /type what you need/); assert.doesNotMatch(after[0].text, /suggestions above/, 'starters are gone once a chat has a message'); assert.equal(after[0].text.split(/(?<=[.!?])\s+/).length, 1, 'one sentence');
     // the second exchange, in another chat: no second line
     await t.call('/api/m/chat/chats/dm-scout/send', { body: { text: 'Hi again' } });
     const r2 = await waitReply(t, 'dm-scout');
@@ -108,6 +110,7 @@ test('the same ask in the same chat within the hour: one code-written line with 
   const runs = [];
   const t = await testDesk({ modules: ['chat', 'agents'], script: callsLeads });
   try {
+    await coordinatorAnswers(t);
     t.core.settings.set('timeZone', 'Asia/Kolkata'); t.core.settings.set('locale', 'en-IN');
     leadsFake(t, runs);
     await t.call('/api/m/chat/chats/sales-room/send', { body: { text: ASK } });
@@ -132,6 +135,7 @@ test('a different ask, the same ask in another chat, or the same ask after an ho
   const runs = [];
   const t = await testDesk({ modules: ['chat', 'agents'], script: callsLeads });
   try {
+    await coordinatorAnswers(t);
     leadsFake(t, runs);
     await t.call('/api/m/chat/chats/sales-room/send', { body: { text: ASK } }); await waitReply(t, 'sales-room');
     await t.call('/api/m/chat/chats/sales-room/send', { body: { text: 'Find 20 leads: bakeries in Mumbai' } }); await waitReply(t, 'sales-room');
@@ -174,6 +178,7 @@ test('a background task for a leads ask goes to the agent whose role is leads, n
   const script = (b) => (b.tools || []).some(x => x.function.name === 'task_create') && !b.messages.some(m => m.role === 'tool') ? { toolCalls: [{ name: 'task_create', args: { prompt: 'Find 20 leads with sources for my product', agentId: 'scout' } }] } : 'Started.';
   const t = await testDesk({ modules: ['chat', 'agents'], script });
   try {
+    await coordinatorAnswers(t);
     t.core.modules.tools.set('task_create', { module: 'tasks', name: 'task_create', description: 'background task', parameters: { type: 'object', properties: { prompt: { type: 'string' }, agentId: { type: 'string' } } }, async run(a) { runs.push(a); return { ok: true, started: 'Leads' }; } });
     leadsFake(t, []);
     await t.call('/api/m/chat/chats/sales-room/send', { body: { text: LEADS } }); await waitReply(t, 'sales-room');
@@ -193,6 +198,7 @@ test('"Find 20 leads with sources" opens lead search and not deep research; a re
   const offered = [];
   const t = await testDesk({ modules: ['chat', 'agents'], script: (b) => { offered.push((b.tools || []).map(x => x.function.name)); return 'ok'; } });
   try {
+    await coordinatorAnswers(t);
     for (const [name, module] of [['leads_find', 'sales'], ['research_deep', 'research']]) t.core.modules.tools.set(name, { module, name, description: name, parameters: { type: 'object', properties: {} }, async run() { return { ok: false }; } });
     await t.call('/api/m/chat/chats/sales-room/send', { body: { text: 'Find 20 leads with sources' } }); await waitReply(t, 'sales-room');
     assert.ok(offered[0].includes('leads_find')); assert.ok(!offered[0].includes('research_deep'));
@@ -208,6 +214,7 @@ test('a desk set to the US shows a chat reply\'s time and a lead\'s value in its
     const runs = []; const prompts = [];
     const t = await testDesk({ modules: ['chat', 'agents', 'sales'], script: (b) => { prompts.push(b.messages.map(m => m.content).join('\n')); return callsLeads(b); } });
     try {
+      await coordinatorAnswers(t);
       for (const [k, v] of Object.entries(place)) t.core.settings.set(k, v);
       leadsFake(t, runs);
       await t.call('/api/m/chat/chats/sales-room/send', { body: { text: ASK } }); await waitReply(t, 'sales-room');
@@ -238,4 +245,26 @@ test('money with no currency set is the plain number, with no symbol and no lead
   setPrefs({ locale: 'en-US', currency: '' });
   assert.equal(fmt.money(123400), '1,234');
   setPrefs({ currency: 'INR', locale: 'en-IN' });
+});
+
+// ---------- starters: three per agent role and one set for a group, only in a chat the owner has not written in yet
+test('starters fit the agent or group of the chat and go once the owner has written', async () => {
+  const { STARTERS, startersFor } = await import('./ui-text.js');
+  const { ADVISORS } = await import('../agents/advisors.js');
+  const roles = ['coordinator', 'scout', 'closer', 'operator', 'coder', ...ADVISORS.map(a => a.id), 'group'];
+  const text = (c) => typeof c === 'string' ? c : c.text;
+  const all = [];
+  for (const r of roles) { assert.equal(STARTERS[r]?.length, 3, r); all.push(...STARTERS[r].map(text)); }
+  assert.equal(new Set(all).size, all.length, 'no starter is repeated across roles');
+  for (const s of all) { assert.ok(s.length <= 70, s); assert.doesNotMatch(s, /[\u{1F300}-\u{1FAFF}]|\*\*/u); }
+  const direct = (id) => ({ id: 'dm-' + id, members: [id] });
+  assert.deepEqual(startersFor(direct('co-founder'), []), STARTERS['co-founder']);
+  assert.deepEqual(startersFor({ id: 'everyone', members: ['coordinator', 'scout'] }, []), STARTERS.group);
+  assert.equal(startersFor(direct('mira'), []).length, 3, 'an agent the owner made gets three general starters');
+  // the welcome note does not count; the owner's first message does
+  assert.deepEqual(startersFor(direct('co-founder'), [{ role: 'assistant', text: 'Glad to join your team.' }]), STARTERS['co-founder']);
+  assert.deepEqual(startersFor(direct('co-founder'), [{ role: 'user', text: 'Hi' }]), []);
+  assert.deepEqual(startersFor(null, []), []);
+  // the sales starters that mean the owner's own business still wait for what he sells
+  assert.ok(STARTERS.closer.some(c => typeof c === 'object' && c.needsBusiness));
 });

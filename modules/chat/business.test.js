@@ -5,6 +5,8 @@ import assert from 'node:assert/strict';
 import { testDesk } from '../../test/helpers/desk.js';
 import { onlyOwnBusiness, ASK_ABOUT } from './business.js';
 import { waitLine } from './ui-text.js';
+/** These tests are about the Coordinator's own turn: their group chats are set to "Who answers: The Coordinator". */
+const coordinatorAnswers = async (t) => { for (const id of ['everyone', 'sales-room', 'build-room']) await t.call(`/api/m/chat/chats/${id}`, { method: 'PATCH', body: { settings: { whoAnswers: 'coordinator' } } }); };
 
 const CHIP = 'Find 20 leads with sources for my product';
 const ABOUT = 'Payroll software for small firms; HR heads buy it; India.';
@@ -62,6 +64,7 @@ test('empty profile + the "my product" chip: no job, the desk asks; the answer i
 test('empty profile + the same ask typed: the model fills "my product", the desk asks first; a typed ask with its own subject just runs', async () => {
   const prompts = []; const { t, ran } = await leadsDesk(prompts);
   try {
+    await coordinatorAnswers(t);
     await t.call('/api/m/chat/chats/sales-room/send', { body: { text: CHIP } });
     let s = await settle(t, 'sales-room');
     assert.equal(s.last.text, ASK_ABOUT_SITE); assert.equal(ran.length, 0); assert.ok(s.chat.settings.awaitBusiness);
@@ -76,6 +79,7 @@ test('empty profile + the same ask typed: the model fills "my product", the desk
 test('waiting + another chip or a typed ask of its own: that ask runs, nothing is saved; a plain line is taken as the answer', async () => {
   const prompts = []; const { t, ran } = await leadsDesk(prompts);
   try {
+    await coordinatorAnswers(t);
     await t.call('/api/m/chat/chats/sales-room/send', { body: { text: CHIP, chip: true, needsBusiness: true } }); await settle(t, 'sales-room');
     await t.call('/api/m/chat/chats/sales-room/send', { body: { text: 'Research this company before my call', chip: true } });
     let s = await settle(t, 'sales-room');
@@ -96,6 +100,7 @@ test('waiting + another chip or a typed ask of its own: that ask runs, nothing i
 test('profile set: the chip runs at once, the prompt carries the fact block, and "my product" becomes his words', async () => {
   const prompts = []; const { t, ran } = await leadsDesk(prompts);
   try {
+    await coordinatorAnswers(t);
     t.core.settings.set('business.about', ABOUT);
     await t.call('/api/m/chat/chats/sales-room/send', { body: { text: CHIP, chip: true, needsBusiness: true } });
     const s = await settle(t, 'sales-room');

@@ -137,11 +137,22 @@ process.exit(results.every(Boolean) ? 0 : 1);
 async function runPanel() {
   const LABEL = 'Free API · Meta-Llama-3_3-70B-Instruct (OVHcloud AI Endpoints)';
   const wait = (ms) => new Promise(r => setTimeout(r, ms));
-  const open = async (w, h, theme, hash, { reply = false } = {}) => {
+  const GROUP = [{ id: 9101, role: 'user', text: 'What should a small bakery that delivers to offices do this week to get three new office customers?', meta: {} },
+    { id: 9102, role: 'assistant', agentId: 'scout', text: 'Look for offices within 3 km that order lunch in: their reviews and job posts name the team size.', label: 'Free API · gpt-oss-20b', meta: { groupOf: 'g1', steps: [{ tool: 'web_search', agentId: 'scout', status: 'done' }, { tool: 'web_search', agentId: 'scout', status: 'done' }, { tool: 'web_read', agentId: 'scout', status: 'done' }] } },
+    { id: 9103, role: 'assistant', agentId: 'closer', text: 'Closer had nothing to add', meta: { groupOf: 'g1', passed: true } },
+    { id: 9104, role: 'assistant', agentId: 'coder', text: 'Operator did not answer in time.', meta: { groupOf: 'g1', late: true } },
+    { id: 9105, role: 'assistant', agentId: 'coordinator', text: 'Scout: start with nearby offices that already order in. Next: send a tasting box to three of them on Thursday.', label: 'Google Gemini · gemini-3.5-flash-lite', meta: { groupSummary: 'g1', of: ['scout', 'operator'] } }];
+  const open = async (w, h, theme, hash, { reply = false, group = false } = {}) => {
     const ctx = await browser.newContext({ viewport: { width: w, height: h } }); const p = await ctx.newPage();
     p.on('pageerror', e => errors.push(e.message));
     await p.addInitScript((th) => { try { if (!sessionStorage.getItem('apd-init')) { localStorage.setItem('apd-theme', th); sessionStorage.setItem('apd-init', '1'); } } catch {} }, theme);
     t.core.settings.set('theme', theme); t.core.settings.set('onboarded', true);
+    if (reply || group) await p.route(/\/m\/chat\/ratings/, (route) => route.request().method() === 'POST' ? route.fulfill({ json: { ok: true, rating: { targetType: 'answer', targetId: '9002', thumb: JSON.parse(route.request().postData() || '{}').thumb || null, research: JSON.parse(route.request().postData() || '{}').research || null, reasons: JSON.parse(route.request().postData() || '{}').reasons || [], comment: '' } } }) : route.fulfill({ json: { rating: null } }));
+    if (group) await p.route(/\/chats\/[^/?]+\/messages/, async (route) => {
+      const r = await route.fetch(); const j = await r.json();
+      j.messages = GROUP.map((m, i) => ({ chatId: j.chat?.id, cards: [], status: 'done', label: null, at: Date.now() - 9000 + i * 1000, ...m }));
+      await route.fulfill({ response: r, json: j });
+    });
     if (reply) await p.route(/\/chats\/[^/?]+\/messages/, async (route) => {
       const r = await route.fetch(); const j = await r.json();
       j.messages = [{ id: 9001, chatId: j.chat?.id, role: 'user', text: 'Hello', cards: [], status: 'done', meta: {}, at: Date.now() - 5000 },
@@ -206,7 +217,10 @@ async function runPanel() {
         await p.screenshot({ path: name('1-drawer') });
         const a = await dw(p); await p.waitForTimeout(4000);
         check(`${tag}: the Panel link opens the drawer and it stays open`, a > 250 && await dw(p) > 250);
-        await p.evaluate(() => document.querySelector('.hd .mini').click()); await p.waitForTimeout(450);   // the open drawer covers the Panel link at this width, as it did before
+        const close = p.getByRole('button', { name: 'Close the panel' });
+        check(`${tag}: the open drawer has its own Close button, in view`, await close.isVisible());
+        await close.click(); await p.waitForTimeout(450);
+        check(`${tag}: Close shuts the drawer and the Panel link is reachable again`, await dw(p) < 2 && await p.getByRole('button', { name: 'Panel', exact: true }).isVisible());
         check(`${tag}: message box and Send are clear`, await composerClear(p));
         await p.screenshot({ path: name('2-closed') });
       }
@@ -234,6 +248,42 @@ async function runPanel() {
       check(`${tag}: reply bubble: who line on one line and wide, nothing overlaps, nothing outside the bubble`, g.stacked && g.oneLine && g.whoW > 120 && g.inside && !g.rowOverlap && g.timeIn && /OVHcloud/.test(g.title), JSON.stringify(g));
       await ctx.close();
     }
+  }
+  // Everyone: not edited, no switcher; groups pick who answers; avatars in the list and the bubbles; a group turn's look
+  for (const theme of ['light', 'dark']) for (const [w, h] of [[1366, 768], [390, 844]]) {
+    const tag = `${w}x${h} ${theme}`;
+    const { ctx, p } = await open(w, h, theme, 'chat/everyone', { group: true });
+    if (w <= 860) { await p.getByRole('button', { name: 'Panel', exact: true }).click(); await p.waitForTimeout(450); }
+    else await p.getByRole('button', { name: 'Keep the panel open' }).click().catch(() => {});
+    const e = await p.evaluate(() => ({ switcher: !document.querySelector('#grp')?.hidden, title: document.querySelector('.hd-title')?.textContent, line: document.querySelector('[data-everyone]')?.textContent || '', add: /Add an agent/.test(document.querySelector('#drawer')?.textContent || ''), who: [...(document.querySelector('[data-who-answers]')?.options || [])].map(o => o.textContent), railAv: document.querySelectorAll('.rail .agav').length, bubbleAv: document.querySelectorAll('.msg.it .who .agav').length, pass: document.querySelector('.msg[data-role=pass]')?.textContent, late: document.querySelector('.msg[data-role=late]')?.textContent, rec: [...document.querySelectorAll('.msg .rec')].map(x => x.textContent) }));
+    check(`${tag}: Everyone has no switcher and no add control, only its line; Who answers offers the two choices`, !e.switcher && e.title === 'Everyone' && /Everyone always holds all your agents/.test(e.line) && !e.add && e.who.join('|') === 'Everyone, then a summary|The Coordinator', JSON.stringify(e));
+    check(`${tag}: avatars in the chat list and in every reply bubble; a pass and a time-out are quiet lines; the record line is from the steps`, e.railAv >= 4 && e.bubbleAv === 2 && e.pass === 'Closer had nothing to add' && /did not answer in time/.test(e.late) && e.rec.includes('Scout answered · Scout searched the web 2 times, read a page') && e.rec.some(x => /summed up/.test(x)), JSON.stringify(e));
+    await p.screenshot({ path: path.join(out, `chat-group_${TAG}_${w}x${h}_${theme}.png`) });
+    await ctx.close();
+  }
+  // rating: two dim thumbs; after "poor" the research pair, the reasons and the note, all inside the bubble at 390 px
+  for (const theme of ['light', 'dark']) for (const [w, h] of [[1366, 768], [390, 844]]) {
+    const tag = `${w}x${h} ${theme}`;
+    const { ctx, p } = await open(w, h, theme, 'chat/everyone', { reply: true });
+    await p.waitForSelector('.msg.it .rate button'); await p.waitForTimeout(400);
+    const widthAt = () => p.evaluate(() => Math.round(document.querySelector('.msg.it').getBoundingClientRect().width));
+    const rest = await widthAt();
+    const bare = await p.evaluate(() => { const r = document.querySelector('.msg.it .rate'); r.style.display = 'none'; const w = Math.round(document.querySelector('.msg.it').getBoundingClientRect().width); r.style.display = ''; return w; });
+    const names = await p.evaluate(() => [...document.querySelectorAll('.msg.it .rate button')].map(b => b.getAttribute('aria-label')));
+    const words = await p.evaluate(() => document.querySelector('.msg.it .rate').innerText.trim());
+    await p.screenshot({ path: path.join(out, `chat-rating_1-rest_${TAG}_${w}x${h}_${theme}.png`) });
+    await p.getByRole('button', { name: 'Poor answer' }).click(); await p.waitForTimeout(700);
+    const after = await p.evaluate(() => {
+      const R = (e) => e.getBoundingClientRect(); const b = document.querySelector('.msg.it'); const br = R(b);
+      const inside = [...b.querySelectorAll('.foot, .foot *')].every(e => { const r = R(e); return r.width === 0 || (r.left >= br.left - 1 && r.right <= br.right + 1 && r.bottom <= br.bottom + 1); });
+      const bold = [...b.querySelectorAll('.rate, .rate *')].some(e => Number(getComputedStyle(e).fontWeight) >= 600);
+      return { inside, bold, pressed: document.querySelector('.msg.it .rate [aria-label="Poor answer"]').getAttribute('aria-pressed'), research: !!document.querySelector('.msg.it .rate [aria-label="Strong research"]'), chips: document.querySelectorAll('.msg.it .rate .why .chip').length, note: /Add a note/.test(document.querySelector('.msg.it .rate').textContent), saved: document.querySelector('.msg.it .rate .saved')?.getAttribute('aria-label') || '' };
+    });
+    const grown = await widthAt();
+    await p.screenshot({ path: path.join(out, `chat-rating_2-poor_${TAG}_${w}x${h}_${theme}.png`) });
+    check(`${tag}: rating at rest is two thumbs named Good answer and Poor answer, no words, and does not widen the bubble`, names.join('|') === 'Good answer|Poor answer' && words === '' && Math.abs(rest - bare) <= 1, JSON.stringify({ names, words, rest, bare }));
+    check(`${tag}: after "poor": marked, Saved tick, research pair, seven reasons and a note, no bold, all inside the bubble, bubble no wider`, after.pressed === 'true' && /Saved/.test(after.saved) && after.research && after.chips === 7 && after.note && !after.bold && after.inside && grown <= rest + 1, JSON.stringify({ ...after, rest, grown }));
+    await ctx.close();
   }
   check('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
 }
