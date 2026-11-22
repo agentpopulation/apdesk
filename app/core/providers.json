@@ -50,6 +50,7 @@
    "name": "Google Gemini",
    "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
    "api": "openai",
+   "nativeModels": true,
    "env": "GEMINI_API_KEY",
    "defaultModel": "gemini-3.6-flash",
    "signup": "https://aistudio.google.com/apikey",

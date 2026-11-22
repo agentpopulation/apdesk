@@ -4,7 +4,7 @@ import { homePage, ROLES, applyRole, teamFor, STARTING_TEAM } from '/ui/pages/ho
 import { settingsPage, coreSettingsSections, ABOUT_MAX, ABOUT_HELP } from '/ui/pages/settings.js';
 import { trackerPage, trackerBody } from '/ui/pages/tracker.js';
 import { MENU_KEY, cleanMenu, arrangeMenu, firstPlace, placeName, tabTitle, cutPlaces, menuEnds } from '/ui/menus.js';
-import { mergeJob, runningCount, needsYou, updateReady, leftWords, popShowsDownloads, whoAsks, jobWho } from '/ui/tracker-data.js';
+import { mergeJob, runningCount, needsYou, updateReady, leftWords, popShowsDownloads, whoAsks, jobWho, trackWriting, writingWords } from '/ui/tracker-data.js';
 import { showChooser, switcherMenu, personAvatar, takeEntryNotice } from '/ui/people.js';
 const { $, $$, h, api, toast } = kit;
 
@@ -422,9 +422,11 @@ $('#doc').onclick = () => ui.go('doctor');
 
 // ---------- the footer line: at the left what the desk is doing now (an activity a page announced, a running job, a
 // download; else Ready), at the right the count of running jobs and the version. One line; a press opens the Tracker.
+const writing = new Map();   // chat messages being written now, from the chat's own events
 function footWords() {
   if (state.panic.halted) return { text: 'Everything is stopped', busy: false };
   const acts = kit.activities(); if (acts.length) return { text: acts.at(-1).text, busy: true };
+  const wr = writingWords(state.agents, writing); if (wr) return { text: wr, busy: true };
   const run = [...tracked.jobs.values()].filter(j => j.status === 'running' && !j.quiet).sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')));
   if (run.length) return { text: `${jobWho(state.agents, run[0])}: ${run[0].title || 'a job'}`, busy: true };
   const d = dls.list.find(x => x.state === 'running');
@@ -746,6 +748,8 @@ globalOn('toast', (t) => toast(t.text || String(t), t.kind || ''));
 globalOn('job', jobFinished);
 globalOn('job', (j) => { mergeJob(tracked.jobs, j); paintTracker(); paintFoot(); });
 globalOn('job', jobNeedsYou);
+globalOn('chat', (d) => { trackWriting(writing, d); paintFoot(); });
+globalOn('panic', (st) => { if (st?.halted) { writing.clear(); paintFoot(); } });
 globalOn('update', (st) => { updateOk = updateReady(st); paintUpdate(); });
 globalOn('downloads', ({ download, summary } = {}) => {
   if (download?.id) {

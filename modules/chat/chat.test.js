@@ -1236,7 +1236,8 @@ const offerDesk = async () => {
   const seen = [];
   const t = await testDesk({ modules: ['chat', 'agents'], script: (b) => { seen.push({ tools: (b.tools || []).map(x => x.function.name), sys: b.messages[0].content }); return 'Here it is.'; } });
   for (const [name, module] of HEAVY_FAKES) t.core.modules.tools.set(name, { module, name, description: name, parameters: { type: 'object', properties: {} }, async run() { return { ok: false, error: 'not in this test' }; } });
-  const offer = async (chatId, text) => { seen.length = 0; await t.call(`/api/m/chat/chats/${chatId}/send`, { body: { text } }); await waitReply(t, chatId); return seen[0]; };
+  // the first call of the answering turn (in a group, each agent's own choice to answer or pass comes before it)
+  const offer = async (chatId, text) => { seen.length = 0; await t.call(`/api/m/chat/chats/${chatId}/send`, { body: { text } }); await waitReply(t, chatId); return seen.find(x => !/Reply with one word: GO or PASS/.test(x.sys)); };
   return { t, offer };
 };
 const HEAVY_NAMES = ['research_deep', 'research_swarm', 'council_ask', 'leads_find', 'browser_task'];
@@ -1337,7 +1338,8 @@ const starterDesk = async () => {
   const seen = [];
   const t = await testDesk({ modules: ['chat', 'agents'], script: (b) => { seen.push({ tools: (b.tools || []).map(x => x.function.name), sys: b.messages[0].content }); return 'Here it is.'; } });
   for (const [name, module] of STARTER_FAKES) t.core.modules.tools.set(name, { module, name, description: name, parameters: { type: 'object', properties: {} }, async run() { return { ok: false, error: 'not in this test' }; } });
-  const offer = async (chatId, text) => { seen.length = 0; await t.call(`/api/m/chat/chats/${chatId}/send`, { body: { text } }); await waitReply(t, chatId); return seen[0]; };
+  // the first call of the answering turn (in a group, each agent's own choice to answer or pass comes before it)
+  const offer = async (chatId, text) => { seen.length = 0; await t.call(`/api/m/chat/chats/${chatId}/send`, { body: { text } }); await waitReply(t, chatId); return seen.find(x => !/Reply with one word: GO or PASS/.test(x.sys)); };
   return { t, offer };
 };
 

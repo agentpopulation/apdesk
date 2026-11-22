@@ -42,7 +42,7 @@ try {
     check(`${w}x${hgt}: no page errors`, errs.length === 0, errs.join(' | ').slice(0, 200));
     await p.close();
   }
-  await barChecks(b); await approvalChecks(b); await trackerChecks(b); await menuChecks(b); await downloadChecks(b); await networkChecks(b); await moduleChecks(b); await settingsChecks(b); await lookChecks(b);
+  await barChecks(b); await approvalChecks(b); await trackerChecks(b); await menuChecks(b); await downloadChecks(b); await networkChecks(b); await moduleChecks(b); await settingsChecks(b); await lookChecks(b); await dialogChecks(b);
   await b.close();
 } finally { await t.close(); }
 await firstStartChecks(); await pairChecks(); await freshThemeChecks();
@@ -95,7 +95,7 @@ async function barChecks(b) {
       check(`${w}x${hgt} ${theme}: the theme control is a dull icon with no words, named for what it does`, th.text === '' && th.svg && th.name === wantName && th.icon === (theme === 'dark' ? 'sun' : 'moon') && Math.abs(Number(th.opacity) - 0.6) < 0.05, JSON.stringify(th));
       const g = await barGeometry(p);
       const named = await p.evaluate(() => [...document.querySelectorAll('#menu .nav')].some(n => n.textContent === 'Night shift') && document.getElementById('trk').textContent === '1');
-      check(`${w}x${hgt} ${theme}: ${g.items} menu places (one renamed), the update, tracker, download, network and theme icons and Panic: nothing cut, nothing covered`, named && g.items >= 16 && ['upd', 'trk', 'dl', 'net', 'theme'].every(x => g.ctl.includes(x)) && !g.clash.length && !g.cut.length && !g.textCut.length && g.panicWhole && g.menuInBar && g.pageScroll <= 0, JSON.stringify(g));
+        check(`${w}x${hgt} ${theme}: ${g.items} menu places (one renamed), the update, tracker, download, network and theme icons and Panic: nothing cut, nothing covered`, named && g.items >= 16 && ['upd', 'trk', 'dl', 'net', 'theme'].every(x => g.ctl.includes(x)) && !g.clash.length && !g.cut.length && !g.textCut.length && g.panicWhole && g.menuInBar && g.pageScroll <= 0, JSON.stringify(g));
       if (g.over) check(`${w}x${hgt} ${theme}: the menu shows a "more places" arrow only where places are hidden`, g.fades[1] === true && g.fades[0] === false && g.arrows[0] === false && g.arrows[1] === true, JSON.stringify({ fades: g.fades, arrows: g.arrows }));
       if (g.over) { await p.evaluate(() => { const m = document.getElementById('menu'); m.scrollLeft = m.scrollWidth; }); await p.waitForTimeout(150); const f = await p.evaluate(() => [...document.getElementById('menu').classList, ...[...document.querySelectorAll('#menu .more')].map(a => getComputedStyle(a).visibility)]); check(`${w}x${hgt} ${theme}: scrolled to the end, only the start shows the arrow`, f.includes('fl') && !f.includes('fr') && f.at(-2) === 'visible' && f.at(-1) === 'hidden', f.join(' ')); await p.evaluate(() => { document.getElementById('menu').scrollLeft = 0; }); }
       if (g.over && theme === 'light') {
@@ -362,6 +362,34 @@ async function downloadChecks(b) {
     check('Escape closes the list', await p.evaluate(() => document.getElementById('pop').hidden));
     check('downloads: no page errors', errs.length === 0, errs.join(' | ').slice(0, 200));
   } finally { await ctx.close(); await host.close(); }
+}
+
+// ---- Esc closes the top dialog and gives the focus back; Enter does not choose the destructive button; the footer says who writes
+async function dialogChecks(b) {
+  const { ctx, p, errs } = await open(b, 1366, 768, 'light', '#/home');
+  try {
+        await p.evaluate(async () => { const k = await import('/ui/kit.js'); window.__answer = 'none'; k.confirm('Remove this key?', { ok: 'Remove', kind: 'danger' }).then(v => { window.__answer = v; }); });
+    await p.waitForTimeout(200);
+    const focused = await p.evaluate(() => document.activeElement?.textContent);
+    check('a confirm opens with Cancel in focus, not the destructive button', focused === 'Cancel', String(focused));
+    await p.keyboard.press('Enter'); await p.waitForTimeout(200);
+    check('Enter on a confirm does not choose the destructive button', await p.evaluate(() => window.__answer === false && document.getElementById('modal').hidden));
+    await p.click('#trk'); await p.waitForTimeout(200);
+    await p.evaluate(async () => { const k = await import('/ui/kit.js'); window.__answer = 'none'; k.confirm('Remove it?', { ok: 'Remove' }).then(v => { window.__answer = v; }); });
+    await p.waitForTimeout(100); await p.keyboard.press('Escape'); await p.waitForTimeout(200);
+    const st = await p.evaluate(() => ({ modal: document.getElementById('modal').hidden, pop: document.getElementById('pop').hidden, answer: window.__answer }));
+    check('Esc closes the dialog on top only; the pop-up under it stays', st.modal && !st.pop && st.answer === false, JSON.stringify(st));
+    await p.keyboard.press('Escape'); await p.waitForTimeout(200);
+    check('a second Esc closes the pop-up and the focus goes back to its icon', await p.evaluate(() => document.getElementById('pop').hidden && document.activeElement?.id === 'trk'));
+    // the footer names who writes while a chat reply streams, and says Ready again after
+    t.core.events.emit('chat', { type: 'message', chatId: 'c1', message: { id: 91, chatId: 'c1', role: 'assistant', agentId: 'scout', status: 'streaming', text: '' } }); await p.waitForTimeout(300);
+    const foot = () => p.evaluate(() => document.getElementById('foot-now').textContent);
+    const writing = await foot();
+    check('the footer says an agent is writing while a reply streams', /is writing…$/.test(writing) && !/^Ready/.test(writing), writing);
+    t.core.events.emit('chat', { type: 'message', chatId: 'c1', message: { id: 91, chatId: 'c1', role: 'assistant', agentId: 'scout', status: 'done', text: 'x' } }); await p.waitForTimeout(300);
+    check('the footer says Ready again when the reply ends', (await foot()) === 'Ready', await foot());
+    check('dialogs: no page errors', errs.length === 0, errs.join(' | ').slice(0, 200));
+  } finally { await ctx.close(); }
 }
 
 // ---- 3: the network icon

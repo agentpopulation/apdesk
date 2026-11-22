@@ -27,7 +27,8 @@ export function renderComputer(el, ui, agent) {
       lastImg.src = u; lastImg.hidden = false; lastCap.textContent = `Last picture from its browser: ${fmt.when(at)}.`;
     } catch {}
   }
-  const urlBar = h('div', { class: 'url' }, 'about:blank');
+  // the address is a read-only field: empty, with a hint, until a page was opened
+  const urlBar = h('input', { type: 'text', class: 'url', readonly: true, placeholder: 'No page opened yet', 'aria-label': 'Address', style: { display: 'block', width: '100%', boxSizing: 'border-box', border: '0', borderBottom: '1px solid var(--line)', borderRadius: '0', background: 'transparent', outline: 'none' } });
   const modePill = pill('Idle');
   const framesPill = pill('');
   const offPill = pill('Offline', 'stop'); offPill.hidden = true; offPill.title = 'The desk is offline. Browsing needs the internet.';
@@ -67,7 +68,7 @@ export function renderComputer(el, ui, agent) {
   function paint() {
     const [w, k] = MODE_WORDS[st.mode] || MODE_WORDS.idle;
     modePill.textContent = w; modePill.className = 'pill ' + k;
-    urlBar.textContent = st.url || 'about:blank';
+    urlBar.value = !st.url || st.url === 'about:blank' ? '' : st.url;
     offPill.hidden = !st.offline;
     framesPill.textContent = st.open ? (st.browser ? `${st.browser}, own profile` : 'Running') : 'Starts when needed';
     goalLine.textContent = st.goal ? 'Task: ' + st.goal : 'No task yet.';

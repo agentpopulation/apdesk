@@ -12,10 +12,10 @@
 .mdl-warn{color:var(--warn);font-size:13px;margin:4px 0}
 .mdl-pw{flex:2 1 200px;min-width:0;background:var(--card);border:1px solid var(--line);border-radius:var(--r-s);padding:5px 9px}
 .mdl-scroll .line .d{overflow-wrap:anywhere}
-.mdl-agents select{width:100%;max-width:340px}
+.mdl-agents select{width:100%;min-width:0;max-width:420px;text-overflow:ellipsis}
 .mdl-agents td{vertical-align:top}
 .keys .row input[type=text]{min-width:0}
-.mdl-tab .line select{max-width:360px}
+.mdl-tab .line select{max-width:360px;text-overflow:ellipsis}
 @media (max-width:860px){.view.mdl{height:auto;overflow:visible}.mdl-active{max-height:none}}
 .mdl-active{grid-template-columns:repeat(auto-fill,minmax(270px,1fr))}
 .mdl-active .api b{display:block;white-space:normal;overflow-wrap:anywhere}   /* a provider's name is never cut */

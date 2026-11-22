@@ -79,7 +79,7 @@ Rules that read the owner's words with patterns and then forced or rewrote the m
 
 ## 0.1.1 (21 Nov 2026)
 
-Everything below was built and tested on Linux after the 0.1.0 release. The Windows installer, background mode and update step are written and checked by static tests but have not been run on Windows yet.
+Everything below was built and tested on Linux after the 0.1.0 release. Each day's work has its own heading; version 0.1.1 was named on 21 Nov 2026 and the work of 22 Nov 2026 is part of it. On Windows: the one-line install was run by the project owner on Windows 11 on 20 Nov 2026, and `install.bat` with its console questions on Windows 11 ARM64 on 22 Nov 2026 (the desk installed and opened). The visual installer, the hidden start, the background mode and the update step are checked by static tests and have not been run on Windows yet.
 
 ### 20 Nov 2026
 - `start.bat` from a GitHub download did nothing on Windows. Two causes, both repaired: `setup\setup.bat` had lost the lines that close its install block and the label that block calls, and the `.bat` files were stored with Unix line endings. The zip with the packages inside was not affected, because it never runs the install step.
@@ -93,6 +93,14 @@ Everything below was built and tested on Linux after the 0.1.0 release. The Wind
 - A failed Test says why, local models get a fair first-call wait, and the Default model box lists every model: OpenRouter's whole list even before a key, each marked Free or Paid.
 - Paid OpenRouter models are switched beside the keys or in Payments, by the owner only, from the desk's own window. A new safety probe checks that nothing else can switch them on.
 - Free hosts that say no are skipped for a while instead of being retried, and when all of them are busy the desk says so at once with when to try again.
+- A free host that has not started answering within 25 seconds is skipped (it was 60), so more of them get a try inside one chat turn.
+- A new desk opens the chat with two buttons, "Say hello" and a highlighted "Select model / Add API"; the role's suggestions appear once the first reply has finished, and a small "Select model / Add API" link stays beside the model name.
+- The side panel never sends an empty request: "Turn into a task" offers to run the chat's last ask again in the background, and a message that is only a prefix is refused.
+- Work the chat finished in the last hour for the same ask is not restarted by itself; lead tasks go to the agent whose role is leads; times and money follow your settings everywhere.
+- A built-in agent left out at first start or retired later shows under "Not on your team" on the Agents page, and one click hires it back as it was, with its chats and rooms.
+- Briefs, schedules, calendar dates, lead values and spend amounts follow your own zone, locale and currency; nothing falls back to India any more.
+
+### 21 Nov 2026
 - The routing model is named "APDesk Edge 63M" in the README.
 - After a few chats, the desk asks once whether you want short or detailed answers, with a sample of each; your agents then answer that way, and you can change it in Settings › General.
 - Updates: the desk can check GitHub for a new version and install it on your click, only if the release is signed with the project's key. Until a key is added to the build it says "Updates are not set up in this build."
@@ -109,14 +117,6 @@ Everything below was built and tested on Linux after the 0.1.0 release. The Wind
 - Network now has its own page in the menu: connection and public address, speed and latency over time, websites to watch, where the agents went, "Is it me or them?", AI provider speed, devices, your domain, what listens here, domain lookups and desk data use.
 - Website rules: sites agents may never open, and sites they open only after asking you, enforced in search reads, research and the agent's browser while the Network module is on.
 - In the Network module nothing calls an outside service by itself; schedules are off by default, wait while Offline and stop with Panic.
-- A free host that has not started answering within 25 seconds is skipped (it was 60), so more of them get a try inside one chat turn.
-- A new desk opens the chat with two buttons, "Say hello" and a highlighted "Select model / Add API"; the role's suggestions appear once the first reply has finished, and a small "Select model / Add API" link stays beside the model name.
-- The side panel never sends an empty request: "Turn into a task" offers to run the chat's last ask again in the background, and a message that is only a prefix is refused.
-- Work the chat finished in the last hour for the same ask is not restarted by itself; lead tasks go to the agent whose role is leads; times and money follow your settings everywhere.
-- A built-in agent left out at first start or retired later shows under "Not on your team" on the Agents page, and one click hires it back as it was, with its chats and rooms.
-- Briefs, schedules, calendar dates, lead values and spend amounts follow your own zone, locale and currency; nothing falls back to India any more.
-
-### 21 Nov 2026
 - Bench mode now asks how it may spend before it runs: Local only, Free, or Paid with a per-session and per-day cap you set; it waits for your choice, and when a cap is reached it winds back to free and asks you again.
 - Bench holds to session limits whatever the choice: tasks, sources fetched, steps and minutes of work, winding down at 80 percent of any one and stopping with a checkpoint at 100 percent; the Bench page header shows your choice, today's spend and how close the limits are.
 - You can rate any answer and any Bench finding: good or poor on the answer, strong or weak on the research, with reason chips and a note; ratings are only collected for now.
@@ -207,6 +207,9 @@ Everything below was built and tested on Linux after the 0.1.0 release. The Wind
 - Each person can keep a separate Work and Personal space, each with its own chats, memory, leads and jobs. For now keys are added per space (a safe step short of one shared key store); a person's keys are never seen by another person or by Incognito.
 - The switcher now has the buttons for it: switch between your Work and Personal space, or open Incognito after a plain list of what it does and does not keep; while you are in Incognito the top bar says so.
 - Version 0.1.1. The public copy is generic: an internal safety-findings file and a design mock-up page are removed, and the real company names in the maintainer-only test scripts are replaced with example firms on example.com-style domains. No keys, tokens, passwords or personal data are in the repository or its history.
+- People on screen: when more than one person uses this PC the desk opens on "Who is at this desk?", and the avatar menu at the top right switches person, locks this window, and opens your profile and PIN. The keeper adds and removes people in Settings › People.
+
+### 22 Nov 2026
 - Settings has a new Page reading card: pages that need a browser to show their text, or are very large, can be read through Firecrawl or Jina Reader if you switch one on. It is used only as a second try after the desk's own read came back empty, with a daily cap you set, and each result says "read through" that service.
 - A reading service is never used to get past a no: not for a never-open or unapproved ask-first site, not where robots.txt disallows the page (checked again after a redirect), not after the site refused or showed a bot check, and not while Offline or after Panic. The card says plainly that the page address is sent to the service and may count against an allowance. Checked once without a key on example.com; not checked with a paid key.
 - In Chat the right panel shows when a chat opens, folds away by itself after 3 seconds, and comes back from a small icon, a pin, or when a background task or a new file appears.
@@ -233,6 +236,29 @@ Everything below was built and tested on Linux after the 0.1.0 release. The Wind
 - Every reply says who did the work in one line, taken from the record of the turn. Everyone always holds all your agents and cannot be edited, and its doubled title is gone.
 - Rating a reply is two dim thumbs beside the time, with the research rating, reasons and a note after a rating. Agents show their avatars in the chat list and in replies, and the chat panel has a Close button on a phone.
 - Agent avatars blink and their eyes follow the pointer a little; an agent that is working pulses softly, one waiting for you shows an amber dot. An "Avatar motion" switch on the agent's Profile tab turns it off for the whole desk, and nothing moves when the system asks for less motion.
+- When an agent is hired it gets a model by itself, writes a welcome note that fits its role (what it is good at and what would help it learn your business), and its empty chat offers three starters for that role. Starters show only in an empty chat.
+- "Everyone" always holds every agent and has one name; to talk to fewer, make a new group.
+
+Corrections after an independent test of this build on real free models (22 Nov 2026: 8 of 19 checks passed, 10 partly, 1 failed):
+- A plain remark, greeting, introduction or task no longer starts research; the plan asks whether you want something found out, and when unsure it is not research.
+- Replies are checked before they are shown: broken text, babble and bare refusals are removed, a reply with nothing usable is tried on another model, and after that the chat says in one plain line that no model gave a usable answer.
+- A research turn the pages did not answer says so in one line and offers an answer without the pages.
+- The research plan call has room to finish, mends a cut-off plan, tries another model once, and says so quietly when it cannot plan.
+- A research part counts as answered only when a page that was read backs what the answer says about it.
+- Figures and prices no page gave are marked "(not checked)" in every chat turn; amounts in another currency than yours are always marked; lines with placeholder figures are dropped. Every chat turn knows your country and currency.
+- In a group, each agent chooses whether it has something to add; a greeting gets one answer from the Coordinator; agents see only their own tools; the summary is checked against who answered.
+- "Still writing" names only the agents writing now, and the plan knows today's date.
+- New groups keep the Coordinator (shown locked, because it sums up), are named from their members and are listed under Groups.
+- The research plan card reads well at 390 px; research thumbs show only on replies that searched; the panel tip no longer covers messages.
+- A key the provider refused no longer makes a provider count as active: it is listed as "Does not answer", the active count follows, and a provider just tested as refused shows the refusal.
+- Model lists offer only models the provider says can chat.
+- The Fallback choice on Per agent shows its full text on hover; the last key of a service says "refused, no other key to use".
+- Esc closes the top dialog and gives the focus back; a dialog opens on its safe button, so Enter cannot remove something by accident.
+- The footer says who is writing while a chat reply streams.
+- An agent's Computer tab shows an empty address field with "No page opened yet"; the Page reading card counts "1 page" correctly.
+- The desk's console and `desk.log` lines show time in your zone with its short name.
+- This changelog now files each day's work under its own date.
+- Still not right after these corrections (seen in the builder's own runs on free models, 22 Nov 2026): two agents can still write overlapping plans in a group; free models still convert currencies by guess (the amounts are marked, but shown); a long reply cut off by a provider is trimmed only when the provider reports the cut.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

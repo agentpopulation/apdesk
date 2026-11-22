@@ -220,3 +220,30 @@ test('approvals: an ask with no agent is the desk asking (the owner\'s own Get),
   for (const [name, src] of [['shell', shell], ['home', home]]) assert.doesNotMatch(src, /\|\| 'An agent'/, name + ': no "An agent" fallback of its own');
   assert.doesNotMatch(shell, /a\.agentId \|\| 'An agent'/, 'no agent id on screen');
 });
+
+test('footer: an agent writing a chat reply is named from the chat\'s own events, and ends when the reply or the run ends', async () => {
+  const { trackWriting, writingWords } = await import('../app/ui/tracker-data.js');
+  const agents = [{ id: 'scout', name: 'Scout' }, { id: 'closer', name: 'Closer' }];
+  const m = new Map(); const now = Date.now();
+  assert.equal(writingWords(agents, m), '', 'nobody writing: no words');
+  trackWriting(m, { type: 'message', chatId: 'c1', message: { id: 1, chatId: 'c1', role: 'assistant', agentId: 'scout', status: 'streaming' } }, now);
+  assert.equal(writingWords(agents, m, now), 'Scout is writing…');
+  trackWriting(m, { type: 'message', chatId: 'c1', message: { id: 2, chatId: 'c1', role: 'assistant', agentId: 'closer', status: 'streaming' } }, now);
+  assert.equal(writingWords(agents, m, now), 'Scout and Closer are writing…');
+  trackWriting(m, { type: 'message', chatId: 'c1', message: { id: 2, chatId: 'c1', role: 'assistant', agentId: 'closer', status: 'done' } }, now);
+  assert.equal(writingWords(agents, m, now), 'Scout is writing…', 'a finished reply is dropped');
+  trackWriting(m, { type: 'running', chatId: 'c1', on: false }, now);
+  assert.equal(writingWords(agents, m, now), '', 'the end of the chat\'s run clears it');
+  trackWriting(m, { type: 'message', chatId: 'c2', message: { id: 3, chatId: 'c2', role: 'assistant', agentId: 'gone', status: 'streaming' } }, now);
+  assert.equal(writingWords(agents, m, now), 'An agent is writing…', 'an unknown agent is a plain word, never an id');
+  assert.equal(writingWords(agents, m, now + 11 * 60000), '', 'a reply whose end was missed does not stay forever');
+});
+
+test('console and log lines: the owner\'s zone with its short name, the computer\'s zone when none is set or the setting is wrong', async () => {
+  const { logStamp } = await import('../app/server.js');
+  const d = new Date('2026-11-22T09:40:38Z');
+  assert.equal(logStamp({ zone: 'Asia/Kolkata', locale: 'en-IN', date: d }), '15:10:38 IST');
+  assert.match(logStamp({ zone: 'America/New_York', locale: 'en-US', date: d }), /^04:40:38 EST$/);
+  assert.match(logStamp({ zone: 'Not/AZone', date: d }), /^\d\d:\d\d:\d\d \S+$/, 'a bad setting falls back to the computer\'s zone');
+  assert.match(logStamp({ date: d }), /^\d\d:\d\d:\d\d \S+$/);
+});

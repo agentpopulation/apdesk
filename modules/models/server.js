@@ -4,7 +4,7 @@ import path from 'node:path';
 import * as hw from './hardware.js';
 import { UPSTREAM_TERMS, PROVIDER_TERMS, safeFirst } from './catalog.js';
 import providersFile from '../../app/core/providers.json' with { type: 'json' };
-import { ROUTER_NAME } from '../../app/core/model-door.js';
+import { ROUTER_NAME, chatOnly } from '../../app/core/model-door.js';
 
 const BUILTIN_UPSTREAMS = providersFile.freeRouter.upstreams;
 const TEST_PROMPT = [{ role: 'user', content: 'Reply with the single word: ready' }];
@@ -14,7 +14,6 @@ const OLLAMA_FIX = 'Ollama is not running on this PC. Fix: install it from ollam
 // hosted call, so it gets a longer first wait and, when that runs out, one more try (the model is usually loaded by then).
 // Per desk: kv 'testLimits' (tests use short ones).
 const TEST_LIMITS = { hosted: 90000, localFirst: 150000, localRetry: 60000 };
-const NOT_CHAT = /embed|tts|audio|image|imagen|veo|aqa|whisper|moderation|guard|rerank|transcri|speech|dall-e|learnlm|computer-use/i;
 
 export async function activate(ctx) {
   const S = (k) => ctx.settings.get(k);
@@ -77,7 +76,7 @@ export async function activate(ctx) {
     const name = providersFile.providers[pid].name;
     const why = !c.error ? null : /fetch failed|ENOTFOUND|ECONN|EAI_AGAIN|No answer within/i.test(c.error) ? `Could not reach ${name} just now.` : /HTTP 401|HTTP 403/.test(c.error) ? `${name} refused the key for its model list.` : c.error;
     if (!c.ok || !c.models.length) return { provider: pid, source: 'suggested', models: suggested, needsKey: !!c.needsKey, error: why, at: null, total: suggested.length, hiddenPaid: 0 };
-    const chat = c.models.filter(m => !NOT_CHAT.test(m.id));
+    const chat = chatOnly(c.models);
     const ids = new Set(chat.map(m => m.id));
     const mine = suggested.filter(m => m.id === S(`provider.${pid}.model`) && !ids.has(m.id));   // the saved default stays visible
     return { provider: pid, source: 'live', models: [...mine, ...chat], needsKey: false, error: null, at: c.at, total: c.total, hiddenPaid: c.hiddenPaid || 0 };
@@ -148,9 +147,27 @@ export async function activate(ctx) {
       return { loaded: model ? names.includes(model) : names.length > 0 };
     } catch { return { loaded: false }; }
   }
+  /** A key the provider refused outright (not over quota, not skipped). Such a key does not make a provider active. */
+  const keyRefused = (t) => !!t && !t.ok && !t.skipped && /refused/i.test(t.error || '');
   async function activeList() {
-    const act = await ctx.model.active(); const t = tests();
-    return act.map(a => ({ ...a, models: a.provider === 'ollama' ? safeFirst(a.models || []) : a.models, test: t[tkey(a.provider, null, null)] || null }));
+    const act = await ctx.model.active(); const t = tests(); const keys = ctx.model.keys.list();
+    return act.map(a => {
+      let test = t[tkey(a.provider, null, null)] || null; let extra = {};
+      if (a.kind === 'keyed') {
+        const on = (keys[a.provider] || []).filter(k => k.enabled);
+        const kt = on.map(k => t[tkey(a.provider, null, k.id)] || null);
+        // refused: every key that is on was refused and none has passed since. Only the newest result of each key counts.
+        if (on.length && kt.every(keyRefused) && !(test?.ok && test.at > kt.reduce((m, x) => x.at > m ? x.at : m, ''))) {
+          test = kt.reduce((n, x) => !n || x.at > n.at ? x : n, null);
+          extra = { ok: false, refused: true };
+        } else if (!test) {
+          // a key tested by itself shows on the card too: the newest answer, or the newest failure when none answered
+          const done = kt.filter(Boolean).sort((x, y) => (y.at > x.at ? 1 : -1));
+          test = done.find(x => x.ok) || done[0] || null;
+        }
+      }
+      return { ...a, ...extra, models: a.provider === 'ollama' ? safeFirst(a.models || []) : a.models, test };
+    });
   }
   async function testAll() {
     const act = (await ctx.model.active()).filter(a => a.provider !== 'ollama' || a.ok);
@@ -181,7 +198,7 @@ export async function activate(ctx) {
     let listed = [];
     try { listed = (typeof ctx.model.listModels === 'function' ? await ctx.model.listModels(pid) : []) || []; } catch { listed = []; }   // a 429 on /models must not empty the picker
     const known = knownModels(pid);
-    const chat = listed.filter(m => !NOT_CHAT.test(m));
+    const chat = listed;   // the door lists only models that can chat
     // The catalog's picks first (when the provider lists them, or lists nothing), then what the provider lists.
     const first = chat.length ? known.filter(m => chat.includes(m) || m === S(`provider.${pid}.model`)) : known;
     const out = [...new Set([...first, ...chat])];

@@ -10,6 +10,25 @@ export const PROVIDERS = CATALOG.providers;
 export const FREE_ROUTER = CATALOG.freeRouter;
 /** The one place that names the built-in free models: full on the Models page, short on reply labels, pills and notices. */
 export const ROUTER_NAME = Object.freeze({ full: FREE_ROUTER.name, short: FREE_ROUTER.shortName });
+/** Names of models that are not chat models. Used only when a provider's own list says nothing about what a model is for. */
+export const NOT_CHAT_NAME = /embed|tts|audio|image|imagen|veo|aqa|whisper|moderation|guard|rerank|transcri|speech|dall-e|learnlm|computer-use/i;
+/** Can this listed model chat? true or false from what the provider's list says about it (methods, kind, endpoints,
+ *  output types); null when the list says nothing. */
+export function chatKind(m) {
+  if (!m || typeof m !== 'object') return null;
+  if (Array.isArray(m.supportedGenerationMethods)) return m.supportedGenerationMethods.some(x => /^(generateContent|streamGenerateContent)$/.test(x));
+  if (typeof m.capabilities?.completion_chat === 'boolean') return m.capabilities.completion_chat;
+  if (Array.isArray(m.endpoints)) return m.endpoints.some(x => /chat/i.test(String(x)));
+  if (typeof m.type === 'string' && m.type !== 'model') return /^(chat|language|text|llm)$/i.test(m.type);
+  const out = m.architecture?.output_modalities || m.output_modalities;
+  if (Array.isArray(out)) return out.includes('text');
+  return null;
+}
+/** Keep the models that can chat. If the provider reports kinds for any model, those decide; otherwise the name check. */
+export function chatOnly(list) {
+  const kinds = list.some(m => m.chat === true || m.chat === false);
+  return list.filter(m => kinds ? m.chat === true : !NOT_CHAT_NAME.test(m.id));
+}
 const isFreeOpenRouter = (m) => /:free$/.test(String(m || '')) || m === 'openrouter/free';
 /** How long a free host-and-model is skipped after it said no (per door: this.backoff; tests use short ones).
  *  busy: a 429 or a "retry after" notice that names no time (the anonymous limits are per minute);
@@ -540,6 +559,26 @@ export class ModelDoor {
     }
     throw new ModelError('unavailable', 'No embedding model is available. Pull one in Ollama (for example nomic-embed-text).');
   }
+  /** One read of a provider's model list: [{ id, price, chat }], chat from what the list says about the model.
+   *  Gemini's OpenAI-style list names no kinds, so its own list (with the methods each model supports) is read as well. */
+  async readModels(def, k, ms) {
+    const base = (k?.meta?.baseUrl || def.baseUrl).replace(/\/$/, '');
+    const headers = !k ? {} : def.api === 'anthropic' ? { 'x-api-key': k.value, 'anthropic-version': '2023-06-01' } : { authorization: 'Bearer ' + k.value };
+    const res = await this.http(base + '/models', { headers }, ms);
+    if (!res.ok) return { ok: false, models: [], error: `HTTP ${res.status}` };
+    const j = await res.json();
+    const models = (j.data || j.models || []).map(m => ({ id: String(typeof m === 'string' ? m : m.id || m.name || '').replace(/^models\//, ''), price: priceTag(m?.pricing), chat: chatKind(m) })).filter(m => m.id);
+    if (def.nativeModels && k && models.every(m => m.chat === null)) {
+      try {
+        const nr = await this.http(base.replace(/\/openai$/, '') + '/models?pageSize=1000', { headers: { 'x-goog-api-key': k.value } }, ms);
+        if (nr.ok) {
+          const kinds = new Map(((await nr.json()).models || []).map(m => [String(m.name || '').replace(/^models\//, ''), chatKind(m)]));
+          for (const m of models) m.chat = kinds.has(m.id) ? kinds.get(m.id) : null;
+        }
+      } catch { /* the names decide, as before */ }
+    }
+    return { ok: true, models };
+  }
   /** The model ids a provider offers, read with the owner's key on the server. Modules never see the key. */
   async listModels(provider) {
     if (provider === 'router') return (await this.active()).find(a => a.provider === 'router')?.models || [];
@@ -547,14 +586,8 @@ export class ModelDoor {
     if (provider === 'llama') { const id = this.localEngine?.usable?.() ? this.localEngine.modelId() : null; return id ? [id] : []; }
     const def = PROVIDERS[provider]; const k = this.liveKeys(provider)[0];
     if (!def || !k || !this.online) return [];
-    const r = await this.probe('models:' + provider, async () => {
-      const base = (k.meta?.baseUrl || def.baseUrl).replace(/\/$/, '');
-      const headers = def.api === 'anthropic' ? { 'x-api-key': k.value, 'anthropic-version': '2023-06-01' } : { authorization: 'Bearer ' + k.value };
-      const res = await this.http(base + '/models', { headers }, 8000);
-      if (!res.ok) return { ok: false, models: [] };
-      const j = await res.json(); return { ok: true, models: (j.data || j.models || []).map(m => String(typeof m === 'string' ? m : m.id || m.name || '').replace(/^models\//, '')).filter(Boolean) };
-    }, 300000);
-    let list = r.models || [];
+    const r = await this.probe('models:' + provider, () => this.readModels(def, k, 8000), 300000);
+    let list = chatOnly(r.models || []).map(m => m.id);
     if (provider === 'openrouter' && this.settings.get('openrouter.allowPaid') !== true) list = list.filter(m => /:free$/.test(m));
     return list;
   }
@@ -568,15 +601,7 @@ export class ModelDoor {
     const needsKey = !def.listsWithoutKey && !k;
     if (needsKey) return { ok: false, models: [], needsKey: true, error: null };
     if (!this.online) return { ok: false, models: [], needsKey: false, error: 'The desk is offline, so the list is not read.' };
-    const r = await this.probe('catalog:' + provider + (k ? '|' + k.id : ''), async () => {
-      const base = (k?.meta?.baseUrl || def.baseUrl).replace(/\/$/, '');
-      const headers = !k ? {} : def.api === 'anthropic' ? { 'x-api-key': k.value, 'anthropic-version': '2023-06-01' } : { authorization: 'Bearer ' + k.value };
-      const res = await this.http(base + '/models', { headers }, 10000);
-      if (!res.ok) return { ok: false, models: [], error: `HTTP ${res.status}`, at: now() };
-      const j = await res.json();
-      const models = (j.data || j.models || []).map(m => ({ id: String(typeof m === 'string' ? m : m.id || m.name || '').replace(/^models\//, ''), price: priceTag(m?.pricing) })).filter(m => m.id);
-      return { ok: true, models, at: now() };
-    }, CATALOG_TTL_MS);
+    const r = await this.probe('catalog:' + provider + (k ? '|' + k.id : ''), async () => ({ ...(await this.readModels(def, k, 10000)), at: now() }), CATALOG_TTL_MS);
     let models = r.models || []; const total = models.length;
     if (provider === 'openrouter' && this.settings.get('openrouter.allowPaid') !== true) models = models.filter(m => isFreeOpenRouter(m.id));
     return { ok: !!r.ok, models, at: r.at || null, needsKey: false, total, hiddenPaid: total - models.length, error: r.ok ? null : r.error || 'The list did not answer.' };

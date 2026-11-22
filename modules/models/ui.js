@@ -42,7 +42,7 @@ function pickerSelect(ui, groups, current, { noneLabel, apd }) {
     sel.append(og);
   }
   sel.missing = !found;
-  const tip = () => { sel.title = sel.selectedOptions[0]?.title || ''; };
+  const tip = () => { const o = sel.selectedOptions[0]; sel.title = o ? (o.title || o.textContent) : ''; };   // the whole choice, for when the box cuts it
   sel.addEventListener('change', tip); tip();
   return sel;
 }
@@ -102,6 +102,7 @@ const LOOK = `
 .mdl-lead{margin:0;color:var(--dim)}
 .mdl-retest{display:flex;align-items:center;gap:12px;padding:6px 6px 6px 16px;background:var(--surface);border:1px solid var(--line);border-radius:99px;box-shadow:var(--shadow)}
 .mdl-retest .say{font-size:13.5px;color:var(--dim)}.mdl-retest .say b{font-weight:600;color:var(--live)}.mdl-retest .say b.bad{color:var(--slow)}
+.mdl-noans{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px}.mdl-noans .lbl{margin:0}.mdl-noans .pill{max-width:100%;white-space:normal;overflow-wrap:anywhere}
 .mdl-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}
 .mdl-ac{display:flex;flex-direction:column;gap:10px;padding:14px 14px 12px;min-width:0}
 .mdl-ac .top{display:flex;gap:11px;align-items:flex-start}
@@ -196,6 +197,11 @@ function keyRow(ui, { label, sub, test, testing, actions }) {
     ui.h('div', { class: 'n' }, ui.h('b', null, label), ui.h('span', null, sub + ' · '), ui.h('em', { 'data-apd': 'key-result', title: test?.at ? 'tested ' + ui.fmt.when(test.at) : null }, w.text)),
     ui.h('div', { class: 'mdl-kact' }, ...actions.filter(Boolean)));
 }
+/** Whether another key on the same service is on and not resting, so a resting one is covered. */
+const otherKey = (k, keys) => (keys || []).some(o => o.id !== k.id && o.enabled && !o.resting);
+const restWords = (k, keys) => !k.resting ? '' : (k.resting === 'refused' ? ' · refused' : ' · resting') + (otherKey(k, keys) ? ', the next key is used' : ', no other key to use');
+/** A key's last test, without the sentence about the next key when there is none. */
+const lastKeyTest = (k, keys) => k.test && !otherKey(k, keys) && /next key/i.test(k.test.error || '') ? { ...k.test, error: k.test.error.replace(/\s*The next key is used[^.]*\.?/i, '') } : k.test;
 const field = (ui, label, input) => ui.h('label', { class: 'mdl-f' }, ui.h('span', null, label), input);
 
 export const pages = {
@@ -269,7 +275,9 @@ export const pages = {
       // ----- Active now: one card each, the answer time large, a speed bar, slow shown apart from fast
       function drawActive() {
         const d = st.data; const rs = d.router;
-        act.replaceChildren(...d.active.map(a => {
+        const cards = d.active.filter(a => !a.refused);
+        const noAnswer = d.active.filter(a => a.refused);
+        act.replaceChildren(...cards.map(a => {
           let sub;
           if (a.provider === 'router') sub = rs.mode === 'owner' ? `Your own router · ${rs.models.length} model${rs.models.length === 1 ? '' : 's'}` : rs.mode === 'builtin' ? `Built-in, no sign-in · ${rs.upstreams.filter(u => u.enabled).length} free hosts` : rs.line;
           else if (a.provider === 'llama') sub = a.ok ? `${a.name} · ${a.running ? 'running now' : 'starts when needed'}` : 'Switched off on the Local models tab.';
@@ -291,7 +299,8 @@ export const pages = {
               t?.ok ? ui.h('span', { class: 'metric' }, (Math.max(0, t.ms) / 1000).toFixed(1), ui.h('small', null, 's')) : null,
               ui.h('div', { class: 'k' }, ui.h('span', null, word), ui.h('div', { class: 'mdl-gauge', 'aria-hidden': 'true' }, ui.h('b', { style: { width: t?.ok ? Math.round(Math.max(0.04, Math.min(1, t.ms / 15000)) * 100) + '%' : '0%' } })))),
             ui.h('div', { class: 'mdl-ft' }, foot, a.ok || a.provider !== 'ollama' ? testBtn({ provider: a.provider }, null, { label: name }) : null));
-        }));
+        }), ...(noAnswer.length ? [ui.h('div', { class: 'mdl-noans', 'data-apd': 'not-answering' }, ui.h('span', { class: 'lbl' }, 'Does not answer'),
+          ...noAnswer.map(a => ui.h('span', { class: 'pill stop', 'data-provider': a.provider, title: a.test?.error || null }, `${a.label} · ${a.test?.error || 'The key was refused.'}`)))] : []));
       }
 
       // ----- Providers and keys: the grouped list, and the open one's work panel
@@ -395,7 +404,7 @@ export const pages = {
           try { await testing(`Testing the ${name} key…`, () => svc(`${encodeURIComponent(v.id)}/keys/${encodeURIComponent(k.id)}/test`, { method: 'POST' })); } catch (e) { ui.toast(e.message, 'err'); }
           finally { delete st.testing[k.id]; await load(); }
         } }); return b; };
-        const rows = (v.keys || []).map(k => keyRow(ui, { label: k.label, sub: 'added ' + ui.fmt.date(k.created) + (k.resting === 'allowance' ? ' · resting, the next key is used' : k.resting === 'refused' ? ' · refused, the next key is used' : ''), test: k.test, testing: st.testing[k.id],
+        const rows = (v.keys || []).map(k => keyRow(ui, { label: k.label, sub: 'added ' + ui.fmt.date(k.created) + restWords(k, v.keys), test: lastKeyTest(k, v.keys), testing: st.testing[k.id],
           actions: st.many ? [ui.sw(k.enabled, k.label, async (on) => { await svc('keys/' + encodeURIComponent(k.id) + '/toggle', { body: { on } }); await load(); }), tBtn(k),
             ui.btn('Remove', { kind: 'ghost sm', onClick: async () => { if (!await ui.confirm(`Remove ${k.label} from ${name}?`, { ok: 'Remove' })) return; await svc('keys/' + encodeURIComponent(k.id), { method: 'DELETE' }); await load(); } })]
             : [ui.sw(v.enabled, v.name, async (on) => { await ui.api('keys/services/' + encodeURIComponent(v.id), { body: { enabled: on } }); await load(); }),

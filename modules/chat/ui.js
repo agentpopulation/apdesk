@@ -4,6 +4,7 @@ import { cleanReply, uniqueOutputs, previewText, stepChips, footTag, waitLine, h
 
 /** The Everyone chat holds every agent and is never edited (the same line as the server's). */
 const EVERYONE_LINE = 'Everyone always holds all your agents. To talk to fewer, make a new group.';
+const COORDINATOR_LINE = 'The Coordinator is in every group: it sums up';
 const WHO_ANSWERS = [['everyone', 'Everyone, then a summary'], ['coordinator', 'The Coordinator']];
 // the rating thumbs: outlines drawn here, dim at rest (one path, turned over for "poor")
 const THUMB = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 11v9H4v-9z"/><path d="M7 11l4-7c1.5 0 2.5 1.2 2.2 2.7L12.7 9H19a2 2 0 0 1 2 2.4l-1.3 6.5A2 2 0 0 1 17.7 20H7"/></svg>';
@@ -73,7 +74,8 @@ function css() {
 .chatv .panel-show svg,.chatv .panel-pin svg{width:17px;height:17px;display:block}
 .chatv .panel-show .new{position:absolute;top:3px;right:3px;width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px var(--bg,transparent)}
 .chatv .panel-show .new[hidden]{display:none}
-.chatv .panel-tip{position:absolute;top:44px;right:max(10px,env(safe-area-inset-right,0px));z-index:2;max-width:min(260px,calc(100% - 24px));padding:7px 11px;border-radius:10px;background:var(--card);color:var(--fg);border:1px solid var(--line);box-shadow:0 6px 20px rgba(0,0,0,.18);font-size:12.5px}
+/* the one-time tip sits in the header row, clear of the messages, just left of the button it names */
+.chatv .panel-tip{margin:0 34px 0 auto;max-width:min(300px,50%);padding:3px 10px;border-radius:8px;background:var(--bubble,var(--card));color:var(--dim);border:1px solid var(--line);font-size:12px;line-height:1.35;flex-shrink:1;min-width:0}
 .chatv .panel-tip[hidden]{display:none}
 .chatv .panel-pin{position:sticky;top:0;float:right;z-index:1;width:28px;height:28px;padding:0;margin:-6px -6px 0 0;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:var(--dim);background:transparent}
 .chatv .panel-pin:hover,.chatv .panel-pin:focus-visible{color:var(--fg);background:var(--bubble)}.chatv .panel-pin[aria-pressed="true"]{color:var(--accent)}
@@ -115,6 +117,8 @@ function css() {
 .chatv .msg .rate .saved svg{width:14px;height:14px}
 .chatv .msg .why{flex-basis:100%;display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;min-width:0}
 .chatv .msg .why .chip{font-size:12px;padding:2px 9px;font-weight:400}.chatv .msg .why .chip[aria-pressed="true"]{background:var(--brand-soft,var(--bubble));border-color:var(--accent);color:var(--accent)}
+/* a research plan card on a narrow screen: the title gets the whole line, the bar and the state go under it */
+@media (max-width:560px){.chatv .msg .card[data-card="progress"] .line{flex-wrap:wrap;row-gap:6px}.chatv .msg .card[data-card="progress"] .line>div:first-child{flex:1 1 100%;min-width:0}.chatv .msg .card[data-card="progress"] .line b{overflow-wrap:break-word;word-break:normal;hyphens:auto}}
 .chatv .msg .why .note{font-size:12px;color:var(--dim);background:none;border:0;padding:2px 4px;text-decoration:underline;text-underline-offset:2px;cursor:pointer;font-weight:400}`;
   document.head.append(s);
 }
@@ -145,9 +149,9 @@ async function render(el, ui, route) {
   const drawer = h('aside', { class: 'drawer', id: 'drawer', 'aria-label': 'Chat panel' }, h('div', null, pinBtn, closeBtn, drawerBody));
   const hdTitle = h('b', { class: 'hd-title', hidden: true }, 'Everyone');
   const showBtn = h('button', { class: 'panel-show', type: 'button', title: 'Show the panel', 'aria-label': 'Show the panel', hidden: true, html: ICON_PANEL }, h('span', { class: 'new', hidden: true }));
-  const tip = h('div', { class: 'panel-tip', role: 'status', hidden: true }, 'The panel folded away. Press this to open it.');
+  const tip = h('div', { class: 'panel-tip', role: 'status', hidden: true }, 'The panel folded away. The button on the right opens it.');
   const fileIn = h('input', { type: 'file', hidden: true, multiple: true });
-  el.append(rail, h('div', { class: 'talk' }, h('div', { class: 'row hd' }, grp, hdTitle, grpN, panelBtn), showBtn, tip, chatEl, chips, form, under, fileIn), drawer);
+  el.append(rail, h('div', { class: 'talk' }, h('div', { class: 'row hd' }, grp, hdTitle, grpN, panelBtn, tip), showBtn, chatEl, chips, form, under, fileIn), drawer);
 
   // The panel shows when a chat opens and folds away 3 seconds later, unless it is pinned, the pointer is over it, focus is in it
   // or one of its pop-ups is open. On a narrow screen it stays a drawer that opens only from its button (nothing folds by itself, nothing is remembered).
@@ -227,9 +231,10 @@ async function render(el, ui, route) {
     const row = (c, name, sub, cls = '') => h('button', { class: 'who-t' + (cls ? ' ' + cls : ''), type: 'button', 'aria-current': c && chat && c.id === chat.id ? 'true' : null, 'data-c': c?.id, 'data-agent-id': c.members?.length === 1 ? c.members[0] : null, onclick: () => open(c.id) },
       cls.includes('rc') ? null : c.members?.length === 1 ? avatarOf(c.members[0]) : h('span', { class: 'av' + (c.kind === 'group' || c.everyone ? ' g' : '') }, initials(name)),
       h('span', { class: 'nm' }, name, sub ? h('small', null, sub) : null));
-    const groups = chats.filter(c => PRESETS.some(p => p[0] === c.id));
+    // the starting rooms, then every group the owner made; a chat with one agent he made is under Recent
+    const groups = [...chats.filter(c => PRESETS.some(p => p[0] === c.id)), ...chats.filter(c => !c.seeded && c.members.length > 1)];
     const agents = ui.state.agents.map(a => chats.find(c => c.id === 'dm-' + a.id) || { id: 'dm-' + a.id, members: [a.id], kind: 'direct', last: '' });
-    const recent = chats.filter(c => !c.seeded).slice(0, 8);
+    const recent = chats.filter(c => !c.seeded && c.members.length <= 1).slice(0, 8);
     rail.replaceChildren(...[
       h('button', { class: 'who-t', type: 'button', onclick: newChat }, h('span', { class: 'av g' }, '+'), h('span', { class: 'nm' }, 'New chat')),
       h('h6', null, 'Groups'), ...groups.map(c => row(c, chatTitle(c), previewText(c.last) || `${c.members.length} agents`)),
@@ -253,7 +258,9 @@ async function render(el, ui, route) {
     const opts = [];
     const sameSet = (a, b) => a.length === b.length && a.every(x => b.includes(x));
     let sel = null;
-    for (const [id, name] of PRESETS) { opts.push(['g:' + id, name]); if (!sel && (id === 'everyone' ? chat.everyone : sameSet(chat.members, PRESET_MEMBERS[id]))) sel = 'g:' + id; }
+    // a group the owner made keeps its own name even when its members are a starting room's ("New chat · Sales room" came from that)
+    const made = !chat.seeded;
+    for (const [id, name] of PRESETS) { opts.push(['g:' + id, name]); if (!sel && !made && (id === 'everyone' ? chat.everyone : sameSet(chat.members, PRESET_MEMBERS[id]))) sel = 'g:' + id; }
     for (const a of ui.state.agents) { opts.push(['a:' + a.id, a.name]); if (!sel && chat.members.length === 1 && chat.members[0] === a.id) sel = 'a:' + a.id; }
     if (!sel) { sel = 'cur'; opts.unshift(['cur', chatTitle(chat)]); }
     // a chat's own title is shown beside the group it holds, never twice ("Everyone · Everyone" came from an Everyone chat that
@@ -311,7 +318,7 @@ async function render(el, ui, route) {
     function paint() {
       const kids = [thumb('Good answer', r.thumb === 'up', false, () => save({ thumb: r.thumb === 'up' ? null : 'up' })), thumb('Poor answer', r.thumb === 'down', true, () => save({ thumb: r.thumb === 'down' ? null : 'down' }))];
       if (mark) kids.push(mark);
-      if (r.thumb || r.research) kids.push(h('span', { class: 'sep', 'aria-hidden': 'true' }, '|'), h('span', { class: 'lab' }, 'Research'),
+      if ((r.thumb || r.research) && usedResearch(m)) kids.push(h('span', { class: 'sep', 'aria-hidden': 'true' }, '|'), h('span', { class: 'lab' }, 'Research'),
         thumb('Strong research', r.research === 'good', false, () => save({ research: r.research === 'good' ? null : 'good' })), thumb('Weak research', r.research === 'bad', true, () => save({ research: r.research === 'bad' ? null : 'bad' })));
       const open = r.thumb === 'down' || r.research === 'bad' || (r.reasons && r.reasons.length) || r.comment;
       if (open) kids.push(h('span', { class: 'why' },
@@ -341,26 +348,27 @@ async function render(el, ui, route) {
     const rec = live ? null : recordLine(m, agentName);
     const stepsEl = live ? (steps.length ? h('div', { class: 'steps' }, stepChips(steps, agentName, m.status).map(t => h('span', null, t))) : null) : rec ? h('div', { class: 'rec', 'data-record': '' }, rec) : null;
     const waitEl = live && m.meta?.wait ? h('span', { class: 'wait', 'data-wait': JSON.stringify(m.meta.wait) }, waitLine(m.meta.wait)) : null;
+    const note = m.meta?.planNote ? h('div', { class: 'rec', 'data-plan-note': '' }, m.meta.planNote) : null;   // one quiet line: no plan, answered directly
     const body = text ? md(ui, text) : live ? h('div', { class: 'waiting' }, h('span', { class: 'typing' }, h('span'), h('span'), h('span')), waitEl) : null;
     const tagText = footTag(m);
     const foot = tagText ? pill(tagText, tagText === 'Offline' ? 'wait' : 'stop') : null;
     const speak = !live && text && window.apdVoice?.speak ? btn('Read aloud', { kind: 'ghost sm', onClick: () => window.apdVoice.speak(text) }) : null;
     const rate = !live && m.status === 'done' && !m.meta?.posted ? answerRating(m) : null;   // a welcome note or a module's own line is not rated
-    return h('div', { class: 'msg it' + (wide ? ' wide' : '') + (hasTable(text) ? ' tbl' : ''), 'data-role': 'assistant', 'data-agent-id': m.agentId || '', 'data-status': m.status, dataset: { id: m.id } }, who, body, stepsEl, ...(m.cards || []).map(c => cardEl(c, m)), foot || speak || rate ? h('div', { class: 'foot' }, foot, h('span', { class: 'sub time', style: { fontSize: '11px' } }, fmt.time(m.at)), rate, speak) : null);
+    return h('div', { class: 'msg it' + (wide ? ' wide' : '') + (hasTable(text) ? ' tbl' : ''), 'data-role': 'assistant', 'data-agent-id': m.agentId || '', 'data-status': m.status, dataset: { id: m.id } }, who, note, body, stepsEl, ...(m.cards || []).map(c => cardEl(c, m)), foot || speak || rate ? h('div', { class: 'foot' }, foot, h('span', { class: 'sub time', style: { fontSize: '11px' } }, fmt.time(m.at)), rate, speak) : null);
   }
 
   // ---------- cards
   const runAction = async (a, extra = null) => {
     if (a.go) { if (String(a.go).startsWith('#')) location.hash = a.go; else ui.go(...String(a.go).split('/')); return; }
     if (a.stopAsk) { try { await api(API + `chats/${chat.id}/stop`, { method: 'POST' }); toast('Fine. Ask again when you want it.'); } catch (e) { toast(e.message, 'err'); } return; }
-    if (a.retry) { try { await api(API + `chats/${chat.id}/retry`, { method: 'POST' }); setRunning(true); } catch (e) { toast(e.message, 'err'); } return; }
+    if (a.retry || a.direct) { try { await api(API + `chats/${chat.id}/retry`, { method: 'POST', body: a.direct ? { direct: true } : {} }); setRunning(true); } catch (e) { toast(e.message, 'err'); } return; }
     if (!a.tool) return;
     // row actions: '$row' in the args stands for that row's id (rowIds beside rows); without it the row itself rides along
     let args = a.args && typeof a.args === 'object' ? a.args : {};
     if (extra) args = hasRow(args) ? fillRow(args, extra.rowId ?? extra.rowIndex) : { ...args, ...(extra.rowId != null ? { rowId: extra.rowId } : { row: extra.row }) };
     try { await api(API + `chats/${chat.id}/action`, { body: { tool: a.tool, args, label: a.label } }); } catch (e) { toast(e.message, 'err'); }
   };
-  const actionBtns = (actions, extra) => (actions || []).filter(a => a && a.label && (a.tool || a.go || a.retry || a.stopAsk)).map(a => btn(a.label, { kind: 'ghost sm', onClick: (ev) => { ev.currentTarget.disabled = true; runAction(a, extra); } }));
+  const actionBtns = (actions, extra) => (actions || []).filter(a => a && a.label && (a.tool || a.go || a.retry || a.stopAsk || a.direct)).map(a => btn(a.label, { kind: 'ghost sm', onClick: (ev) => { ev.currentTarget.disabled = true; runAction(a, extra); } }));
   function cardEl(c, m) {
     const el = cardInner(c, m);
     if (el instanceof Element) el.setAttribute('data-card', String(c.kind || 'text'));
@@ -628,7 +636,10 @@ async function render(el, ui, route) {
   }
   function editMembers() {
     const picked = new Set(chat.members);
-    const box = h('div', { class: 'stack', style: { gap: '4px' } }, ui.state.agents.map(a => h('label', { class: 'row', style: { gap: '8px' } }, h('input', { type: 'checkbox', checked: picked.has(a.id), onchange: (e) => e.target.checked ? picked.add(a.id) : picked.delete(a.id) }), h('b', null, a.name), h('span', { class: 'sub' }, a.role))));
+    // the Coordinator sums up a group, so it is in every group: its tick is shown, locked, with the reason
+    const lock = (a) => a.id === 'coordinator' && ui.state.agents.length > 1;
+    if (ui.state.agents.some(lock)) picked.add('coordinator');
+    const box = h('div', { class: 'stack', style: { gap: '4px' } }, ui.state.agents.map(a => h('label', { class: 'row', style: { gap: '8px' }, 'data-member': a.id }, h('input', { type: 'checkbox', checked: picked.has(a.id), disabled: lock(a), onchange: (e) => e.target.checked ? picked.add(a.id) : picked.delete(a.id) }), h('span', null, a.name), h('span', { class: 'sub' }, lock(a) ? COORDINATOR_LINE : a.role))));
     ui.modal({ title: 'Who is in this chat', body: box, actions: [{ label: 'Cancel' }, { label: 'Save', kind: '', onClick: async () => { if (!picked.size) { toast('Pick at least one agent.', 'err'); return false; } try { chat = await api(API + `chats/${chat.id}/members`, { method: 'PUT', body: { members: [...picked] } }); paintHeader(); paintUnder(); paintDrawer(); loadChats(); } catch (e) { toast(e.message, 'err'); return false; } } }] });
   }
 
@@ -688,3 +699,5 @@ function initials(name) { return String(name || '?').split(/\s+/).map(w => w[0])
 function cap(s) { s = String(s || ''); return s.charAt(0).toUpperCase() + s.slice(1); }
 function baseName(p) { return String(p || '').split(/[\\/]/).pop(); }
 function hostOf(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; } }
+/** Did this reply use a search or a page (or run as research)? Only then is there research to rate. */
+function usedResearch(m) { return !!m?.meta?.research || (m?.meta?.steps || []).some(st => st && st.status === 'done' && /^(?:web_search|web_read|find|knowledge_search|research_\w+|browser_\w+)$/.test(st.tool || '')); }

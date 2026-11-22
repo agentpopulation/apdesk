@@ -177,7 +177,7 @@ export async function activate(ctx) {
   ctx.route('GET', '/chats/:id', (req, res, { params }) => { const c = resolveChat(params.id); c ? ctx.json(res, { ...c, running: co.running.has(c.id) }) : ctx.json(res, { error: 'That chat is gone.' }, 404); });
   ctx.route('PATCH', '/chats/:id', (req, res, { params, body }) => {
     const c = resolveChat(params.id); if (!c) return ctx.json(res, { error: 'That chat is gone.' }, 404);
-    if (body?.title != null) store.rename(c.id, body.title);
+    if (body?.title != null) { store.rename(c.id, body.title); store.setSettings(c.id, { named: 'owner' }); }   // his own name stays
     if (body?.settings && typeof body.settings === 'object') { const p = {}; for (const k of ['deepResearch', 'swarm', 'remember']) if (k in body.settings) p[k] = body.settings[k]; if (['everyone', 'coordinator'].includes(body.settings.whoAnswers)) p.whoAnswers = body.settings.whoAnswers; store.setSettings(c.id, p); }
     emit({ type: 'chats' }); ctx.json(res, store.chat(c.id));
   });
@@ -197,7 +197,12 @@ export async function activate(ctx) {
     const members = everyone ? null : (Array.isArray(body?.members) ? [...new Set(body.members)].filter(id => ctx.agents.get(id)) : []);
     if (!everyone && !members.length) return ctx.json(res, { error: 'A chat needs at least one agent.' }, 400);
     if (!everyone && members.length > 1 && !members.includes('coordinator') && ctx.agents.get('coordinator')) members.unshift('coordinator');
-    const n = store.setMembers(c.id, members);
+    let n = store.setMembers(c.id, members);
+    // a new group is named from its members until the owner renames it; it never takes another room's name
+    if (!everyone && !c.seeded && n.members.length > 1 && (c.title === 'New chat' || c.settings.named === 'members')) {
+      const who = n.members.filter(id => id !== 'coordinator').map(id => ctx.agents.get(id)?.name).filter(Boolean);
+      if (who.length) { store.rename(c.id, who.length > 1 ? who.slice(0, -1).join(', ') + ' and ' + who.at(-1) : who[0]); n = store.setSettings(c.id, { named: 'members' }); }
+    }
     const names = n.members.map(id => ctx.agents.get(id)?.name).filter(Boolean);
     const m = store.add(c.id, { role: 'system', text: `Now in this chat: ${names.join(', ')}. The conversation above stays.` });
     bus.emitMessage(m); emit({ type: 'chats' }); ctx.json(res, n);
@@ -257,13 +262,15 @@ export async function activate(ctx) {
     ctx.json(res, { ok: true, chatId: c.id, replyId: co.running.get(c.id)?.replyId || null });
   });
   // "Try again" on a reply that claimed work no tool did: re-run the owner's last message, preferring a model that calls tools.
-  ctx.route('POST', '/chats/:id/retry', async (req, res, { params }) => {
+  ctx.route('POST', '/chats/:id/retry', async (req, res, { params, body }) => {
     const c = resolveChat(params.id); if (!c) return ctx.json(res, { error: 'That chat is gone.' }, 404);
     if (co.running.has(c.id)) return ctx.json(res, { error: 'A reply is still coming in this chat. Stop it first.' }, 409);
     if (ctx.panic.halted) return ctx.json(res, { error: 'Everything is stopped. Press Resume first.', code: 'halted' }, 503);
     const last = store.messages(c.id, { limit: 60 }).filter(m => m.role === 'user' && m.text && !m.meta?.action).at(-1);
     if (!last) return ctx.json(res, { error: 'There is nothing to try again.' }, 400);
-    co.turn(c.id, last.text, { again: true, preferTools: true }).catch(e => ctx.log('retry failed', e.message));
+    // direct: "Answer without the pages" under a research turn the pages did not answer: the ordinary turn, no research
+    const direct = body?.direct === true;
+    co.turn(c.id, last.text, { again: true, preferTools: !direct, noResearch: direct }).catch(e => ctx.log('retry failed', e.message));
     await new Promise(r => setImmediate(r));
     ctx.json(res, { ok: true, chatId: c.id, replyId: co.running.get(c.id)?.replyId || null });
   });

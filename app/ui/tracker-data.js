@@ -42,6 +42,29 @@ export function jobWho(agents, j) {
   if (!j || !j.agentId) return 'The desk';
   return (agents || []).find(a => a.id === j.agentId)?.name || 'An agent';
 }
+/** Which agents are writing a chat reply, kept from the chat's own events: a message that streams starts it, the end of
+ *  that message, the end of the chat's run or a stop ends it. A line older than `maxAge` is dropped (a missed end). */
+export function trackWriting(map, d, now = Date.now()) {
+  if (!d) return map;
+  if (d.type === 'message' && d.message) {
+    const m = d.message;
+    if (m.role === 'assistant' && m.status === 'streaming') map.set(m.id, { agentId: m.agentId || null, chatId: m.chatId || d.chatId, at: now });
+    else map.delete(m.id);
+  } else if (d.type === 'running' && !d.on) { for (const [k, v] of map) if (v.chatId === d.chatId) map.delete(k); }
+  else if (d.type === 'removed') map.delete(d.messageId);
+  return map;
+}
+/** The footer words for those writers: "Scout is writing…", "Scout and Closer are writing…", "3 agents are writing…". */
+export function writingWords(agents, map, now = Date.now(), maxAge = 10 * 60000) {
+  const names = [];
+  for (const v of map.values()) {
+    if (now - v.at > maxAge) continue;
+    const n = (agents || []).find(a => a.id === v.agentId)?.name || 'An agent';
+    if (!names.includes(n)) names.push(n);
+  }
+  if (!names.length) return '';
+  return names.length === 1 ? `${names[0]} is writing…` : names.length === 2 ? `${names[0]} and ${names[1]} are writing…` : `${names.length} agents are writing…`;
+}
 /** Who asks for an approval: the agent by name, else the desk itself (the owner's own Get, the desk's own work). */
 export const whoAsks = (agents, a) => `${jobWho(agents, a)} asks`;
 /** The pop-ups that show the downloads list: a 'downloads' event repaints either one while it is open. */

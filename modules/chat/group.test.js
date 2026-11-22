@@ -9,6 +9,9 @@ const kvSet = (t, k, v) => t.core.storage.kvScope('m:chat').set(k, v);
 const whoIs = (b) => (String(b.messages?.[0]?.content || '').match(/^You are (\w+), an agent/) || [])[1] || null;
 const isSummary = (b) => /You sum up a group chat turn/.test(String(b.messages?.[0]?.content || ''));
 const isPlan = (b) => /You plan how the desk answers/.test(String(b.messages?.[0]?.content || ''));
+const isChoice = (b) => /Reply with one word: GO or PASS/.test(String(b.messages?.[0]?.content || ''));
+/** A summary that names exactly the agents the prompt says answered, one line each. */
+const goodSummary = (b) => { const m = String(b.messages[0].content).match(/Exactly these agents answered: (.*?)(?:;|\. Write)/); const names = m ? m[1].split(/, | and /) : []; return names.map(n => `${n}: a point from its reply.`).join('\n') + '\nNext: start with the sheet.'; };
 const settle = async (t, chatId, ms = 15000) => {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
@@ -22,7 +25,8 @@ async function groupDesk(answers = {}, extra = {}) {
   const seen = [];
   const t = await testDesk({ modules: ['chat', 'agents'], script: (b) => {
     if (isPlan(b)) { seen.push('plan'); return extra.plan ? JSON.stringify(extra.plan) : '{"needsFacts": false, "parts": []}'; }
-    if (isSummary(b)) { seen.push('summary'); return 'Scout says check the facts; Coder says make a sheet. Next: start with the sheet.'; }
+    if (isChoice(b)) { const who = whoIs(b); seen.push('choice:' + who); return extra.go && who in extra.go ? extra.go[who] : 'GO'; }
+    if (isSummary(b)) { seen.push('summary'); return typeof extra.summary === 'function' ? extra.summary(b) : extra.summary ?? goodSummary(b); }
     const who = whoIs(b); seen.push(who);
     const a = answers[who];
     return typeof a === 'function' ? a(b) : a ?? `${who} answer from my role.`;
@@ -42,13 +46,17 @@ test('in a group every agent answers in its own reply, one passes in a quiet lin
     assert.equal(by('closer')[0].text, 'Closer had nothing to add'); assert.equal(by('closer')[0].meta.passed, true);
     const sum = replies.find(m => m.meta?.groupSummary);
     assert.equal(sum.agentId, 'coordinator'); assert.ok(sum.meta.groupSummary); assert.match(sum.text, /Next: start with the sheet/);
+    assert.deepEqual(sum.meta.of, ['scout', 'operator', 'coder'], 'the line under it lists exactly the agents summed up');
     assert.equal(replies.filter(m => m.agentId === 'coordinator').length, 1, 'the Coordinator sums up and does not answer twice');
     assert.equal(seen.filter(x => x === 'summary').length, 1);
     assert.ok(!msgs.some(m => m.meta?.groupLine), 'the "still writing" line goes when the run ends');
     assert.equal(msgs.filter(m => m.role === 'user').length, 1, 'one owner message');
     // the member prompt asks for its own role and says how to pass
-    const sys = t.fake.calls.find(b => whoIs(b) === 'Scout').messages[0].content;
-    assert.match(sys, /answers in its own reply, from its own role/); assert.match(sys, /reply with exactly PASS/);
+    const sys = t.fake.calls.find(b => whoIs(b) === 'Scout' && !isChoice(b)).messages[0].content;
+    assert.match(sys, /You chose to answer because your role adds something/); assert.match(sys, /reply with exactly PASS/); assert.match(sys, /Do not repeat or cover what belongs to another role/);
+    // each agent first made its own short choice, told who else is in the group and that small talk is the Coordinator's
+    const choice = t.fake.calls.find(b => whoIs(b) === 'Closer' && isChoice(b)).messages[0].content;
+    assert.match(choice, /Scout: /); assert.match(choice, /Coordinator: answers greetings and small talk itself/); assert.match(choice, /greeting, thanks or small talk is the Coordinator's to answer/);
     // naming an agent does not decide who answers: everyone still does
     await t.call('/api/m/chat/chats/everyone/send', { body: { text: '@Closer what do you think?' } });
     const msgs2 = await settle(t, 'everyone');
@@ -112,7 +120,7 @@ test('a research ask in a group is run once, by the research agent; the others r
     const scout = msgs.find(m => m.agentId === 'scout');
     assert.ok(scout.meta.research, 'Scout ran the research turn'); assert.ok(scout.meta.steps.some(s => s.tool === 'web_read'));
     assert.ok(!msgs.some(m => m.agentId !== 'scout' && m.meta?.research), 'run once');
-    const coderSys = t.fake.calls.find(b => whoIs(b) === 'Coder').messages[0].content;
+    const coderSys = t.fake.calls.find(b => whoIs(b) === 'Coder' && !isChoice(b)).messages[0].content;
     assert.match(coderSys, /Scout researched this ask for the group/);
     assert.equal(msgs.filter(m => m.meta?.passed).length, 2);
     assert.ok(msgs.some(m => m.meta?.groupSummary), 'Scout and Coder answered: a summary');
@@ -149,5 +157,101 @@ test('a note a module posts (a new agent\'s welcome) is marked as posted, so it 
     const r = t.core.modules.api('chat').postMessage('dm-scout', { agentId: 'scout', text: 'Glad to join your team.' });
     const m = (await t.call('/api/m/chat/chats/dm-scout/messages')).json.messages.find(x => x.id === r.messageId);
     assert.equal(m.meta.posted, true);
+  } finally { await t.close(); }
+});
+
+test('a greeting in a group: every agent passes from its own choice, and the Coordinator answers alone, with no summary', async () => {
+  const { t, seen } = await groupDesk({ Coordinator: 'Hello! What would you like to work on today?' }, { go: { Scout: 'PASS', Closer: 'PASS', Operator: 'PASS', Coder: 'PASS' } });
+  try {
+    await t.call('/api/m/chat/chats/everyone/send', { body: { text: 'Hello' } });
+    const msgs = await settle(t, 'everyone');
+    const replies = msgs.filter(m => m.role === 'assistant');
+    assert.equal(replies.length, 1); assert.equal(replies[0].agentId, 'coordinator'); assert.equal(replies[0].text, 'Hello! What would you like to work on today?');
+    assert.ok(!seen.includes('summary')); assert.deepEqual(seen.filter(x => !x.startsWith('choice:')), ['Coordinator'], 'only the Coordinator wrote');
+    assert.equal(seen.filter(x => x.startsWith('choice:')).length, 4, 'each agent made its own one small choice');
+    assert.ok(!msgs.some(m => m.role === 'system' && /nothing to add/i.test(m.text)), 'no pass lines when nobody went');
+  } finally { await t.close(); }
+});
+
+test('only the agents that go write; the others are one quiet line; an agent is offered only the tools its role owns', async () => {
+  const { t, seen } = await groupDesk({}, { go: { Scout: 'PASS', Operator: 'pass' } });
+  try {
+    t.core.modules.tools.set('web_search', { module: 'search', name: 'web_search', description: 's', parameters: { type: 'object', properties: {} }, async run() { return { results: [] }; } });
+    t.core.modules.tools.set('file_list', { module: 'files', name: 'file_list', description: 'l', parameters: { type: 'object', properties: {} }, async run() { return { files: [] }; } });
+    await t.call('/api/m/chat/chats/everyone/send', { body: { text: 'What should a small bakery do this week to get three new office customers?' } });
+    const msgs = await settle(t, 'everyone');
+    assert.deepEqual(msgs.filter(m => m.role === 'assistant' && m.meta?.groupOf).map(m => m.agentId).sort(), ['closer', 'coder']);
+    const line = msgs.find(m => m.role === 'system' && m.meta?.passedOf); assert.equal(line.text, 'Nothing to add from Scout and Operator');
+    const coder = t.fake.calls.find(b => whoIs(b) === 'Coder' && !isChoice(b));
+    assert.deepEqual((coder.tools || []).map(x => x.function.name), ['file_list'], 'the Coder is not offered a web search');
+    assert.match(coder.messages[0].content, /your tools are only these: file_list\. No other tool exists here/);
+    const sum = msgs.find(m => m.meta?.groupSummary); assert.deepEqual(sum.meta.of, ['closer', 'coder']);
+    assert.ok(msgs.filter(m => m.role === 'assistant').at(-1).meta.groupMs > 0, 'the run is timed');
+    void seen;
+  } finally { await t.close(); }
+});
+
+test('a call to a tool the turn does not offer is not a step and is not shown as tried', async () => {
+  let n = 0;
+  const t = await testDesk({ modules: ['chat', 'agents'], script: () => (n++ === 0 ? { toolCalls: [{ name: 'code_run', args: { code: '1' } }] } : 'Here is the plan.') });
+  try {
+    await t.call('/api/m/chat/chats/dm-coder/send', { body: { text: 'Plan my week.' } });
+    const msgs = await settle(t, 'dm-coder');
+    const last = msgs.filter(m => m.role === 'assistant').at(-1);
+    assert.equal(last.text, 'Here is the plan.'); assert.deepEqual(last.meta.steps, []);
+    assert.match(t.fake.calls[1].messages.find(m => m.role === 'tool').content, /There is no tool called code_run in this turn/);
+  } finally { await t.close(); }
+});
+
+test('a summary that names someone wrongly is written once more, then replaced by a plain list of who said what', async () => {
+  const { t, seen } = await groupDesk({ Scout: 'Visit ten offices with samples. Then call.', Closer: 'Send a sample box to each office manager.' }, { go: { Operator: 'PASS', Coder: 'PASS' }, summary: () => 'All three agree. Operator: visit offices. Next: start.' });
+  try {
+    await t.call('/api/m/chat/chats/everyone/send', { body: { text: 'How do I get three office customers?' } });
+    const msgs = await settle(t, 'everyone');
+    assert.equal(seen.filter(x => x === 'summary').length, 2, 'rewritten once');
+    const fix = t.fake.calls.filter(isSummary)[1].messages[1].content; assert.match(fix, /Your last summary was wrong: it names Operator, who did not answer/);
+    const sum = msgs.find(m => m.meta?.groupSummary);
+    assert.equal(sum.text, 'Scout: Visit ten offices with samples.\nCloser: Send a sample box to each office manager.'); assert.equal(sum.meta.plainList, true);
+    const sys = t.fake.calls.find(isSummary).messages[0].content; assert.match(sys, /Exactly these agents answered: Scout and Closer; Operator and Coder did not answer/);
+  } finally { await t.close(); }
+});
+
+test('"Still writing" names only the agents writing now, not those still waiting their turn', async () => {
+  const lines = [];
+  const { t } = await groupDesk({ Scout: () => ({ text: 'Scout words.', delayMs: 300 }), Closer: () => ({ text: 'Closer words.', delayMs: 300 }) }, { go: { Operator: 'PASS', Coder: 'PASS' } });
+  try {
+    kvSet(t, 'groupParallel', 1);
+    t.core.events.on((type, d) => { if (type === 'chat' && d.type === 'message' && d.message?.meta?.groupLine) lines.push(d.message.text); });
+    await t.call('/api/m/chat/chats/everyone/send', { body: { text: 'How do I get office customers?' } });
+    await settle(t, 'everyone');
+    assert.ok(lines.includes('Still writing: Scout') && lines.includes('Still writing: Closer'), JSON.stringify(lines));
+    assert.ok(!lines.some(l => /Scout, Closer|Closer, Scout/.test(l)), JSON.stringify(lines));
+  } finally { await t.close(); }
+});
+
+test('a new group of the owner\'s choice: the Coordinator stays in it (it sums up), the group is named from its members until renamed', async () => {
+  const { t } = await groupDesk();
+  try {
+    const c = (await t.call('/api/m/chat/chats', { body: { title: 'New chat', members: ['coordinator'] } })).json;
+    let r = await t.call(`/api/m/chat/chats/${c.id}/members`, { method: 'PUT', body: { members: ['scout', 'closer'] } });
+    assert.deepEqual(r.json.members, ['coordinator', 'scout', 'closer']); assert.equal(r.json.title, 'Scout and Closer'); assert.equal(r.json.kind, 'group');
+    const line = (await t.call(`/api/m/chat/chats/${c.id}/messages`)).json.messages.at(-1); assert.equal(line.text, 'Now in this chat: Coordinator, Scout, Closer. The conversation above stays.');
+    r = await t.call(`/api/m/chat/chats/${c.id}/members`, { method: 'PUT', body: { members: ['scout', 'closer', 'coder'] } });
+    assert.equal(r.json.title, 'Scout, Closer and Coder');
+    await t.call(`/api/m/chat/chats/${c.id}`, { method: 'PATCH', body: { title: 'Bakery team' } });
+    r = await t.call(`/api/m/chat/chats/${c.id}/members`, { method: 'PUT', body: { members: ['scout'] } });
+    assert.equal(r.json.title, 'Bakery team', 'the owner\'s own name stays');
+  } finally { await t.close(); }
+});
+
+test('the plan call is given today\'s date, so a plan for next year is not filled in with an old one', async () => {
+  const { t } = await groupDesk({}, { go: {} });
+  try {
+    t.core.modules.tools.set('web_search', { module: 'search', name: 'web_search', description: 's', parameters: { type: 'object', properties: {} }, async run() { return { results: [] }; } });
+    t.core.modules.tools.set('web_read', { module: 'search', name: 'web_read', description: 'r', parameters: { type: 'object', properties: {} }, async run() { return { text: '' }; } });
+    await t.call('/api/m/chat/chats/everyone/send', { body: { text: 'Plan our 2027 trade fairs' } });
+    await settle(t, 'everyone');
+    const plan = t.fake.calls.find(isPlan); const year = new Date().getFullYear();
+    assert.match(plan.messages[1].content, new RegExp(`^Today is \\w+day, \\d{1,2} \\w+ ${year}\\.`));
   } finally { await t.close(); }
 });

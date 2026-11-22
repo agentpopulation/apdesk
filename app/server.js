@@ -20,12 +20,21 @@ const MIME = { '.webmanifest': 'application/manifest+json; charset=utf-8', '.htm
 const MANIFEST = { id: '/', name: 'AP Desk', short_name: 'AP Desk', description: 'Your desk of agents, on this PC.', start_url: '/', scope: '/', display: 'standalone', background_color: '#f1f2f4', theme_color: '#16171a',
   icons: [{ src: '/icons/apdesk.png', sizes: '256x256', type: 'image/png', purpose: 'any' }, { src: '/icons/apdesk.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }] };
 
+/** The time on a console or log line: the owner's zone with its short name; the computer's own zone when none is set or
+ *  the setting is not a zone. */
+export function logStamp({ zone = null, locale = null, date = new Date() } = {}) {
+  const time = (z) => date.toLocaleTimeString('en-GB', { hour12: false, timeZone: z || undefined });
+  const name = (z, l) => new Intl.DateTimeFormat(l || 'en-GB', { timeZone: z || undefined, timeZoneName: 'short' }).formatToParts(date).find(x => x.type === 'timeZoneName')?.value || '';
+  for (const [z, l] of [[zone, locale], [zone, null], [null, null]]) { try { return `${time(z)} ${name(z, l)}`.trim(); } catch { /* a setting that is not a zone or locale: the next one */ } }
+  return date.toISOString().slice(11, 19);
+}
 function readVersion() { for (const f of [path.join(APP, 'version.json'), path.join(ROOT, 'package.json')]) { try { const v = JSON.parse(fs.readFileSync(f, 'utf8')).version; if (v) return v; } catch {} } return '0.0.0'; }
 
 export async function createDesk({ dataDir = process.env.APD_DATA || path.join(ROOT, 'data'), backupsDir = process.env.APD_BACKUPS || null, port = Number(process.env.APD_PORT) || 3445, host = '127.0.0.1', quiet = false, env = process.env, modulesDir = null, modules: onlyModules = null, pairing = false } = {}) {
   // log times in the owner's zone, with the zone named (the settings are not open yet on the first lines: the PC's zone then)
-  let logZone = null;
-  const stamp = () => { try { return new Date().toLocaleTimeString('en-GB', { hour12: false, timeZone: logZone || undefined, timeZoneName: 'short' }); } catch { return new Date().toLocaleTimeString('en-GB', { hour12: false, timeZoneName: 'short' }); } };
+  // the zone and locale are read from the settings on every line, so a change made after the start shows at once
+  let logSettings = null;
+  const stamp = () => logStamp({ zone: logSettings?.get('timeZone'), locale: logSettings?.get('locale') });
   const log = (...a) => { if (!quiet) console.log(stamp(), ...a); };
   // The house (contracts/PEOPLE.md): this server, pairing and the session, Panic, the offline guard, downloads, the local
   // engine and updates. It is shared by every space. Each space is one data folder with its own full core.
@@ -36,7 +45,7 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
   const { core } = space;
   core.port = port;
   const { storage, settings, events, agents, approval, model, jobs, services, modules } = core;
-  logZone = settings.get('timeZone') || null;
+  logSettings = settings;
   const spaces = new Set([space]);
   // The people of this PC (contracts/PEOPLE.md), kept by the house in data/desk.sqlite. Person 1, the keeper, is this
   // data folder as it is; every other person has a space of their own in data/people/<id>/work/.

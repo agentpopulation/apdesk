@@ -28,7 +28,7 @@ export function rollingLog(file, max = LOG_MAX) {
   };
 }
 
-const stamp = () => { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };   // local time
+const stamp = () => { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${d.toLocaleTimeString('en-GB', { timeZoneName: 'short' }).split(' ').pop()}`; };   // the computer's zone, named
 
 function runOnce(args, log, env = {}) {
   return new Promise((resolve) => {

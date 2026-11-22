@@ -1,4 +1,5 @@
 // Settings › Page reading: optional reading services for pages the desk's own read found empty.
+const plural = (n, word) => `${n} ${word}${Number(n) === 1 ? '' : 's'}`;
 export const settings = {
   reading: { title: 'Page reading', async render(el, ui) {
     const { h, api, card, btn, sw, toast, empty } = ui;
@@ -14,7 +15,7 @@ export const settings = {
         ? () => api('m/search/readers', { body: { id: s.id, key: key.value, on: true } })
         : () => api('keys/services/' + s.id, { body: { value: key.value } }).then(() => api('m/search/readers', { body: { id: s.id, on: true } }));
       const state = s.on ? 'On' : s.switchedOn ? 'On, but it needs a key or its keyless tier' : 'Off';
-      const desc = [state, s.hasKey ? (s.keyFrom === 'here' ? 'Key added' : 'Uses the Jina key in Keys and logins') : 'No key yet', `${s.usedToday} pages read through it today`, s.robots, s.keylessLine].filter(Boolean).join(' · ');
+      const desc = [state, s.hasKey ? (s.keyFrom === 'here' ? 'Key added' : 'Uses the Jina key in Keys and logins') : 'No key yet', `${plural(s.usedToday, 'page')} read through it today`, s.robots, s.keylessLine].filter(Boolean).join(' · ');
       return line(s.label, desc,
         h('span', { class: 'sub' }, 'Use'), sw(s.switchedOn, `Use ${s.label}`, (on) => act(() => api('m/search/readers', { body: { id: s.id, on } }))),
         s.keylessLine ? h('span', { class: 'sub' }, 'Without a key') : null, s.keylessLine ? sw(s.keyless, `${s.label} without a key`, (on) => act(() => api('m/search/readers', { body: { id: s.id, keyless: on } }))) : null,
@@ -36,7 +37,7 @@ export const settings = {
     // Try a page: read it the desk's own way; when that comes back empty, offer "Read with <service>".
     const addr = h('input', { type: 'url', placeholder: 'https://', autocomplete: 'off', style: { width: '280px' } });
     const out = h('div', { class: 'sub' });
-    const show = (r) => { out.replaceChildren(r.error ? r.error : `Read "${r.title}"${r.through ? '' : ' the desk\'s own way'}. ${r.text.length} characters.`); };
+    const show = (r) => { out.replaceChildren(r.error ? r.error : `Read "${r.title}"${r.through ? '' : ' the desk\'s own way'}. ${plural(r.text.length, 'character')}.`); };
     const readIt = async (withId) => {
       out.textContent = 'Reading…';
       let r; try { r = await api('m/search/read?url=' + encodeURIComponent(addr.value.trim()) + (withId ? '&with=' + encodeURIComponent(withId) : '')); } catch (e) { r = e.data?.error ? e.data : { error: e.message }; }

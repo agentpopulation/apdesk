@@ -118,7 +118,9 @@ export const onActivity = (fn) => { actFns.add(fn); return () => actFns.delete(f
 export function toast(text, kind = '', ms = 0) { const t = h('div', { class: 'toast ' + kind }, text); $('#toasts').append(t); setTimeout(() => t.remove(), ms || (kind === 'err' ? 7000 : 3500)); return t; }
 export function modal({ title, body, actions = [], wide = false, onClose } = {}) {
   const host = $('#modal');
-  const close = (v) => { host.hidden = true; host.replaceChildren(); host._close = null; onClose?.(v); };
+  const opener = document.activeElement;
+  // closing hands the focus back to what opened the dialog
+  const close = (v) => { host.hidden = true; host.replaceChildren(); host._close = null; onClose?.(v); if (opener && opener !== document.body && opener.isConnected) opener.focus?.({ preventScroll: true }); };
   host._close = close; host._hash = location.hash;   // the shell closes a pop-up left open when the owner moves to another page
   const box = h('div', { class: 'card', style: wide ? { maxWidth: '860px' } : null },
     title ? h('h3', null, title) : null,
@@ -126,8 +128,16 @@ export function modal({ title, body, actions = [], wide = false, onClose } = {})
     h('div', { class: 'row' }, h('span', { class: 'grow' }), actions.map(a => btn(a.label, { kind: a.kind || 'ghost', onClick: async () => { const r = await a.onClick?.(); if (r !== false) close(a.value); } }))));
   host.replaceChildren(box); host.hidden = false;
   host.onclick = (e) => { if (e.target === host) close(undefined); };
+  // the first button is the safe one (Cancel, Close), so Enter never lands on a destructive choice by itself
+  setTimeout(() => { if (host._close === close && !box.contains(document.activeElement)) box.querySelector('.row button')?.focus({ preventScroll: true }); }, 0);
   return { close, box };
 }
+// Esc closes the dialog on top and nothing under it; the shell's pop-up list waits for the next press.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') document.addEventListener('keydown', (e) => {
+  const host = document.getElementById('modal');
+  if (e.key !== 'Escape' || e.shiftKey || !host || host.hidden || !host._close) return;
+  e.preventDefault(); e.stopImmediatePropagation(); host._close(undefined);
+}, true);
 export const confirm = (text, { ok = 'Yes', cancel = 'Cancel', title = 'Are you sure?', kind = '' } = {}) => new Promise((resolve) => modal({ title, body: text, actions: [{ label: cancel, onClick: () => resolve(false) }, { label: ok, kind, onClick: () => resolve(true) }], onClose: () => resolve(false) }));
 export const ask = (title, { value = '', placeholder = '', ok = 'Save', multiline = false } = {}) => new Promise((resolve) => {
   const input = multiline ? h('textarea', { placeholder }, value) : h('input', { type: 'text', value, placeholder, style: { width: '100%' } });

@@ -142,7 +142,7 @@ async function runPanel() {
     { id: 9103, role: 'assistant', agentId: 'closer', text: 'Closer had nothing to add', meta: { groupOf: 'g1', passed: true } },
     { id: 9104, role: 'assistant', agentId: 'coder', text: 'Operator did not answer in time.', meta: { groupOf: 'g1', late: true } },
     { id: 9105, role: 'assistant', agentId: 'coordinator', text: 'Scout: start with nearby offices that already order in. Next: send a tasting box to three of them on Thursday.', label: 'Google Gemini · gemini-3.5-flash-lite', meta: { groupSummary: 'g1', of: ['scout', 'operator'] } }];
-  const open = async (w, h, theme, hash, { reply = false, group = false } = {}) => {
+  const open = async (w, h, theme, hash, { reply = false, group = false, fixture = null } = {}) => {
     const ctx = await browser.newContext({ viewport: { width: w, height: h } }); const p = await ctx.newPage();
     p.on('pageerror', e => errors.push(e.message));
     await p.addInitScript((th) => { try { if (!sessionStorage.getItem('apd-init')) { localStorage.setItem('apd-theme', th); sessionStorage.setItem('apd-init', '1'); } } catch {} }, theme);
@@ -156,7 +156,12 @@ async function runPanel() {
     if (reply) await p.route(/\/chats\/[^/?]+\/messages/, async (route) => {
       const r = await route.fetch(); const j = await r.json();
       j.messages = [{ id: 9001, chatId: j.chat?.id, role: 'user', text: 'Hello', cards: [], status: 'done', meta: {}, at: Date.now() - 5000 },
-        { id: 9002, chatId: j.chat?.id, role: 'assistant', agentId: 'coordinator', text: 'Hello! How can I help you today?', cards: [], label: LABEL, status: 'done', meta: {}, at: Date.now() - 4000 }];
+        { id: 9002, chatId: j.chat?.id, role: 'assistant', agentId: 'coordinator', text: reply === 'research' ? 'The VR200 pairs a Vera CPU with Rubin GPUs [1].' : 'Hello! How can I help you today?', cards: [], label: LABEL, status: 'done', meta: reply === 'research' ? { steps: [{ tool: 'web_search', agentId: 'scout', status: 'done' }, { tool: 'web_read', agentId: 'scout', status: 'done' }] } : {}, at: Date.now() - 4000 }];
+      await route.fulfill({ response: r, json: j });
+    });
+    if (fixture) await p.route(/\/chats\/[^/?]+\/messages/, async (route) => {
+      const r = await route.fetch(); const j = await r.json();
+      j.messages = fixture.map((m, i) => ({ chatId: j.chat?.id, cards: [], status: 'done', label: null, meta: {}, at: Date.now() - 9000 + i * 1000, ...m }));
       await route.fulfill({ response: r, json: j });
     });
     await p.goto(t.base + '/#/' + hash); await p.waitForSelector('#chat'); await p.waitForTimeout(400);
@@ -186,7 +191,7 @@ async function runPanel() {
         await p.waitForTimeout(400);
         const icon = p.getByRole('button', { name: 'Show the panel' });
         check(`${tag}: icon named "Show the panel" with that hover text shows when folded`, await icon.isVisible() && await icon.getAttribute('title') === 'Show the panel');
-        check(`${tag}: first fold shows the one-line hint`, await p.getByText('The panel folded away. Press this to open it.').isVisible());
+        check(`${tag}: first fold shows the one-line hint`, await p.getByText('The panel folded away. The button on the right opens it.').isVisible());
         check(`${tag}: message box and Send are clear while folded`, await composerClear(p));
         await p.screenshot({ path: name('2-folded') });
         await icon.click(); await p.waitForTimeout(450);
@@ -262,16 +267,16 @@ async function runPanel() {
     await ctx.close();
   }
   // rating: two dim thumbs; after "poor" the research pair, the reasons and the note, all inside the bubble at 390 px
-  for (const theme of ['light', 'dark']) for (const [w, h] of [[1366, 768], [390, 844]]) {
-    const tag = `${w}x${h} ${theme}`;
-    const { ctx, p } = await open(w, h, theme, 'chat/everyone', { reply: true });
+  for (const theme of ['light', 'dark']) for (const [w, h] of [[1366, 768], [390, 844]]) for (const kind of ['research', 'plain']) {
+    const tag = `${w}x${h} ${theme}${kind === 'plain' ? ' (a reply with no search)' : ''}`;
+    const { ctx, p } = await open(w, h, theme, 'chat/everyone', { reply: kind === 'research' ? 'research' : true });
     await p.waitForSelector('.msg.it .rate button'); await p.waitForTimeout(400);
     const widthAt = () => p.evaluate(() => Math.round(document.querySelector('.msg.it').getBoundingClientRect().width));
     const rest = await widthAt();
     const bare = await p.evaluate(() => { const r = document.querySelector('.msg.it .rate'); r.style.display = 'none'; const w = Math.round(document.querySelector('.msg.it').getBoundingClientRect().width); r.style.display = ''; return w; });
     const names = await p.evaluate(() => [...document.querySelectorAll('.msg.it .rate button')].map(b => b.getAttribute('aria-label')));
     const words = await p.evaluate(() => document.querySelector('.msg.it .rate').innerText.trim());
-    await p.screenshot({ path: path.join(out, `chat-rating_1-rest_${TAG}_${w}x${h}_${theme}.png`) });
+    await p.screenshot({ path: path.join(out, `chat-rating_1-rest-${kind}_${TAG}_${w}x${h}_${theme}.png`) });
     await p.getByRole('button', { name: 'Poor answer' }).click(); await p.waitForTimeout(700);
     const after = await p.evaluate(() => {
       const R = (e) => e.getBoundingClientRect(); const b = document.querySelector('.msg.it'); const br = R(b);
@@ -280,9 +285,48 @@ async function runPanel() {
       return { inside, bold, pressed: document.querySelector('.msg.it .rate [aria-label="Poor answer"]').getAttribute('aria-pressed'), research: !!document.querySelector('.msg.it .rate [aria-label="Strong research"]'), chips: document.querySelectorAll('.msg.it .rate .why .chip').length, note: /Add a note/.test(document.querySelector('.msg.it .rate').textContent), saved: document.querySelector('.msg.it .rate .saved')?.getAttribute('aria-label') || '' };
     });
     const grown = await widthAt();
-    await p.screenshot({ path: path.join(out, `chat-rating_2-poor_${TAG}_${w}x${h}_${theme}.png`) });
+    await p.screenshot({ path: path.join(out, `chat-rating_2-poor-${kind}_${TAG}_${w}x${h}_${theme}.png`) });
     check(`${tag}: rating at rest is two thumbs named Good answer and Poor answer, no words, and does not widen the bubble`, names.join('|') === 'Good answer|Poor answer' && words === '' && Math.abs(rest - bare) <= 1, JSON.stringify({ names, words, rest, bare }));
-    check(`${tag}: after "poor": marked, Saved tick, research pair, seven reasons and a note, no bold, all inside the bubble, bubble no wider`, after.pressed === 'true' && /Saved/.test(after.saved) && after.research && after.chips === 7 && after.note && !after.bold && after.inside && grown <= rest + 1, JSON.stringify({ ...after, rest, grown }));
+    check(`${tag}: after "poor": marked, Saved tick, ${kind === 'research' ? 'research pair' : 'no research pair (no search, no page)'}, seven reasons and a note, no bold, all inside the bubble, bubble no wider`, after.pressed === 'true' && /Saved/.test(after.saved) && after.research === (kind === 'research') && after.chips === 7 && after.note && !after.bold && after.inside && grown <= rest + 1, JSON.stringify({ ...after, rest, grown }));
+    await ctx.close();
+  }
+  // the research plan card at 390 px: its title has the whole line, no word broken in a narrow column
+  const PLAN_CARD = [{ id: 9201, role: 'user', text: 'can you find more details about VR200 and hows it different from GB200 or H100 ?' },
+    { id: 9202, role: 'assistant', agentId: 'scout', text: 'The VR200 pairs a Vera CPU with Rubin GPUs [1].', label: LABEL, cards: [{ kind: 'progress', id: 'research-9202', agentId: 'scout', title: 'Research plan: NVIDIA VR200 Vera Rubin GPU · NVIDIA GB200 Grace Blackwell · NVIDIA H100 Hopper GPU · then architectural differences', progress: 1, status: 'done', detail: '6 pages read for 3 parts in 42 s' }], meta: { steps: [{ tool: 'web_search', agentId: 'scout', status: 'done' }] } },
+    { id: 9203, role: 'user', text: 'Hi' }, { id: 9204, role: 'assistant', agentId: 'scout', text: 'Hello! What shall I look up?', label: LABEL, meta: { planNote: 'Could not plan this as research; answering directly.' } }];
+  for (const theme of ['dark', 'light']) for (const [w, h] of [[390, 844], [1366, 768]]) {
+    const { ctx, p } = await open(w, h, theme, 'chat/dm-scout', { fixture: PLAN_CARD });
+    await p.waitForSelector('.card[data-card="progress"]'); await p.waitForTimeout(300);
+    const g = await p.evaluate(() => { const c = document.querySelector('.card[data-card="progress"]'); const b = c.querySelector('b'); const cr = c.getBoundingClientRect(); const br = b.getBoundingClientRect(); return { card: Math.round(cr.width), title: Math.round(br.width), lines: Math.round(br.height / parseFloat(getComputedStyle(b).lineHeight || 20)), note: document.querySelector('[data-plan-note]')?.textContent || '' }; });
+    await p.locator('.card[data-card="progress"]').scrollIntoViewIfNeeded(); await p.screenshot({ path: path.join(out, `chat-plan-card_${TAG}_${w}x${h}_${theme}.png`) });
+    check(`${w}x${h} ${theme}: the research plan card's title is not squeezed into a narrow column, and the no-plan line shows quietly`, (w < 600 ? g.title >= g.card * 0.75 : g.title >= 300) && g.note === 'Could not plan this as research; answering directly.', JSON.stringify(g));
+    await ctx.close();
+  }
+  // the one-time tip that the panel folded away sits clear of the messages
+  {
+    const { ctx, p } = await open(1366, 768, 'dark', 'chat/everyone', { reply: true });
+    await p.evaluate(() => { localStorage.removeItem('apd-chat-panel-tip'); localStorage.removeItem('apd-chat-pin'); });
+    await p.reload(); await p.waitForSelector('#chat'); await p.mouse.move(400, 400);
+    await p.waitForFunction(() => { const t = document.querySelector('.panel-tip'); return t && !t.hidden; }, null, { timeout: 9000 }).catch(() => {});
+    const g = await p.evaluate(() => { const t = document.querySelector('.panel-tip'); if (!t || t.hidden) return { shown: false }; const a = t.getBoundingClientRect(); const msgs = [...document.querySelectorAll('#chat .msg')].map(m => m.getBoundingClientRect()); const c = document.querySelector('#chat').getBoundingClientRect(); return { shown: true, overChat: a.bottom > c.top + 1 && a.top < c.bottom, overMsg: msgs.some(r => a.left < r.right && a.right > r.left && a.top < r.bottom && a.bottom > r.top) }; });
+    await p.screenshot({ path: path.join(out, `chat-fold-tip_${TAG}_1366x768_dark.png`) });
+    check('1366x768 dark: the one-time "panel folded away" tip shows clear of the messages', g.shown && !g.overChat && !g.overMsg, JSON.stringify(g));
+    await ctx.close();
+  }
+  // a group of the owner's choice: the Coordinator's tick is locked with its reason; the group is named from its members, filed under Groups
+  for (const [w, h, theme] of [[1366, 768, 'dark'], [390, 844, 'light']]) {
+    const made = (await t.call('/api/m/chat/chats', { body: { title: 'New chat', members: ['coordinator'] } })).json;
+    const { ctx, p } = await open(w, h, theme, 'chat/' + made.id);
+    if (w < 860) { await p.click('.talk .hd .mini'); await p.waitForTimeout(400); }
+    await p.locator('#drawer').getByRole('button', { name: 'Add' }).last().click(); await p.waitForTimeout(300);
+    const m = await p.evaluate(() => { const row = document.querySelector('[data-member="coordinator"]'); const box = row?.querySelector('input'); return { locked: !!box?.disabled && !!box?.checked, line: row?.querySelector('.sub')?.textContent || '' }; });
+    await p.screenshot({ path: path.join(out, `chat-new-group_1-pick_${TAG}_${w}x${h}_${theme}.png`) });
+    for (const id of ['scout', 'closer']) await p.locator(`[data-member="${id}"] input`).check();
+    await p.getByRole('button', { name: 'Save' }).click(); await p.waitForTimeout(800);
+    if (w < 860) { await p.locator('#drawer .panel-close').click().catch(() => {}); await p.waitForTimeout(300); }
+    const g = await p.evaluate((id) => { const sel = document.querySelector('#grp'); const rows = [...document.querySelectorAll('.rail > *')]; const gi = rows.findIndex(e => e.tagName === 'H6' && e.textContent === 'Groups'); const ai = rows.findIndex(e => e.tagName === 'H6' && e.textContent === 'Agents'); const at = rows.findIndex(e => e.dataset?.c === id); return { header: sel?.selectedOptions?.[0]?.textContent || '', inGroups: at > gi && at < ai, members: document.querySelector('.hd .pill')?.textContent || '' }; }, made.id);
+    await p.screenshot({ path: path.join(out, `chat-new-group_2-made_${TAG}_${w}x${h}_${theme}.png`) });
+    check(`${w}x${h} ${theme}: new group: the Coordinator's tick is locked with "it sums up"; saved as "Scout and Closer" under Groups, no other room's name`, m.locked && m.line === 'The Coordinator is in every group: it sums up' && g.header === 'Scout and Closer' && (g.inGroups || w < 860) && g.members === '3 agents', JSON.stringify({ ...m, ...g }));
     await ctx.close();
   }
   check('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
