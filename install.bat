@@ -2,6 +2,8 @@
 rem AP Desk installer for this Windows user. Double-click it in the unpacked download. Safe to run again.
 rem It needs no administrator rights: it writes only to the folder you choose, your own Start menu and Desktop,
 rem and your own list of apps. The steps are in setup\install.mjs.
+rem   install.bat            the installer page opens in your browser; this window stays open until the install ends
+rem   install.bat /console   the same questions here in this window instead
 setlocal EnableExtensions
 cd /d "%~dp0"
 title AP Desk setup
@@ -26,6 +28,6 @@ exit /b 1
 
 :failed
 echo.
-echo The install did not finish. The lines above say why.
+echo The install did not finish. The installer page or the lines above say why.
 pause
 exit /b 1

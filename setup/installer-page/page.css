@@ -1,0 +1,91 @@
+/* The installer page, in AP Desk's dark and bold look: deep indigo surfaces, violet to magenta for the main button. */
+:root {
+  --bg: #f3f1fb; --glow: #e6defc; --card: #ffffff; --raise: #f6f4fd; --text: #17133a; --muted: #514c70; --line: #dcd6f0;
+  --accent: #6a1fd0; --accent-text: #5a17b8; --ok: #12805c; --bad: #b4232f; --warn-bg: #fff6e0; --warn-line: #e8c46a;
+  --go: linear-gradient(100deg, #6a1fd0, #a42ad6 55%, #e0308c); --go-text: #ffffff; --shadow: 0 18px 50px rgba(40, 20, 110, .12);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0c0a24; --glow: #241a63; --card: #15123a; --raise: #1d1948; --text: #f2f0ff; --muted: #b8b2dc; --line: #2f2a66;
+    --accent: #a77bff; --accent-text: #c7a8ff; --ok: #4fd6a0; --bad: #ff8a93; --warn-bg: #2d2412; --warn-line: #8a6a22;
+    --shadow: 0 18px 60px rgba(0, 0, 0, .45);
+  }
+}
+* { box-sizing: border-box; }
+html, body { min-height: 100%; }
+body {
+  margin: 0; color: var(--text); font: 16px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
+  background: radial-gradient(1100px 600px at 15% -10%, var(--glow), transparent 70%), radial-gradient(900px 500px at 110% 110%, var(--glow), transparent 70%), var(--bg);
+  background-color: var(--bg);
+  display: grid; place-items: center; padding: 32px 16px;
+}
+.card { width: 100%; max-width: 560px; background: var(--card); border: 1px solid var(--line); border-radius: 22px; padding: 28px 28px 30px; box-shadow: var(--shadow); }
+.brand { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
+.mark { width: 56px; height: 56px; flex: none; }
+.name { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: .01em; }
+.sub { margin: 0; color: var(--muted); font-size: 14px; }
+h1 { font-size: 26px; line-height: 1.2; margin: 0 0 6px; font-weight: 800; }
+.lead { margin: 0 0 20px; color: var(--muted); }
+p { margin: 0 0 10px; }
+[hidden] { display: none !important; }
+
+.group { border: 1px solid var(--line); background: var(--raise); border-radius: 16px; margin: 0 0 16px; padding: 14px 16px 12px; min-width: 0; }
+legend { padding: 0 6px; margin-left: -6px; font-weight: 600; font-size: 15px; }
+.folder { display: flex; gap: 8px; margin-top: 6px; }
+.folder input { flex: 1; min-width: 0; font: inherit; font-size: 15px; color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; }
+.folder input:focus-visible, button:focus-visible, .switch input:focus-visible + .track { outline: 3px solid var(--accent); outline-offset: 2px; }
+.hint { color: var(--muted); font-size: 14px; margin: 8px 0 0; }
+.note { font-size: 14px; margin: 8px 0 0; min-height: 0; }
+.note:empty { display: none; }
+.note.ok { color: var(--ok); }
+.note.bad { color: var(--bad); }
+.warn { margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: var(--warn-bg); border: 1px solid var(--warn-line); font-size: 14px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; }
+#failed .row { margin-top: 18px; }
+.hint, .lead { overflow-wrap: anywhere; }
+
+button { font: inherit; cursor: pointer; border-radius: 12px; }
+button.quiet { font-size: 15px; color: var(--accent-text); background: transparent; border: 1px solid var(--line); padding: 8px 14px; }
+button.quiet:hover { background: var(--card); border-color: var(--accent); }
+button.main { display: block; width: 100%; margin-top: 18px; padding: 13px 18px; font-size: 17px; font-weight: 700; color: var(--go-text); background: var(--go); border: 0; box-shadow: 0 8px 24px rgba(164, 42, 214, .35); }
+button.main:hover { filter: brightness(1.08); }
+button:disabled { cursor: default; opacity: .65; }
+.row button.main { width: auto; flex: 1; margin-top: 0; }
+
+.switch { display: flex; align-items: center; gap: 12px; padding: 8px 0; cursor: pointer; font-size: 15px; }
+.switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.track { position: relative; flex: none; width: 42px; height: 24px; border-radius: 12px; background: var(--line); transition: background .15s; }
+.track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); transition: transform .15s; }
+.switch input:checked + .track { background: var(--go); }
+.switch input:checked + .track::after { transform: translateX(18px); }
+
+.steps { list-style: none; margin: 18px 0 14px; padding: 0; }
+.steps li { display: grid; grid-template-columns: 28px 1fr; align-items: center; column-gap: 12px; padding: 9px 0; color: var(--muted); }
+.steps li .bar { grid-column: 2; display: none; position: relative; height: 5px; margin-top: 8px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.steps li.doing .bar { display: block; }
+.steps li .bar::after { content: ""; position: absolute; inset: 0; width: 35%; border-radius: 3px; background: var(--go); animation: slide 1.5s ease-in-out infinite; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+.dot { width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center; }
+.steps li.doing { color: var(--text); font-weight: 600; }
+.steps li.doing .dot { border-color: var(--accent); border-top-color: transparent; animation: spin .9s linear infinite; }
+.steps li.done { color: var(--text); }
+.steps li.done .dot, .big-tick { border: 0; background: var(--go); }
+.steps li.done .dot::after, .big-tick::after { content: ""; width: 10px; height: 5px; border: solid #fff; border-width: 0 0 2.5px 2.5px; transform: translateY(-1px) rotate(-45deg); }
+.steps li.failed { color: var(--bad); font-weight: 600; }
+.steps li.failed .dot { border-color: var(--bad); }
+@keyframes spin { to { transform: rotate(360deg); } }
+.line { color: var(--muted); font-size: 15px; margin: 0; }
+.big-tick { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; margin-bottom: 14px; }
+.big-tick::after { width: 22px; height: 11px; border-width: 0 0 4px 4px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .steps li .bar::after { animation: none; width: 100%; opacity: .5; }
+  .steps li.doing .dot { animation: none; border-top-color: var(--accent); }
+}
+@media (max-width: 480px) {
+  body { padding: 16px; place-items: start center; }
+  .card { padding: 22px 18px 24px; border-radius: 18px; }
+  h1 { font-size: 23px; }
+  .folder { flex-wrap: wrap; }
+  .folder input { flex-basis: 100%; }
+}

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<meta name="referrer" content="no-referrer">
+<title>Install AP Desk</title>
+<link rel="icon" href="logo.svg">
+<link rel="stylesheet" href="page.css">
+</head>
+<body>
+<main class="card">
+  <header class="brand">
+    <img class="mark" src="logo.svg" alt="" width="64" height="64">
+    <div>
+      <p class="name">AP Desk</p>
+      <p class="sub" id="version">Agent Population Desk</p>
+    </div>
+  </header>
+
+  <section id="setup" aria-labelledby="setup-title">
+    <h1 id="setup-title">Install AP Desk</h1>
+    <p class="lead">Your own desk of AI agents. It runs on this PC and answers only on this PC.</p>
+
+    <form id="form" novalidate>
+      <fieldset class="group">
+        <legend>Where to install</legend>
+        <div class="folder">
+          <input id="folder" name="folder" type="text" spellcheck="false" autocomplete="off" aria-describedby="folder-rule folder-note">
+          <button type="button" class="quiet" id="browse">Browse…</button>
+        </div>
+        <p class="hint" id="folder-rule">Pick an empty folder or a new one. AP Desk keeps only its own files there, so removing it later never touches yours.</p>
+        <p class="note" id="folder-note" role="status" aria-live="polite"></p>
+        <div class="warn" id="warn" hidden>
+          <p id="warn-text"></p>
+          <div class="row">
+            <button type="button" class="quiet" id="anyway">Install there anyway</button>
+            <button type="button" class="quiet" id="other">Pick another folder</button>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="group">
+        <legend>Choices</legend>
+        <label class="switch"><input type="checkbox" id="desktop" checked><span class="track" aria-hidden="true"></span><span>Put an AP Desk icon on the Desktop</span></label>
+        <label class="switch"><input type="checkbox" id="apps" checked><span class="track" aria-hidden="true"></span><span>List AP Desk in Settings &gt; Apps, so you can remove it from there</span></label>
+        <label class="switch"><input type="checkbox" id="autostart"><span class="track" aria-hidden="true"></span><span>Start AP Desk when you sign in to Windows</span></label>
+        <label class="switch"><input type="checkbox" id="start" checked><span class="track" aria-hidden="true"></span><span>Start AP Desk when the install is done</span></label>
+      </fieldset>
+
+      <p class="hint">This installs AP Desk for you only. It needs no administrator rights and changes nothing for other users.</p>
+      <button type="submit" class="main" id="install">Install</button>
+    </form>
+  </section>
+
+  <section id="progress" aria-labelledby="progress-title" hidden>
+    <h1 id="progress-title">Installing AP Desk</h1>
+    <ol class="steps">
+      <li data-step="copy"><span class="dot" aria-hidden="true"></span><span class="label">Copying the program</span></li>
+      <li data-step="packages"><span class="dot" aria-hidden="true"></span><span class="label">Getting the packages</span><span class="bar" aria-hidden="true"></span></li>
+      <li data-step="shortcuts"><span class="dot" aria-hidden="true"></span><span class="label">Making the shortcuts</span></li>
+      <li data-step="done"><span class="dot" aria-hidden="true"></span><span class="label">Done</span></li>
+    </ol>
+    <p class="line" id="line" role="status" aria-live="polite">Getting ready …</p>
+  </section>
+
+  <section id="ready" aria-labelledby="ready-title" hidden>
+    <div class="big-tick" aria-hidden="true"></div>
+    <h1 id="ready-title">AP Desk is ready</h1>
+    <p class="lead" id="ready-where"></p>
+    <p class="note" id="ready-problems" hidden>Some shortcuts could not be made. Run install.bat again to make them.</p>
+    <button type="button" class="main" id="open">Open AP Desk</button>
+    <p class="note" id="ready-note" role="status" aria-live="polite"></p>
+    <p class="hint">Start it any time from the Start menu: AP Desk. Stop it with Stop AP Desk.</p>
+  </section>
+
+  <section id="failed" aria-labelledby="failed-title" hidden>
+    <h1 id="failed-title">The install did not finish</h1>
+    <p class="lead" id="failed-what"></p>
+    <p id="failed-todo"></p>
+    <p class="hint" id="failed-log" hidden></p>
+    <div class="row">
+      <button type="button" class="main" id="again">Try again</button>
+      <button type="button" class="quiet" id="close">Close the installer</button>
+    </div>
+    <p class="note" id="failed-note" role="status" aria-live="polite"></p>
+  </section>
+</main>
+<script src="page.js"></script>
+</body>
+</html>

@@ -6,9 +6,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'; import { fileURLToPath } from 'node:url';
 import { choosePort, DEFAULT_PORT, SPARE_PORTS } from '../setup/check.mjs';
-import { install, checkFolder, programEntries, shortcuts, autostart, REG_KEY, KEEP } from '../setup/install.mjs';
+import { install, checkFolder, programEntries, shortcuts, autostart, REG_KEY, KEEP, quietRun, main, BANNER } from '../setup/install.mjs';
 import { uninstall, programList } from '../setup/uninstall.mjs';
-import { rollingLog } from '../setup/background.mjs';
+import { rollingLog, launch } from '../setup/background.mjs';
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const BATS = [...fs.readdirSync(ROOT).filter(f => /\.(bat|cmd)$/i.test(f)), ...fs.readdirSync(path.join(ROOT, 'setup')).filter(f => /\.(bat|cmd)$/i.test(f)).map(f => 'setup/' + f)];
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'latin1');
@@ -130,13 +130,17 @@ test('install: copies the program, makes the shortcuts and the Apps entry, start
   const r = await install({ argv: [], env: w.env, source: src, run: w.run, ask: answers('', '', '', '', ''), say, isRunning: async () => false });
   assert.equal(r.ok, true); assert.equal(r.dir, dir, 'Enter takes %LOCALAPPDATA%\\Programs\\AP Desk');
   assert.deepEqual(r.copied, ['README.md', 'app', 'install.bat', 'modules', 'node_modules', 'package.json', 'setup', 'start.bat', 'stop.bat', 'uninstall.bat']);
-  for (const n of [...KEEP, '.git']) assert.equal(fs.existsSync(path.join(dir, n)), false, `${n} is not copied`);
+  for (const n of ['backups', 'runtime', '.git']) assert.equal(fs.existsSync(path.join(dir, n)), false, `${n} is not copied`);
+  assert.deepEqual(fs.readdirSync(path.join(dir, 'data')), ['install.log'], 'data is not copied; it holds only the install log');
+  assert.ok(KEEP.includes('data'));
+  const log = fs.readFileSync(path.join(dir, 'data', 'install.log'), 'utf8'); assert.match(log, /AP Desk 9\.8\.7 install, \d{4}-\d\d-\d\d \d\d:\d\d, into /); assert.match(log, /AP Desk is installed\./);
   assert.match(fs.readFileSync(path.join(dir, 'setup', 'installed.txt'), 'utf8'), /^README\.md\r\napp\r\n/);
   const lnks = w.ran.filter(c => c.env?.APD_LNK).map(c => c.env);
   const menu = path.join(w.folders.programs, 'AP Desk');
   assert.deepEqual(lnks.map(e => e.APD_LNK), [path.join(menu, 'AP Desk.lnk'), path.join(menu, 'Stop AP Desk.lnk'), path.join(menu, 'AP Desk log.lnk'), path.join(menu, 'Uninstall AP Desk.lnk'), path.join(w.folders.desktop, 'AP Desk.lnk')], 'no Startup shortcut by default');
   const main = lnks[0];
-  assert.deepEqual({ ...main }, { APD_LNK: path.join(menu, 'AP Desk.lnk'), APD_TARGET: path.join(dir, 'start.bat'), APD_ARGS: 'background', APD_DIR: dir, APD_ICON: path.join(dir, 'setup', 'assets', 'apdesk.ico') + ',0', APD_DESC: 'Start AP Desk, your desk of AI agents on this PC', APD_STYLE: '7' });
+  // no runtime\node in this fake folder: the Node.js that runs the installer is the one the shortcuts use
+  assert.deepEqual({ ...main }, { APD_LNK: path.join(menu, 'AP Desk.lnk'), APD_TARGET: process.execPath, APD_ARGS: `"${path.join(dir, 'setup', 'background.mjs')}" open`, APD_DIR: dir, APD_ICON: path.join(dir, 'setup', 'assets', 'apdesk.ico') + ',0', APD_DESC: 'Start AP Desk, your desk of AI agents on this PC', APD_STYLE: '7' });
   assert.equal(lnks[2].APD_TARGET, path.join('C:\\Windows', 'System32', 'notepad.exe')); assert.equal(lnks[2].APD_ARGS, `"${path.join(dir, 'data', 'desk.log')}"`);
   const sc = w.ran.find(c => c.env?.APD_LNK);
   assert.deepEqual(sc.args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-Command']);
@@ -153,7 +157,9 @@ test('install: copies the program, makes the shortcuts and the Apps entry, start
     ['add', REG_KEY, '/v', 'NoRepair', '/t', 'REG_DWORD', '/d', '1', '/f'],
   ]);
   assert.equal(REG_KEY, 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\APDesk');
-  assert.deepEqual(w.ran.at(-1).args, ['/d', '/c', 'start', '', '/min', path.join(dir, 'start.bat'), 'background']);
+  // the desk starts through the hidden runner: no "start" of a .bat file, which would leave a console window open
+  assert.equal(w.ran.at(-1).cmd, process.execPath); assert.deepEqual(w.ran.at(-1).args, [path.join(dir, 'setup', 'background.mjs'), 'open']); assert.equal(w.ran.at(-1).detached, true);
+  assert.equal(w.ran.some(c => c.cmd === 'cmd.exe' || c.args.some(a => /start\.bat/i.test(a))), false, 'no command runs start.bat');
   assert.equal(w.ran.some(c => c.args.includes('ci') || c.args.includes('install')), false, 'packages were already there: no npm');
   assert.match(say.lines.join('\n'), /AP Desk 9\.8\.7/);
 });
@@ -165,7 +171,7 @@ test('install: answers No, then yes to start with Windows; packages are installe
   assert.equal(r.ok, true);
   assert.equal(fs.existsSync(path.join(w.folders.desktop, 'AP Desk.lnk')), false, 'No to the Desktop icon removes an old one');
   const st = w.ran.find(c => c.env?.APD_LNK === path.join(w.folders.startup, 'AP Desk.lnk'));
-  assert.equal(st.env.APD_ARGS, 'background nowindow'); assert.equal(st.env.APD_STYLE, '7');
+  assert.equal(st.env.APD_ARGS, `"${path.join(dir, 'setup', 'background.mjs')}" open nowindow`); assert.equal(st.env.APD_STYLE, '7');
   assert.deepEqual(w.ran.filter(c => c.cmd === 'reg.exe').map(c => c.args), [['delete', REG_KEY, '/f']], 'No to the Apps list writes nothing and removes an old entry');
   const npm = w.ran.find(c => c.args.includes('ci'));
   assert.ok(npm, 'npm ci runs for the zip layout'); assert.equal(npm.cwd, path.join(dir, 'setup'));
@@ -205,7 +211,7 @@ test('install: the start-with-Windows switch adds and removes only the Startup s
   const w = fakeWindows(); const dir = path.join(w.home, 'AP Desk'); fs.mkdirSync(w.folders.startup, { recursive: true });
   const lnk = path.join(w.folders.startup, 'AP Desk.lnk');
   assert.equal((await autostart(true, { dir, run: w.run, say: quiet() })).ok, true); assert.equal(fs.existsSync(lnk), true);
-  assert.equal(w.ran.at(-1).env.APD_ARGS, 'background nowindow');
+  assert.equal(w.ran.at(-1).env.APD_ARGS, `"${path.join(dir, 'setup', 'background.mjs')}" open nowindow`);
   assert.equal((await autostart(false, { dir, run: w.run, say: quiet() })).ok, true); assert.equal(fs.existsSync(lnk), false);
   assert.match(read('setup/autostart.bat'), /node "%~dp0install\.mjs" --autostart %1/);
 });
@@ -280,4 +286,68 @@ test('shortcuts list: Start menu folder holds AP Desk, Stop, log and Uninstall',
   const s = shortcuts('C:\\AP', { programs: '/p', desktop: '/d', startup: '/s', windows: '/w' });
   assert.deepEqual(s.menu.map(x => path.basename(x.lnk)), ['AP Desk.lnk', 'Stop AP Desk.lnk', 'AP Desk log.lnk', 'Uninstall AP Desk.lnk']);
   assert.ok(programEntries(ROOT).includes('install.bat') && !programEntries(ROOT).includes('data'));
+});
+
+test('no stray console window: start.bat hands off to the hidden runner and promises nothing about its window', () => {
+  const bat = read('start.bat');
+  assert.equal(/closes when/i.test(bat), false, 'no message promises to close a window the script does not own');
+  assert.match(bat, /node "%~dp0setup\\background\.mjs" %BG%/);
+  assert.ok(bat.indexOf('if "%MODE%"=="background" goto :background') < bat.indexOf('call "%~dp0setup\\open.bat" starting'), 'background mode does not open a second start page');
+  for (const rel of BATS) assert.equal(/closes when/i.test(read(rel)), false, `${rel}: no window-closing promise`);
+  const bg = read('setup/background.mjs');
+  assert.match(bg, /cmd === 'open'[\s\S]*?'launch'[\s\S]*?detached: true, stdio: 'ignore', windowsHide: true/);
+  assert.match(read('setup/install.mjs'), /detached: true, stdio: 'ignore', windowsHide: true/);
+});
+
+test('background launch: the same steps as start.bat, with no window; start.bat in its own window when setup is needed', async () => {
+  const fake = ({ all = 0, port = '3447\n', running = 1, wait = [0] } = {}) => {
+    const did = []; const waits = [...wait];
+    const sh = {
+      check: (what, env) => { did.push(['check', what, env.APD_PORT || '']); if (what === 'all') return { code: all }; if (what === 'port') return { code: port ? 0 : 1, stdout: port }; if (what === 'running') return { code: running }; return { code: waits.length ? waits.shift() : 1 }; },
+      open: (what, env) => did.push(['open', what, env.APD_PORT]), runner: (env) => did.push(['runner', env.APD_PORT]), visible: (args) => did.push(['visible', args]),
+    };
+    return { sh, did };
+  };
+  let f = fake(); assert.equal(await launch({ sh: f.sh, env: {} }), 0);
+  assert.deepEqual(f.did.filter(d => d[0] !== 'check'), [['open', 'starting', '3447'], ['runner', '3447'], ['open', 'desk', '3447']]);
+  f = fake({ running: 0 }); await launch({ sh: f.sh, env: {} }); assert.deepEqual(f.did.filter(d => d[0] !== 'check'), [['open', 'desk', '3447']], 'already running: just open it');
+  f = fake(); await launch({ open: false, sh: f.sh, env: {} }); assert.deepEqual(f.did.filter(d => d[0] !== 'check'), [['runner', '3447']], 'sign-in start: no window at all');
+  f = fake({ all: 1 }); await launch({ sh: f.sh, env: {} }); assert.deepEqual(f.did.filter(d => d[0] !== 'check'), [['visible', 'background']], 'packages missing: setup shows what it does');
+  f = fake({ port: '' }); await launch({ open: false, sh: f.sh, env: {} }); assert.deepEqual(f.did.filter(d => d[0] !== 'check'), [['visible', 'background nowindow']]);
+  f = fake({ wait: [1, 1] }); assert.equal(await launch({ sh: f.sh, env: {} }), 1); assert.equal(f.did.some(d => d[0] === 'open' && d[1] === 'desk'), false, 'the start page says what to do');
+});
+
+test('quiet npm: the whole output goes to the install log, and only error lines come back', async () => {
+  const dir = tmp(); const npm = path.join(dir, 'stand-in-npm.mjs'); const log = path.join(dir, 'data', 'install.log');
+  fs.writeFileSync(npm, "console.log('added 120 packages'); console.error('npm warn deprecated inflight@1.0.6: old'); console.error('npm error code ECONNRESET'); console.error('npm error network the connection was reset'); process.exit(1);\n");
+  const r = await quietRun({ cmd: process.execPath, args: [npm], cwd: dir, quiet: true, log });
+  assert.equal(r.code, 1); assert.deepEqual(r.errors, ['npm error code ECONNRESET', 'npm error network the connection was reset']);
+  const all = fs.readFileSync(log, 'utf8'); for (const l of ['added 120 packages', 'npm warn deprecated', 'npm error code ECONNRESET']) assert.ok(all.includes(l), l);
+  // through the installer: the user sees the error lines and where the log is, never the warnings
+  const src = fakeDownload({ zip: true }); const w = fakeWindows(); const d2 = path.join(w.home, 'AP Desk'); const say = quiet();
+  const run = (c) => c.quiet ? quietRun({ ...c, cmd: process.execPath, args: [npm] }) : w.run(c);
+  const res = await install({ argv: ['--folder', d2, '--yes'], env: w.env, source: src, run, say, isRunning: async () => false });
+  const shown = say.lines.join('\n');
+  assert.equal(res.ok, false); assert.match(shown, /npm error code ECONNRESET/); assert.equal(/npm warn/.test(shown), false);
+  assert.match(res.message, new RegExp(`The install log is ${path.join(d2, 'data', 'install.log').replace(/[\\/.]/g, '\\$&')}\\.`));
+  assert.match(fs.readFileSync(path.join(d2, 'data', 'install.log'), 'utf8'), /npm warn deprecated/);
+  assert.deepEqual(w.ran.filter(c => c.quiet).length, 0, 'npm went through the quiet runner');
+  assert.match(read('setup/install.mjs'), /if \(c\.quiet\) return quietRun\(c\);/);
+  for (const l of read('setup/setup.bat').split('\r\n').filter(l => /call npm /.test(l))) assert.match(l, /--loglevel=error$/, l);
+});
+
+test('console fallback: /console, answers on the command line, or no browser; the banner is plain ASCII', async () => {
+  const src = fakeDownload(); const never = async () => { throw new Error('the page is not used'); };
+  for (const argv of [['/console'], ['--console']]) {
+    const w = fakeWindows(); const say = quiet();
+    const r = await main(argv, { page: never, env: w.env, source: src, run: w.run, ask: answers('', '', '', '', ''), say, isRunning: async () => false });
+    assert.equal(r.ok, true); assert.equal(r.dir, path.join(w.env.LOCALAPPDATA, 'Programs', 'AP Desk'));
+    assert.ok(say.lines.includes(BANNER[0]));
+  }
+  const w = fakeWindows(); const say = quiet(); let asked = 0;
+  const r = await main([], { page: async () => { asked++; return null; }, env: w.env, source: src, run: w.run, ask: answers('', '', '', '', ''), say, isRunning: async () => false });
+  assert.equal(asked, 1); assert.equal(r.ok, true); assert.match(say.lines.join('\n'), /could not be opened in a browser, so the questions are asked here/);
+  const viaPage = await main([], { page: async () => ({ ok: true, dir: 'x' }) }); assert.deepEqual(viaPage, { ok: true, dir: 'x' });
+  for (const l of BANNER) assert.equal(/[^\x20-\x7e]/.test(l), false);
+  assert.match(read('install.bat'), /install\.bat \/console/); assert.match(read('install.bat'), /node "%~dp0setup\\install\.mjs" %\*/);
 });

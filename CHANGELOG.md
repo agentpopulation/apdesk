@@ -223,6 +223,9 @@ Everything below was built and tested on Linux after the 0.1.0 release. The Wind
 - A key is tested by itself when you save it and the result shows on its row; the button at the top reads "Test again" once everything has been tested.
 - Search, reading and voice services can hold several labelled keys, each with its own Test; when a key is refused or its allowance runs out, the next key is used. Each key can be marked Free tier, Paid or Not sure.
 - On the Per agent tab every choice shows the saved tick, and a line says each choice is saved as you make it.
+- Windows: install.bat now opens a visual installer in your browser, with the logo, a Browse button for the folder, switches for the Desktop icon, the Apps entry and start at sign-in, and a progress view. The plain console installer stays as a fallback (install.bat /console). Not yet run on Windows.
+- npm warnings are no longer shown during install (they are kept in the install log), and the Node.js download shows one tidy progress bar.
+- Starting AP Desk at the end of an install, from the Start menu or the Desktop icon leaves no console window behind.
 
 ### Known weak points
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.

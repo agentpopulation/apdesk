@@ -1,8 +1,9 @@
 @echo off
 rem AP Desk: double-click to start. It answers only on this PC, at http://127.0.0.1 on its own port (3445 unless taken).
 rem   start.bat                       runs the desk in this window; closing the window stops it
-rem   start.bat background            runs the desk with no window (the shortcuts); its lines go to data\desk.log
-rem   start.bat background nowindow   the same, without opening the desk (the start-with-Windows shortcut)
+rem   start.bat background            runs the desk with no window; its lines go to data\desk.log
+rem   start.bat background nowindow   the same, without opening the desk
+rem The shortcuts run setup\background.mjs with Node.js directly, so they leave no console window behind.
 setlocal EnableExtensions
 cd /d "%~dp0"
 title AP Desk
@@ -30,8 +31,8 @@ if "%OPEN%"=="yes" call "%~dp0setup\open.bat" desk
 exit /b 0
 
 :start
-if "%OPEN%"=="yes" call "%~dp0setup\open.bat" starting
 if "%MODE%"=="background" goto :background
+if "%OPEN%"=="yes" call "%~dp0setup\open.bat" starting
 
 rem 4. In this window: open the desk once it answers, and run the desk here. 75 means it asked to be started again.
 if "%OPEN%"=="yes" start "" /min cmd /c "node "%~dp0setup\check.mjs" wait && call "%~dp0setup\open.bat" desk"
@@ -45,16 +46,13 @@ if "%RC%"=="2" if "%OPEN%"=="yes" call "%~dp0setup\open.bat" desk
 exit /b %RC%
 
 :background
-rem 4. In the background: setup\background.mjs runs the desk with no window and writes data\desk.log.
-rem This window waits for the desk, opens it, and closes. Closing it early does not stop the desk.
-node "%~dp0setup\background.mjs" start
+rem 4. In the background: setup\background.mjs shows the start page, runs the desk with no window (data\desk.log)
+rem and opens the desk once it answers. It returns at once; this file does not wait for it.
+set "BG=open"
+if "%OPEN%"=="no" set "BG=open nowindow"
+node "%~dp0setup\background.mjs" %BG%
 if errorlevel 1 goto :fail
-if "%OPEN%"=="no" exit /b 0
-echo AP Desk is starting. This window closes when the desk is open.
-node "%~dp0setup\check.mjs" wait >nul 2>nul
-if errorlevel 1 node "%~dp0setup\check.mjs" wait >nul 2>nul
-if errorlevel 1 exit /b 1
-call "%~dp0setup\open.bat" desk
+if "%OPEN%"=="yes" echo AP Desk is starting in the background and opens in its own window in a moment.
 exit /b 0
 
 :fail

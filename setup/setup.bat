@@ -38,14 +38,14 @@ exit /b 1
 rem A repository checkout has package.json beside start.bat; the unzipped app keeps it in setup\.
 if not exist "%~dp0..\package.json" goto :install_zip
 pushd "%~dp0.."
-call npm install --omit=dev --ignore-scripts --no-audit --no-fund
+call npm install --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error
 set "RC=%errorlevel%"
 popd
 exit /b %RC%
 
 :install_zip
 pushd "%~dp0"
-call npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+call npm ci --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error
 set "RC=%errorlevel%"
 popd
 if not "%RC%"=="0" exit /b %RC%
