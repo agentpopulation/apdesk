@@ -143,8 +143,10 @@ export class Downloads {
   async ask(id) {
     const d = this.get(id); if (!d) return;
     const r = await this.approval.request({ action: 'install', agentId: d.agentId || null, chatId: d.chatId || null,
-      title: `${d.title} (${sizeText(d.size)})`.slice(0, 300), detail: `From ${hostOf(d.url)}. The desk checks the file is the one published before it is used.`,
-      payload: { file: path.basename(d.to), size: sizeText(d.size), url: d.url } });   // plain words: the exact size and the SHA-256 are checked by the desk, not read by the owner
+      title: `${d.title} (${sizeText(d.size)})`.slice(0, 300), from: hostOf(d.url), detail: `From ${hostOf(d.url)}. The desk checks the file is the one published before it is used.`,
+      // plain words: the exact size and the SHA-256 are checked by the desk, not read by the owner. The address is kept in
+      // the download's own record and fetched from there; what a screen is given names the host only (the detail line)
+      payload: { file: path.basename(d.to), size: sizeText(d.size) } });
     const cur = this.get(id); if (!cur || cur.state !== 'waiting') return;      // cancelled meanwhile
     if (r.ok) { this.patch(id, { state: 'queued', approvalId: r.id, reason: null }); this.pump(); return; }
     if (r.reason === 'halted') this.patch(id, { state: 'paused', pausedBy: 'panic', reason: 'Panic stopped this before you allowed it. Press Resume to be asked again.' });

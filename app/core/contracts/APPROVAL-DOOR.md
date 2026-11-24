@@ -8,7 +8,8 @@ Every action with a side effect asks `app/core/approval-door.js` first. The door
 const d = await ctx.approval.request({
   agentId, chatId?, jobId?,
   action: 'file.write' | 'file.delete' | 'file.read.outside' | 'shell.run' | 'browser.open' | 'browser.act'
-        | 'net.post' | 'send.person' | 'spend' | 'module.toggle' | 'install' | 'login' | 'calendar.write' | 'custom',
+        | 'net.post' | 'send.person' | 'spend' | 'module.toggle' | 'install' | 'login' | 'calendar.write'
+        | 'record.change' | 'schedule.repeat' | 'memory.lesson' | 'custom',
   title: 'Write rack-suppliers.xlsx',        // one line the owner reads
   detail?: 'Workspace › reports',            // one more line
   payload?: { path, to, body, amount, currency, url, command, ... },   // shown on the card; secrets are redacted
@@ -31,7 +32,11 @@ A request that must ask creates a pending approval (storage table `approvals`), 
 | `browser.open` a site | allow | allow for sites already visited, else ask | ask |
 | `browser.act` (click, type, submit; never a login or payment form) | allow | ask once per task | ask |
 | `net.post` (an API write that is not a message to a person) | allow | ask | ask |
-| `calendar.write`, `module.toggle`, `login`, `custom` | ask | ask | ask |
+| `calendar.write`, `module.toggle`, `login` | ask | ask | ask |
+| **`record.change`** (an agent's tool adds or changes the owner's customer records: contacts, companies, deals, notes) | **ask, always** | **ask, always** | **ask, always** |
+| **`schedule.repeat`** (an agent's turn makes a schedule that repeats; a one-time reminder does not ask) | **ask, always** | **ask, always** | **ask, always** |
+| **`memory.lesson`** (an agent's turn saves a standing lesson or instruction; an ordinary remembered fact does not ask) | **ask, always** | **ask, always** | **ask, always** |
+| **`custom`** (anything with no named action; treated as always-ask until each caller has its own name) | **ask, always** | **ask, always** | **ask, always** |
 | **`install`** (a desk update, a module's packages, a local engine or model, any program) | **ask, always** | **ask, always** | **ask, always** |
 | **`send.person`** (mail, chat message, post, SMS, call: anything a person receives) | **ask, always** | **ask, always** | **ask, always** |
 | **`spend`** | within limits: allow; over: **ask, always** | within: ask; over: ask | ask |
@@ -40,9 +45,30 @@ A request that must ask creates a pending approval (storage table `approvals`), 
 
 The level is **Open on first run**. It changes only in Settings › Security through `POST /api/settings/security` which is served by the shell and requires the browser's session token. Nothing else can change it: `approval-door.js` exports the setter only behind a symbol that `app/core/settings-routes.js` holds. No request body, chat message, URL flag, header or module context can raise or lower the level. There is no skip parameter (such as a `skipGate` on search), and no chat phrase opens auto-approve: the door ignores message text.
 
+## A strict job
+
+A module that starts a job with `ctx.jobs.start({ ..., strictApprovals: true })` makes every action with a side effect in
+that job ask the owner, whatever the level and any open auto-approve window, and the job keeps no "ask once" grant. The
+request must carry the job's id (`jobId`). A module tells the option is there by `ctx.jobs.takes.includes('strictApprovals')`
+(and `ctx.approval.strictJobs === true`). It can only make the door ask more, never less. A repeating schedule and a standing
+lesson or instruction ask through `schedule.repeat` and `memory.lesson` (they always ask); a one-time reminder and an
+ordinary remembered fact have no door action and are not covered by any level, strict or not.
+
+## Deciding once
+
+`decide(id, decision, how, from)` changes a row only while it is pending. Deciding again returns the row as it is with
+`already: true`, writes no activity line and resolves nothing. `from` names a linked phone (PHONE.md); the activity line then
+says "Decided on the phone "<name>"".
+
+## Counts for the Scorecard
+
+`ctx.approval.countsBetween(fromIso, toIso)` -> `[{ agentId, asked, denied }]`, read-only: per agent, the approvals created
+between the two times (from included, to not) that asked the owner. What the level, auto-approve or Incognito granted
+without asking is not counted.
+
 ## Auto-approve window
 
-A control beside the level: **15 minutes**, **1 hour**, **today**, or off. While the window is open, actions that Careful or Strict would ask for are allowed with `how: 'auto'`, and a line is written to the activity log. The window never covers `send.person`, `install` or `spend` over the limit. Every `install` (a desk update, UPDATES.md; a module's packages; the local engine or a model; any program) asks the owner each time, at every level and inside the window. Its card says what will be installed and from where: the title names the thing (and its size for a download), the detail names the host, and the payload carries the address. The door makes sure the detail says where it comes from: the asker passes `from` (a host or registry, for example `registry.npmjs.org`) beside `title` and `detail`, or the host of `payload.url` is used; the door puts "From <it>." in front of the detail unless the detail already names it. When neither is there, the card says "Where it comes from was not stated." `from` is not part of the payload, so it does not change what `assertGranted` checks. A download the owner starts with a button that already names the file is one card per file, never two. The one exception to a card is the standing yes of the downloads service (below). It is set only from the Settings route and the chip under the message box, both served by the shell with the session token.
+A control beside the level: **15 minutes**, **1 hour**, **today**, or off. While the window is open, actions that Careful or Strict would ask for are allowed with `how: 'auto'`, and a line is written to the activity log. The window never covers the always-ask actions (`ALWAYS_ASK` in approval-door.js: `send.person`, `install`, `record.change`, `schedule.repeat`, `memory.lesson`, `custom`) or `spend` over the limit, and "ask once" never covers them either. The one plain line that says so (`WINDOW_NEVER`, also in `state().windowNever` and so in `/api/state` under `security`) is what the auto-approve dialog and Settings › Security show. Installing or removing a module is an `install` (the Module Store asks the Admin's own door). Every `install` (a desk update, UPDATES.md; a module's packages; the local engine or a model; any program) asks the owner each time, at every level and inside the window. Its card says what will be installed and from where: the title names the thing (and its size for a download), the detail names the host, and the payload carries the address (a download the desk fetches itself, `core/downloads.js`, keeps the address in its own record: its card's payload is the file and its size, so no screen is given the raw address). The door makes sure the detail says where it comes from: the asker passes `from` (a host or registry, for example `registry.npmjs.org`) beside `title` and `detail`, or the host of `payload.url` is used; the door puts "From <it>." in front of the detail unless the detail already names it. When neither is there, the card says "Where it comes from was not stated." `from` is not part of the payload, so it does not change what `assertGranted` checks. A download the owner starts with a button that already names the file is one card per file, never two. The one exception to a card is the standing yes of the downloads service (below). It is set only from the Settings route and the chip under the message box, both served by the shell with the session token.
 
 ## The standing yes for update downloads
 
@@ -50,7 +76,7 @@ A control beside the level: **15 minutes**, **1 hour**, **today**, or off. While
 
 ## Spend limits
 
-Settings › Payments and spend: `spend.perItem`, `spend.perDay`, `spend.perMonth`, stored in hundredths of the main unit of the owner's currency (the currency in Settings › General, which a fresh desk takes from the computer, never a fixed one). When the owner has set none, the usual amounts for that currency apply (`SPEND_USUAL` in `app/core/settings.js`, for example 25, 50 and 200 for USD); a currency with no usual amounts has none (all 0), so every spend asks until he sets his own. A day or month limit of 0 means no limit is set, never a limit reached: the model door then makes no paid model call (MODEL-DOOR.md, Spend), because a model call's cost is not known before it is made and cannot be asked about first. A change of currency clears limits the owner set in the old one, the same way. The door sums `spend` approvals granted today and this month plus estimated paid-model cost. Above any limit the request asks, whatever the level or window. The Payments module ships off; while it is off, any `spend` request with `amount > 0` asks.
+Settings › Payments and spend: `spend.perItem`, `spend.perDay`, `spend.perMonth`, stored in hundredths of the main unit of the owner's currency (the currency in Settings › General, which a fresh desk takes from the computer, never a fixed one). When the owner has set none, the usual amounts for that currency apply (`SPEND_USUAL` in `app/core/settings.js`, for example 25, 50 and 200 for USD); a currency with no usual amounts has none (all 0), so every spend asks until he sets his own. A day or month limit of 0 means no limit is set, never a limit reached: the model door then makes no paid model call (MODEL-DOOR.md, Spend), because a model call's cost is not known before it is made and cannot be asked about first. A change of currency clears limits the owner set in the old one, the same way. The door sums `spend` approvals granted today and this month plus estimated paid-model cost; today and this month start at midnight in the owner's zone (Settings › General), the same clock as the model door (`dayStart`). Above any limit the request asks, whatever the level or window. The Payments module ships off; while it is off, any `spend` request with `amount > 0` asks.
 
 ## Send to a person
 

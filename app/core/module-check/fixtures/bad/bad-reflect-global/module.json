@@ -1,0 +1,1 @@
+{"id": "bad-reflect-global", "number": 152, "name": "Reflect global", "description": "A hostile test module for the checker: Reaches process through Reflect.get on the global object. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

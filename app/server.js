@@ -13,6 +13,7 @@ import { otherSpace } from './core/space-context.js';
 import { Updater } from './core/update.js';
 import { People } from './core/people.js';
 import { plainFailure } from './core/model-door.js';
+import { createPhone } from './core/phone/phone.js';
 
 const APP = path.dirname(fileURLToPath(import.meta.url));     // <install>/app: the shell and the doors
 const ROOT = path.dirname(APP);                               // <install>: app, modules, vendor, node_modules, setup, data, backups
@@ -91,7 +92,7 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
   /** The token of a person whose space is sp (that space's routes). */
   const sessionFor = (sp) => (req) => { const w = windowOf(req); return !!w && spaceOfWindow(w) === sp; };
   const isKeeper = (req) => { const w = windowOf(req); return !!w && !!people.get(w.personId)?.keeper; };
-  const KEEPER_NO = 'Only the keeper of this PC can do that.';
+  const KEEPER_NO = 'Only the Admin of this PC can do that.';
 
   // ---- Paired browsers. The desk hands its page (and so its session) only to a browser it knows. The first browser
   // to open a fresh desk is remembered by a cookie; any other browser must type the code shown in the desk's own
@@ -187,7 +188,7 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
     'POST /api/agents': (req, res, { body }) => { if (!body?.name) return sendJson(res, { error: 'An agent needs a name.' }, 400); sendJson(res, agents.create(body)); },
     'GET /api/agents/:id': (req, res, { params }) => { const a = agents.get(params.id); a ? sendJson(res, { ...a, resolved: model.resolve(a.id) }) : sendJson(res, { error: 'Not found' }, 404); },
     'PATCH /api/agents/:id': (req, res, { params, body }) => { const a = agents.update(params.id, body || {}); a ? sendJson(res, a) : sendJson(res, { error: 'Not found' }, 404); },
-    'DELETE /api/agents/:id': (req, res, { params }) => { if (params.id === 'coordinator') return sendJson(res, { error: 'The Coordinator stays.' }, 409); agents.remove(params.id); sendJson(res, { ok: true }); },
+    'DELETE /api/agents/:id': (req, res, { params }) => { if (params.id === 'coordinator') return sendJson(res, { error: 'The Manager stays.' }, 409); agents.remove(params.id); sendJson(res, { ok: true }); },
     'GET /api/jobs': (req, res, { query }) => sendJson(res, { jobs: jobs.list({ status: query.status || undefined, limit: Number(query.limit) || 100 }), summary: jobs.summary() }),
     'GET /api/jobs/:id': (req, res, { params }) => { const j = jobs.get(params.id); j ? sendJson(res, j) : sendJson(res, { error: 'Not found' }, 404); },
     'POST /api/jobs/:id/stop': (req, res, { params }) => sendJson(res, jobs.stop(params.id)),
@@ -224,7 +225,7 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
   };
   // Shared by everyone: pairing, Panic, the module switches, updates, downloads and the local engine, the router for
   // other programs (served from the keeper's space), and the people routes.
-  const houseRoute = (k) => /^\w+ \/(router\/|api\/(update(\/|$)|panic(\/|$)|security\/pair-code$|modules\/:id\/:onoff$))/.test(k);
+  const houseRoute = (k) => /^\w+ \/(router\/|api\/(update(\/|$)|panic(\/|$)|phone(\/|$)|security\/pair-code$|modules\/:id\/:onoff$))/.test(k);
   const compile = (routes) => Object.entries(routes).map(([k, handler]) => { const [method, p] = k.split(' '); return { key: k, method, parts: p.split('/'), handler }; });
   const matchIn = (compiled, method, pathname) => {
     const parts = pathname.replace(/\/$/, '').split('/');
@@ -236,16 +237,23 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
     }
     return null;
   };
+  // Approve from your phone (app/core/phone): off by default; when the keeper switches it on, a SECOND listener on the
+  // home network address serves only the phone page and its own routes. This listener stays loopback only.
+  const phone = createPhone({ settings, kv: storage.kvScope('core.phone'), people, panic, log,
+    spacesOf: (id) => [personSpaces.get(id), personalSpaces.get(id)].filter(Boolean).map(sp => sp.core),   // never an Incognito space
+    isLocked: (c) => isLockedCore(c), note: (c, a) => c?.approval.activity(a),
+    host: env.APD_PHONE_HOST || null, port: env.APD_PHONE_PORT != null && env.APD_PHONE_PORT !== '' ? Number(env.APD_PHONE_PORT) : null, deskPort: () => core.port });
   const houseRoutes = compile({
     ...Object.fromEntries(Object.entries(routesOf(core, sessionOk)).filter(([k]) => houseRoute(k))),
     ...(await import('./core/downloads-routes.js')).downloadRoutes(core, sessionOk),
     ...peopleRoutes(),
+    ...phoneRoutes(),
   });
   const spaceTables = new WeakMap();
   const tableOf = (sp) => { let t = spaceTables.get(sp); if (!t) spaceTables.set(sp, t = compile(Object.fromEntries(Object.entries(routesOf(sp.core, sessionFor(sp))).filter(([k]) => !houseRoute(k))))); return t; };
   // The keeper's gates (contracts/PEOPLE.md): updates, module switches, Online and Offline, the local engine and model
   // downloads, people and their PINs. Anyone else is told so in one sentence.
-  const KEEPER_ONLY = new Set(['POST /api/update/check', 'POST /api/update/install', 'POST /api/update/daily', 'POST /api/update/channel', 'POST /api/update/background', 'POST /api/modules/:id/:onoff',
+  const KEEPER_ONLY = new Set(['POST /api/phone/switch', 'POST /api/phone/admin-decides', 'POST /api/update/check', 'POST /api/update/install', 'POST /api/update/daily', 'POST /api/update/channel', 'POST /api/update/background', 'POST /api/modules/:id/:onoff',
     'POST /api/downloads/:id/pause', 'POST /api/downloads/:id/resume', 'POST /api/downloads/:id/cancel', 'POST /api/local-engine/get', 'POST /api/local-engine/choose', 'POST /api/local-engine/stop',
     'POST /api/local-engine/remove', 'POST /api/local-engine/switch', 'POST /api/local-engine/keep-loaded', 'POST /api/people', 'POST /api/people/:id/remove', 'POST /api/people/:id/reset-pin',
     'POST /api/m/models/ollama/pull', 'POST /api/m/models/ollama/delete',
@@ -347,7 +355,7 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
           else { res.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-store', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'" }); return res.end(pairPage('')); }
         }
         const html = fs.readFileSync(path.join(APP, 'ui', 'index.html'), 'utf8').replace('__APD_SESSION__', pageToken()).replace('__APD_VERSION__', core.version);
-        res.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-store', 'content-security-policy': "default-src 'self'; img-src 'self' data: blob: https: http:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; media-src 'self' blob: data:; frame-src 'self' blob:; frame-ancestors 'none'", 'x-content-type-options': 'nosniff' });
+        res.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-store', 'content-security-policy': "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; media-src 'self' blob: data:; frame-src 'self' blob:; frame-ancestors 'none'", 'x-content-type-options': 'nosniff' });
         return res.end(html);
       }
       if (p.startsWith('/ui/')) { const f = inside(path.join(APP, 'ui'), p.slice(4)); return f ? serveFile(res, f) : (res.writeHead(404), res.end()); }
@@ -440,7 +448,7 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
     };
     const keeperPinOk = async (req, res, pin) => {
       const k = people.keeper();
-      if (!k.hasPin) { sendJson(res, { error: 'Set your own PIN first, so no one else can enter as the keeper.' }, 409); return false; }
+      if (!k.hasPin) { sendJson(res, { error: 'Set your own PIN first, so no one else can enter as the Admin.' }, 409); return false; }
       const r = await people.verify(k.id, pin); if (r.ok) return true;
       refused(res, k.id, r); return false;
     };
@@ -513,10 +521,10 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
         sendJson(res, { person, theme: c.settings.get('theme') });
       },
       'POST /api/people': async (req, res, { body }) => {
-        if (!people.keeper().hasPin) return sendJson(res, { error: 'Set your own PIN first, so no one else can enter as the keeper.' }, 409);
+        if (!people.keeper().hasPin) return sendJson(res, { error: 'Set your own PIN first, so no one else can enter as the Admin.' }, 409);
         const person = await people.add({ name: body?.name, emoji: body?.emoji, colour: body?.colour, pin: body?.pin });
         await openPerson(person.id).start(); closedNow();
-        approval.activity({ action: 'people.add', title: `${person.name} was added to this desk`, how: 'keeper' });
+        approval.activity({ action: 'people.add', title: `${person.name} was added to this desk`, how: 'Admin' });
         // The honest limit of the PIN, said plainly when a person is added: it keeps people apart, it does not protect
         // their files from another OS user or from code run here. Real separation is a separate login and disk encryption.
         sendJson(res, { person, folder: people.folderOf(person.id), note: `${person.name} gets their own chats, keys and space, kept apart by their PIN. The PIN encrypts nothing: anyone who can sign in to this PC as this user, or run a program here, can still read every person's files. For real separation ${SEPARATE_WAY[process.platform] || SEPARATE_WAY.other}` });
@@ -524,14 +532,14 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
       // Removing a person detaches them: their windows end, their space closes, their folder stays where it is.
       'POST /api/people/:id/remove': async (req, res, { params, body }) => {
         const p = people.get(params.id); if (!p) return sendJson(res, { error: 'No such person on this desk.' }, 404);
-        if (p.keeper) return sendJson(res, { error: 'The keeper of this PC stays.' }, 409);
+        if (p.keeper) return sendJson(res, { error: 'The Admin of this PC stays.' }, 409);
         if (!(await keeperPinOk(req, res, body?.pin))) return;
-        await endPerson(p.id);
+        await endPerson(p.id); phone.dropPerson(p.id);   // their linked phones stop working with them
         const sp = personSpaces.get(p.id); personSpaces.delete(p.id);
         const psp = personalSpaces.get(p.id); personalSpaces.delete(p.id);
         try { await sp?.close(); await psp?.close(); } finally { await endPerson(p.id); }
         const { folder } = people.remove(p.id);
-        approval.activity({ action: 'people.remove', title: `${p.name} was taken off this desk`, how: 'keeper', detail: 'The folder stays: ' + folder });
+        approval.activity({ action: 'people.remove', title: `${p.name} was taken off this desk`, how: 'Admin', detail: 'The folder stays: ' + folder });
         sendJson(res, { ok: true, folder, message: `${p.name} is no longer on this desk. Their folder was not deleted. It is here: ${folder}` });
       },
       'POST /api/people/:id/reset-pin': async (req, res, { params, body }) => {
@@ -541,8 +549,47 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
         await people.resetPin(p.id, body?.newPin, by.id);
         if (p.id !== by.id) await endPerson(p.id);
         noteIn(p.id, `Your PIN was reset by ${by.name}`, 'people.pin.reset');
-        approval.activity({ action: 'people.pin.reset', title: `The PIN of ${p.name} was reset`, how: 'keeper' });
+        approval.activity({ action: 'people.pin.reset', title: `The PIN of ${p.name} was reset`, how: 'Admin' });
         sendJson(res, { person: people.get(p.id) });
+      },
+    };
+  }
+
+  // ---- The phone routes the desk's own Settings page uses (house): the Admin switches it on; each person makes a code for
+  // their own phone and sees (the Admin: removes any) linked phone.
+  function phoneRoutes() {
+    const who = (req) => { const w = windowOf(req); return { w, keeper: !!w && !!people.get(w.personId)?.keeper }; };
+    return {
+      'GET /api/phone': (req, res) => { const { w, keeper } = who(req); if (!w) return sendJson(res, { error: 'Choose who you are first.', code: 'no_person' }, 401); sendJson(res, { ...phone.state(w.personId, keeper), you: { keeper } }); },
+      'POST /api/phone/switch': async (req, res, { body }) => {
+        if (typeof body?.on !== 'boolean') return sendJson(res, { error: '{ on: true | false }' }, 400);
+        const was = settings.get('phone.on') === true;
+        const l = await phone.setOn(body.on);
+        if (was !== body.on) approval.activity({ action: 'phone.switch', title: body.on ? 'Approve from your phone: on' : 'Approve from your phone: off', how: 'Admin' });
+        const { w, keeper } = who(req);
+        if (body.on && !l) return sendJson(res, { ...phone.state(w.personId, keeper), error: phone.state(w.personId, keeper).note || 'The phone page could not open on this PC. Nothing else changed.' }, 409);
+        sendJson(res, phone.state(w.personId, keeper));
+      },
+      'POST /api/phone/admin-decides': (req, res, { body }) => {
+        if (typeof body?.on !== 'boolean') return sendJson(res, { error: '{ on: true | false }' }, 400);
+        if ((settings.get('phone.adminDecides') === true) !== body.on) approval.activity({ action: 'phone.adminDecides', title: body.on ? 'Installs and module switches may be decided on the Admin\'s phone' : 'Installs and module switches are decided at the desk only', how: 'Admin' });
+        phone.setAdminDecides(body.on); const { w, keeper } = who(req); sendJson(res, phone.state(w.personId, keeper));
+      },
+      // the code that links a phone: only for the desk's own page (as the pairing code), never in Incognito
+      'POST /api/phone/code': (req, res) => {
+        const { w } = who(req);
+        if (!browserOk(req) || !pageFetch(req)) return sendJson(res, { error: 'The code is shown only on the desk\'s own screen.' }, 403);
+        if (w.incognito) return sendJson(res, { error: 'A phone is not linked from Incognito. Leave Incognito first.', code: 'incognito' }, 403);
+        if (!phone.listening) return sendJson(res, { error: 'Switch on Approve from your phone first.' }, 409);
+        res.setHeader('cache-control', 'no-store');
+        sendJson(res, { ...phone.newCode(w.personId), address: phone.state(w.personId, false).address });
+      },
+      'POST /api/phone/devices/:id/remove': (req, res, { params }) => {
+        const { w, keeper } = who(req);
+        const d = phone.removeDevice(params.id, w.personId, keeper);
+        if (!d) return sendJson(res, { error: 'No such phone is linked.' }, 404);
+        try { personSpaces.get(d.personId)?.core.approval.activity({ action: 'phone.remove', title: `A phone was removed: ${d.name}`, how: keeper && d.personId !== w.personId ? 'Admin' : 'owner' }); } catch {}
+        sendJson(res, phone.state(w.personId, keeper));
       },
     };
   }
@@ -561,6 +608,7 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
       for (const sp of [...personSpaces.values(), ...personalSpaces.values()]) if (sp !== space) await sp.start();
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
       core.port = server.address().port;
+      await phone.start();   // only when the keeper switched it on; it says why in the log when it cannot
       log(`AP Desk ${core.version} on http://${host}:${core.port}  data: ${dataDir}`);
       // run hidden (setup/background.mjs), these lines go to data\desk.log, which any program of this user can read: the code stays out
       if (pairing) console.log(env.APD_BACKGROUND === '1' ? '\n  To open the desk in another browser, use Show code in Settings › Security.\n' : `\n  To open the desk in another browser, type this code there: ${pairCode.slice(0, 3)} ${pairCode.slice(3)}\n`);
@@ -573,12 +621,15 @@ export async function createDesk({ dataDir = process.env.APD_DATA || path.join(R
       await panic.stopAll('Shutting down').catch(() => {});
       const all = [...spaces].reverse(); spaces.clear();
       for (const s of all) await s.stop();   // Panic's stop hooks of every space ran just above
+      await phone.stop();
       await new Promise((r) => { server.close(() => r()); server.closeAllConnections?.(); });
       try { fs.rmSync(path.join(dataDir, 'desk.pid'), { force: true }); } catch {}
       for (const s of all) s.core.storage.close();
       people.close();
     },
     url: () => `http://${host}:${core.port}`,
+    /** The phone part (tests and the safety probe; no route or module reaches it). */
+    phone,
   };
   return desk;
 }

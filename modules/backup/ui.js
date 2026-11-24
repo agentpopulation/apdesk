@@ -122,7 +122,7 @@ function activitySection(el, ui) {
     const rows = filtered();
     out.replaceChildren(rows.length ? ui.table([
       { label: 'When', render: (x) => fmt.when(x.at) },
-      { label: 'Who', render: (x) => x.agent_id ? (ui.agent(x.agent_id)?.name || 'An agent') : 'You or the desk' },
+      { label: 'Who', render: (x) => x.agent_id ? ui.agentLine(x.agent_id) : 'You or the desk' },
       { label: 'What', render: (x) => h('span', null, words(x), x.detail ? h('span', { class: 'sub' }, ' · ' + String(x.detail).replace(ISO, (m) => fmt.when(m))) : null) },
       { label: 'How', render: (x) => HOW[x.how] || x.how || '' },
     ], rows.slice(0, 200)) : empty('Nothing matches.'));
@@ -130,12 +130,12 @@ function activitySection(el, ui) {
   const load = async () => {
     try { items = (await api('activity')).items; } catch (e) { out.replaceChildren(empty(e.message)); return; }
     const agents = [...new Set(items.map(x => x.agent_id).filter(Boolean))];
-    who.replaceChildren(h('option', { value: '' }, 'Anyone'), h('option', { value: 'you' }, 'You or the desk'), ...agents.map(a => h('option', { value: a }, ui.agent(a)?.name || 'An agent')));
+    who.replaceChildren(h('option', { value: '' }, 'Anyone'), h('option', { value: 'you' }, 'You or the desk'), ...agents.map(a => h('option', { value: a }, ui.agentLine(a))));
     paintList();
   };
   const csv = () => {
     const cell = (s) => '"' + String(s ?? '').replace(/"/g, '""') + '"';
-    const text = ['When,Who,What,How,Detail', ...filtered().map(x => [fmt.when(x.at), x.agent_id ? (ui.agent(x.agent_id)?.name || x.agent_id) : 'You or the desk', words(x), HOW[x.how] || x.how || '', x.detail || ''].map(cell).join(','))].join('\r\n');
+    const text = ['When,Who,What,How,Detail', ...filtered().map(x => [fmt.when(x.at), x.agent_id ? ui.agentLine(x.agent_id) : 'You or the desk', words(x), HOW[x.how] || x.how || '', x.detail || ''].map(cell).join(','))].join('\r\n');
     const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' })); const a = h('a', { href: url, download: 'activity.csv' }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
   };
   for (const c of [q, kind, when, who]) c.addEventListener('input', paintList);

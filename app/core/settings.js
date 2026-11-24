@@ -142,21 +142,29 @@ export class Settings {
   /** True for a key only the main space (the keeper's desk) may write: another space reads the house's value. */
   isHouseKey(key) { return !!this.house && HOUSE_KEYS.has(key); }
   stored(key) { if (this.house && HOUSE_KEYS.has(key)) return this.house.stored(key); return !!this.s.get('SELECT 1 AS x FROM settings WHERE key = ?', key); }
+  /** The number and date style when the owner has set none: the default style's language in the country he chose (en-IN
+   *  for India groups 12,34,567), if this computer knows it; else the default. */
+  localeDefault() {
+    if (!this.stored('country')) return this.defaults.locale;
+    try { const v = checkPlace('locale', `${new Intl.Locale(this.defaults.locale).language}-${this.get('country')}`); if (v.ok) return v.value; } catch {}
+    return this.defaults.locale;
+  }
   get(key) {
     if (this.house && HOUSE_KEYS.has(key)) return this.house.get(key);
     const r = this.s.get('SELECT value FROM settings WHERE key = ?', key);
+    if (!r && key === 'locale') return this.localeDefault();
     if (!r) return SPEND_KEYS.includes(key) ? spendDefaults(this.get('currency'))[key] : this.defaults[key];
     try { return JSON.parse(r.value); } catch { return this.defaults[key]; }
   }
   all() {
-    const out = { ...this.defaults };
+    const out = { ...this.defaults, locale: this.localeDefault() };
     for (const r of this.s.all('SELECT key, value FROM settings')) { try { out[r.key] = JSON.parse(r.value); } catch {} }
     if (this.house) for (const k of HOUSE_KEYS) out[k] = this.house.get(k);
     for (const k of SPEND_KEYS) if (!(k in out)) out[k] = this.get(k);
     return out;
   }
   set(key, value) {
-    if (this.house && HOUSE_KEYS.has(key)) throw Object.assign(new Error(key === 'online' ? 'Online and offline are set for the whole desk.' : 'The local model addresses are set for the whole PC, on the keeper\'s own desk.'), { code: 'forbidden' });
+    if (this.house && HOUSE_KEYS.has(key)) throw Object.assign(new Error(key === 'online' ? 'Online and offline are set for the whole desk.' : 'The local model addresses are set for the whole PC, on the Admin\'s own desk.'), { code: 'forbidden' });
     this.s.run('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, JSON.stringify(value ?? null));
     for (const fn of this.listeners) { try { fn(key, value); } catch {} }
   }

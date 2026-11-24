@@ -69,28 +69,29 @@ test('a retired built-in agent comes back in one click with its own settings, id
   } finally { await t.close(); }
 });
 
-test('four advisor roles wait under "Not on your team"; one click hires one, with its steps; nothing runs', async () => {
+test('advisor roles are hired from the hire box by role; Sales lead is folded into Sales expert; nothing runs', async () => {
   const t = await testDesk({ modules: ['agents'] });
   try {
     const ids = ['ai-officer', 'product-lead', 'sales-lead', 'co-founder'];
-    const off = (await t.call('/api/m/agents/retired')).json.agents;
-    assert.deepEqual(off.map(a => a.id).sort(), [...ids].sort());
-    assert.deepEqual(off.map(a => a.name).sort(), ['AI officer', 'Co-founder', 'Product lead', 'Sales lead']);
+    assert.deepEqual((await t.call('/api/m/agents/retired')).json.agents, [], 'a fresh desk has nothing under "Not on your team"');
     for (const id of ids) assert.equal(t.core.agents.get(id), null, id + ' is not hired by default');
-    assert.ok(off.every(a => a.role && a.role.length < 80));
-    const cat = t.core.modules.api('agents').catalog();
+    const cat = (await t.call('/api/m/agents/catalog')).json;
+    const roles = cat.roles.map(r => r.id);
+    for (const id of ['co-founder', 'product-lead', 'ai-officer']) assert.ok(roles.includes(id), id + ' is offered by role');
+    assert.ok(!roles.includes('sales-lead'), 'Sales lead is not offered beside the Sales expert');
     const defaults = JSON.parse((await import('node:fs')).readFileSync(new URL('./skills.json', import.meta.url), 'utf8')).defaults;
     for (const id of ids) {
       assert.ok(defaults[id].length >= 2 && defaults[id].length <= 4, id);
-      for (const sid of defaults[id]) { const s = cat.skills.find(x => x.id === sid); assert.ok(s, sid); assert.match(s.body, /## Steps/); assert.doesNotMatch(s.body, /\b(run|execute|install)\b.*\b(script|command)\b/i); }
+      for (const sid of defaults[id]) { const s = t.core.modules.api('agents').catalog().skills.find(x => x.id === sid); assert.ok(s, sid); assert.match(s.body, /## Steps/); assert.doesNotMatch(s.body, /\b(run|execute|install)\b.*\b(script|command)\b/i); }
     }
+    // one already on a desk still works and comes back after retiring, shown as a Sales expert
     assert.equal((await t.call('/api/m/agents/retired/sales-lead/hire', { body: {}, session: false })).status, 403);
     const h = await t.call('/api/m/agents/retired/sales-lead/hire', { body: {} });
-    assert.equal(h.status, 200); assert.equal(h.json.id, 'sales-lead');
+    assert.equal(h.status, 200); assert.equal(h.json.id, 'sales-lead'); assert.equal(h.json.line, 'Sales expert');
     assert.deepEqual(t.core.modules.api('agents').skillsFor('sales-lead').map(s => s.id), defaults['sales-lead']);
-    assert.equal((await t.call('/api/m/agents/retired')).json.agents.length, 3);
     assert.equal((await t.call('/api/m/agents/agents/sales-lead', { method: 'DELETE' })).status, 200);
-    assert.ok((await t.call('/api/m/agents/retired')).json.agents.some(a => a.id === 'sales-lead'), 'retired advisors come back to the list');
+    const back = (await t.call('/api/m/agents/retired')).json.agents.find(a => a.id === 'sales-lead');
+    assert.ok(back, 'a retired advisor comes back to the list'); assert.equal(back.line, 'Sales expert');
   } finally { await t.close(); }
 });
 
@@ -98,10 +99,10 @@ test('a first hire says the agent joined the team; a hire after retiring says it
   const t = await testDesk({ modules: ['agents'] });
   try {
     const first = await t.call('/api/m/agents/retired/ai-officer/hire', { body: {} });
-    assert.equal(first.status, 200); assert.match(first.json.message, /^AI officer joined\. Model: /);
+    assert.equal(first.status, 200); assert.match(first.json.message, /^AI expert joined\. Model: /);
     assert.equal((await t.call('/api/m/agents/agents/ai-officer', { method: 'DELETE' })).status, 200);
     const again = await t.call('/api/m/agents/retired/ai-officer/hire', { body: {} });
-    assert.match(again.json.message, /^AI officer is back\. Model: /);
+    assert.match(again.json.message, /^AI expert is back\. Model: /);
   } finally { await t.close(); }
 });
 
@@ -113,15 +114,15 @@ test('a hire names the model the agent answers with, from the desk default route
     assert.equal(r.status, 200);
     const first = t.core.model.resolve('co-founder').chain[0];
     assert.equal(first.provider, 'router', 'the desk default route answers first');
-    assert.equal(r.json.message, 'Co-founder joined. Model: Free API (auto).');
-    assert.equal(r.json.detail, 'Co-founder joined your team. It will answer with the Free API (auto) until you choose another model. It left you a note in its chat.');
+    assert.equal(r.json.message, 'AI Co-founder joined. Model: Free API (auto).');
+    assert.equal(r.json.detail, 'AI Co-founder joined your team. It will answer with the Free API (auto) until you choose another model. It left you a note in its chat.');
     assert.equal(r.json.uses, undefined, 'no internal field in the answer');
     assert.equal(r.json.model, 'Free API (auto)');
     // a re-hire keeps the model it had, and says so
     await t.call('/api/agents/co-founder', { method: 'PATCH', body: { model: { main: { provider: 'ollama', model: 'qwen3:4b' } } } });
     await t.call('/api/m/agents/agents/co-founder', { method: 'DELETE' });
     const back = await t.call('/api/m/agents/retired/co-founder/hire', { body: {} });
-    assert.equal(back.json.message, 'Co-founder is back. Model: Ollama (qwen3:4b).');
+    assert.equal(back.json.message, 'AI Co-founder is back. Model: Ollama (qwen3:4b).');
   } finally { await t.close(); }
 });
 

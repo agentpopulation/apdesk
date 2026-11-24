@@ -14,7 +14,7 @@ const modeName = (ui) => placeName(ui);   // one name everywhere: the menu, the 
 /** The usage rows as the kit's table reads them: columns { key, label } and one object per row. */
 export function usageTable(u, fmt) {
   const cols = [{ key: 'agent', label: 'Agent' }, { key: 'calls', label: 'Calls' }, { key: 'errors', label: 'Errors' }, { key: 'tokens', label: 'Tokens' }, { key: 'spend', label: 'Spend' }];
-  const rows = (u.agents || []).map((a) => ({ agent: a.agent === '(desk)' ? 'The desk' : a.agent, calls: String(a.calls), errors: String(a.errors), tokens: String((a.inputTokens || 0) + (a.outputTokens || 0)), spend: a.costMinor > 0 ? fmt.money(a.costMinor, u.currency) : '—' }));
+  const rows = (u.agents || []).map((a) => ({ agent: a.name || (a.agent === '(desk)' ? 'The desk' : 'An agent'), calls: String(a.calls), errors: String(a.errors), tokens: String((a.inputTokens || 0) + (a.outputTokens || 0)), spend: a.costMinor > 0 ? fmt.money(a.costMinor, u.currency) : '—' }));
   return { cols, rows };
 }
 const TODO_WORDS = { queued: 'Queued', running: 'Running', done: 'Done', skipped: 'Skipped' };

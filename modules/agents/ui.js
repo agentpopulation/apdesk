@@ -3,9 +3,23 @@
 // The cause of "the agent profile looks so basic": a letter in a circle and bare rows. Now each agent has a drawn avatar
 // (ui-avatars.js) and the Profile tab is four cards: who it is, what it always does, what it is good at, what it did lately.
 import { AVATARS, COLOURS, LETTER, MOTION_KEY, avatarEl as drawAvatar, avatarValue, defaultAvatar, setAvatarMotion } from './ui-avatars.js';
+import { agentLine, agentLineById, roleOf, ownName, storedName, suggestName } from './ui-roles.js';
+// the one line that names an agent ("Kent · Secretary", or the role alone), for every page that shows one
+export { agentLine, agentLineById, roleOf, ownName };
 
 const API = 'm/agents/';
 const TAB_ORDER = [['profile', 'Profile', 'agents'], ['model', 'Model', 'models'], ['tools', 'Tools and skills', 'agents'], ['memory', 'Memory', 'memory'], ['computer', 'Computer', 'browser']];
+/** The agent page's tabs: the built-in ones whose module is on and declares them, then every other agent tab a module that
+ *  is on declares (its manifest's agentTabs), in the modules' order. [id, title or null (the module's page names it), module]. */
+export function tabsFor(modules = [], isOn = () => true) {
+  const declared = (id) => modules.find(m => m.id === id)?.agentTabs || [];
+  const fixed = TAB_ORDER.filter(([id, , mod]) => mod === 'agents' || (isOn(mod) && declared(mod).includes(id)));
+  const seen = new Set(TAB_ORDER.map(t => t[0]));
+  const more = [];
+  for (const m of modules) { if (m.id === 'agents' || !isOn(m.id)) continue; for (const id of m.agentTabs || []) if (!seen.has(id)) { seen.add(id); more.push([id, null, m.id]); } }
+  return [...fixed, ...more];
+}
+const tabWords = (id) => String(id).replace(/[-_]+/g, ' ').replace(/^./, c => c.toUpperCase());
 const JOB_WORDS = { running: ['Running', 'run'], waiting: ['Waiting for you', 'slow'], done: ['Done', 'live'], failed: ['Failed', 'fail'], stopped: ['Stopped', 'off'], interrupted: ['Stopped', 'off'] };
 
 export const pages = { agents: { title: 'Agents', render } };
@@ -37,7 +51,10 @@ async function render(el, ui, route) {
   ui.onLeave(() => { alive = false; try { cleanupTab?.(); } catch {} });
   let agents = []; let jobs = [];
   const pickId = () => route?.parts?.[0] && agents.some(a => a.id === route.parts[0]) ? route.parts[0] : (agents[1] || agents[0])?.id;
-  const tabs = () => TAB_ORDER.filter(([id, , mod]) => mod === 'agents' || (ui.moduleOn(mod) && (ui.state.modules.find(m => m.id === mod)?.agentTabs || []).includes(id)));
+  const tabs = async () => Promise.all(tabsFor(ui.state.modules || [], (id) => ui.moduleOn(id)).map(async ([id, title, mod]) => {
+    if (title) return [id, title, mod];
+    try { return [id, (await ui.moduleUi(mod)).agentTabs?.[id]?.title || tabWords(id), mod]; } catch { return [id, tabWords(id), mod]; }
+  }));
   /** [chip kind, short state, longer state for the header] */
   const jobLine = (a) => {
     const run = jobs.find(j => j.agentId === a.id && j.status === 'running'); const wait = jobs.find(j => j.agentId === a.id && j.status === 'waiting');
@@ -57,11 +74,11 @@ async function render(el, ui, route) {
     const cur = pickId();
     list.replaceChildren(...agents.map(a => { const [cls, txt] = jobLine(a); return h('button', { class: 'card hov acard' + (a.id === cur ? ' sel' : ''), type: 'button', 'aria-current': a.id === cur ? 'true' : null, onclick: () => ui.go('agents', a.id, route?.parts?.[1] || 'profile') },
       avatarEl(a, '', STATE_OF[cls]),
-      h('span', { class: 'ac-t' }, h('span', { class: 'ac-n' }, h('b', null, a.name), statusChip(txt, cls)), h('span', { class: 'sub ac-r' }, a.role || 'No role yet'), h('span', { class: 'ac-m', title: 'The model it answers with' }, modelWords(a)))); }));
+      h('span', { class: 'ac-t' }, h('span', { class: 'ac-n' }, h('b', null, agentLine(a)), statusChip(txt, cls)), h('span', { class: 'sub ac-r' }, a.role || 'No role yet'), h('span', { class: 'ac-m', title: 'The model it answers with' }, modelWords(a)))); }));
     off.replaceChildren(...(gone.length ? [h('div', { class: 'lbl', style: { marginTop: '6px' } }, 'Not on your team'), ...gone.map(a => h('div', { class: 'card acard offc' },
       avatarEl(a, 's'),
-      h('span', { class: 'ac-t' }, h('b', null, a.name), h('span', { class: 'sub ac-r' }, a.role || '')),
-      btn('Hire', { kind: 'ghost sm', 'aria-label': 'Hire ' + a.name, onClick: () => hireBack(a) })))] : []));
+      h('span', { class: 'ac-t' }, h('b', null, a.line || agentLine(a)), h('span', { class: 'sub ac-r' }, a.role || '')),
+      btn('Hire', { kind: 'ghost sm', 'aria-label': 'Hire ' + (a.line || agentLine(a)), onClick: () => hireBack(a) })))] : []));
     const sel = list.querySelector('.sel'); if (sel && list.scrollWidth > list.clientWidth) list.scrollLeft = sel.offsetLeft - list.offsetLeft - 8;   // narrow window: the chosen agent in view in the row
     await paintDetail(cur);
   }
@@ -69,12 +86,12 @@ async function render(el, ui, route) {
     try {
       const r = await api(API + 'retired/' + encodeURIComponent(a.id) + '/hire', { method: 'POST', body: {} });
       if (ui.moduleOn('chat')) await api('m/chat/rooms/fit', { method: 'POST' });   // the same call first start makes; a room with two of its agents on comes back
-      toast(r.message || `${a.name} joined your team.`, 'ok'); ui.go('agents', a.id, 'profile');
+      toast(r.message || `${a.line || agentLine(a)} joined your team.`, 'ok'); ui.go('agents', a.id, 'profile');
     } catch (e) { toast(e.message, 'err'); }
   }
   async function paintDetail(id) {
     const a = agents.find(x => x.id === id); if (!a) { det.replaceChildren(ui.empty('No agents yet.')); return; }
-    const avail = tabs();
+    const avail = await tabs();
     const tabId = avail.some(t => t[0] === route?.parts?.[1]) ? route.parts[1] : 'profile';
     const [cls, , long] = jobLine(a);
     const body = h('div', { class: 'work-body' });
@@ -82,7 +99,7 @@ async function render(el, ui, route) {
     const bar = h('div', { class: 'tabbar seg', role: 'tablist' }, avail.map(t => h('button', { type: 'button', role: 'tab', 'aria-selected': String(t[0] === tabId), 'aria-pressed': String(t[0] === tabId), onclick: () => ui.go('agents', a.id, t[0]) }, t[1])));
     det.replaceChildren(
       h('div', { class: 'work-head' }, avatarEl(a, 'l', STATE_OF[cls]),
-        h('div', { class: 'wh-t' }, h('h3', null, a.name), h('div', { class: 'sub' }, a.role || 'No role yet'), h('div', null, statusChip(long, cls))),
+        h('div', { class: 'wh-t' }, h('h3', null, agentLine(a)), h('div', { class: 'sub' }, a.role || 'No job line yet'), h('div', null, statusChip(long, cls))),
         h('span', { class: 'grow' }),
         h('div', { class: 'row' }, a.id !== 'coordinator' ? btn('Retire', { kind: 'ghost', onClick: () => retire(a) }) : null, btn('Chat', { onClick: () => ui.go('chat', 'dm-' + a.id) }))),
       bar, body);
@@ -97,8 +114,8 @@ async function render(el, ui, route) {
     } catch (e) { console.error(e); body.replaceChildren(ui.empty(`${t[1]} hit an error: ${e.message}`)); }
   }
   async function retire(a) {
-    if (!await ui.confirm(`Retire ${a.name}? Its chats and files stay; it stops taking work.`, { ok: 'Retire', kind: 'stop' })) return;
-    try { await api(API + 'agents/' + encodeURIComponent(a.id), { method: 'DELETE' }); toast(`${a.name} retired.`); ui.go('agents'); } catch (e) { toast(e.message, 'err'); }
+    if (!await ui.confirm(`Retire ${agentLine(a)}? Its chats and files stay; it stops taking work.`, { ok: 'Retire', kind: 'stop' })) return;
+    try { await api(API + 'agents/' + encodeURIComponent(a.id), { method: 'DELETE' }); toast(`${agentLine(a)} retired.`); ui.go('agents'); } catch (e) { toast(e.message, 'err'); }
   }
   let t = null; const soon = () => { clearTimeout(t); t = setTimeout(() => alive && load(), 300); };
   ui.on('agents', (d) => { if (d?.change !== 'update') soon(); else { clearTimeout(t); t = setTimeout(async () => { if (!alive) return; try { agents = (await api('agents')).agents; ui.state.agents = agents; count.textContent = `${agents.length} ${agents.length === 1 ? 'agent' : 'agents'}`; } catch {} }, 300); } });
@@ -117,17 +134,20 @@ async function profileTab(el, ui, agent) {
     const mark = savedMark();
     const wrap = h('div', { class: 'pf' });
     const show = () => {
-      const v = a[key] || '';
-      wrap.replaceChildren(h('div', { class: 'pf-h' }, h('span', { class: 'pf-l' }, label), mark, h('span', { class: 'grow' }), btn(key === 'name' ? 'Rename' : 'Edit', { kind: 'ghost sm', 'aria-label': `${key === 'name' ? 'Rename' : 'Edit'} ${label.toLowerCase()}`, onClick: edit })),
+      const v = key === 'name' ? ownName(a) : (a[key] || '');
+      if (key === 'name' && !v) empty = roleOf(a) ? `None yet. It shows as ${roleOf(a)}.` : 'Not set';
+      wrap.replaceChildren(h('div', { class: 'pf-h' }, h('span', { class: 'pf-l' }, label), mark, h('span', { class: 'grow' }), btn(key === 'name' ? (v ? 'Rename' : 'Give a name') : 'Edit', { kind: 'ghost sm', 'aria-label': key === 'name' ? (v ? 'Rename' : 'Give a name') : `Edit ${label.toLowerCase()}`, onClick: edit })),
         h('div', { class: 'pf-v' + (v ? '' : ' none') + (multiline ? ' long' : '') }, v ? (quote ? `"${v}"` : v) : empty));
     };
     const edit = () => {
-      const box = multiline ? h('textarea', { rows: key === 'instructions' ? 6 : 3 }, a[key] || '') : h('input', { type: 'text', value: a[key] || '', maxlength: key === 'name' ? 40 : 200 });
+      const was = key === 'name' ? ownName(a) : (a[key] || '');
+      const box = multiline ? h('textarea', { rows: key === 'instructions' ? 6 : 3 }, was) : h('input', { type: 'text', value: was, maxlength: key === 'name' ? 40 : 200, placeholder: key === 'name' ? suggestName((ui.state.agents || []).map(ownName)) : '' });
       const save = async () => {
         const v = box.value.trim();
-        if (key === 'name' && !v) { mark.fail('a name cannot be empty'); box.focus(); return; }
-        if (v === (a[key] || '')) { show(); return; }
-        const ok = await mark.run(() => patch({ [key]: v }));
+        // an empty name gives the agent back its role alone; one with no role (his own agent) needs a name
+        if (key === 'name' && !v && !roleOf(a)) { mark.fail('a name cannot be empty'); box.focus(); return; }
+        if (v === was) { show(); return; }
+        const ok = await mark.run(() => patch({ [key]: key === 'name' ? storedName(v, roleOf(a)) : v }));
         if (ok) { show(); if (key === 'name' || key === 'role') ui.toast(`${label} saved. The next reply uses it.`, 'ok'); }
       };
       box.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); show(); } else if (e.key === 'Enter' && (!multiline || e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); } });
@@ -137,6 +157,7 @@ async function profileTab(el, ui, agent) {
     };
     show(); return wrap;
   };
+  const roleRow = roleOf(a) ? h('div', { class: 'pf' }, h('div', { class: 'pf-h' }, h('span', { class: 'pf-l' }, 'Role')), h('div', { class: 'pf-v', 'data-apd': 'role-name' }, roleOf(a))) : null;
 
   // how it looks: a small grid of drawings and a row of colours; a choice saves at once and shows everywhere on the page
   const lookMark = savedMark();
@@ -170,7 +191,7 @@ async function profileTab(el, ui, agent) {
   // two columns on a wide window (who it is and what it always does on the left), one column on a narrow one
   el.replaceChildren(h('div', { class: 'pgrid' },
     h('div', { class: 'stack' },
-      card('Who it is', field('Name', 'name'), field('Role', 'role', { empty: 'No role yet' }), field('Personality', 'personality', { multiline: true, empty: 'Not set: it talks plainly' })),
+      card('Who it is', ...[roleRow, field('Name', 'name'), field(roleRow ? 'What it does' : 'Role', 'role', { empty: 'No role yet' })].filter(Boolean), field('Personality', 'personality', { multiline: true, empty: 'Not set: it talks plainly' })),
       card('What it always does', field('Standing instructions', 'instructions', { multiline: true, empty: 'None yet. Add what it should always do or never do.', quote: true }))),
     h('div', { class: 'stack' },
       card('How it looks', h('div', { class: 'pf-h' }, h('span', { class: 'pf-l' }, 'Avatar and colour'), lookMark), grid, hues, motionRow),
@@ -211,7 +232,7 @@ async function toolsTab(el, ui, agent) {
       const title = await ui.ask('Name of the skill', { placeholder: 'Supplier comparison' }); if (!title) return;
       const body = await ui.ask('Its steps, in plain words', { multiline: true, placeholder: '1. ...\n2. ...' }); if (!body) return;
       try { const s = await api(API + 'skills', { body: { title, body } }); d.skills.push({ ...s, on: true }); on.add(s.id); await saveSkills(); paintSkills(); toast('Skill added and switched on.', 'ok'); } catch (e) { toast(e.message, 'err'); }
-    } })),
+    } }), ui.moduleOn?.('store') ? btn('Add a skill from a file', { kind: 'ghost sm', onClick: async () => { try { (await import('/modules/store/ui-add.js')).addSkill(ui, null); } catch { toast('The Store could not open just now.', 'err'); } } }) : null),
     h('p', { class: 'sub' }, 'Skills are short instruction packs. The agent follows the steps when an ask fits. Text only: nothing in a skill is ever run.'),
     skillList);
 }
@@ -219,21 +240,36 @@ async function showSkill(ui, id) {
   try { const s = await ui.api(API + 'skills/' + encodeURIComponent(id)); ui.modal({ title: s.title, body: ui.h('div', { style: { maxHeight: '60vh', overflow: 'auto' } }, ui.md(s.body)), actions: [{ label: 'Close' }], wide: true }); } catch (e) { ui.toast(e.message, 'err'); }
 }
 
-// ---------- Hire
+// ---------- Hire: pick a role (its identity), then a name if you like (a suggestion you can change or clear)
+const OWN = '__own';
 async function hire(ui, done) {
   const { h, api, toast } = ui;
-  let cat; try { cat = await api(API + 'catalog'); } catch (e) { toast(e.message, 'err'); return; }
-  const name = h('input', { type: 'text', placeholder: 'For example: Mira', style: { width: '100%' } });
-  const pack = h('select', { style: { width: '100%' } }, h('option', { value: '' }, 'No starting pack'), cat.packs.map(p => h('option', { value: p.id }, `${p.name}: ${p.role}`)));
-  const role = h('input', { type: 'text', placeholder: 'What it does', style: { width: '100%' } });
+  let cat; try { cat = await api(API + 'catalog'); } catch (e) { toast(ui.plainError ? ui.plainError(e) : e.message, 'err'); return; }
+  const roles = cat.roles || [];
+  const taken = (ui.state.agents || []).map(ownName);
+  const role = h('select', { style: { width: '100%' }, 'aria-label': 'Role' }, roles.map(r => h('option', { value: r.id }, r.blocked ? `${r.label} (needs ${r.moduleName})` : r.label)), h('option', { value: OWN }, 'Your own role'));
+  const name = h('input', { type: 'text', maxlength: 40, value: suggestName(taken), placeholder: 'Leave empty to use the role', style: { width: '100%' } });
+  const about = h('div', { class: 'hire-about', 'data-apd': 'hire-about' });
+  const ownRole = h('input', { type: 'text', placeholder: 'What it does', style: { width: '100%' } });
   const pers = h('textarea', { placeholder: 'How it talks' });
-  pack.onchange = () => { const p = cat.packs.find(x => x.id === pack.value); if (p) { if (!role.value) role.value = p.role; if (!pers.value) pers.value = p.personality; } };
   const lab = (t, x) => h('label', { class: 'f' }, t, x);
-  ui.modal({ title: 'Hire an agent', body: h('div', { class: 'stack' }, lab('Name', name), lab('Starting skill pack', pack), lab('Role', role), lab('Personality', pers)), actions: [{ label: 'Cancel' }, { label: 'Hire', kind: '', onClick: async () => {
-    if (!name.value.trim()) { toast('Give it a name.', 'err'); return false; }
-    try { const a = await api(API + 'hire', { body: { name: name.value.trim(), pack: pack.value || null, role: role.value.trim(), personality: pers.value.trim() } }); toast(a.message || `${a.name} is hired.`, 'ok'); done?.(a); } catch (e) { toast(e.message, 'err'); return false; }
+  const ownBox = h('div', { class: 'stack', hidden: true }, lab('Role', ownRole), lab('Personality', pers));
+  const cur = () => roles.find(r => r.id === role.value) || null;
+  const paint = () => {
+    const r = cur(); ownBox.hidden = !!r;
+    about.replaceChildren(...(r ? [h('div', null, r.line + '.'), r.goodAt.length ? h('div', { class: 'sub' }, 'Good at: ' + r.goodAt.join(', ') + '.') : null, r.blocked ? h('div', { class: 'sub', role: 'status', 'data-apd': 'hire-blocked' }, r.blocked) : null].filter(Boolean) : [h('div', { class: 'sub' }, 'Your own agent: give it a name, the work it does and how it talks.')]));
+  };
+  role.onchange = paint; paint();
+  ui.modal({ title: 'Hire an agent', body: h('div', { class: 'stack' }, lab('Role', role), about, lab('Name (you can change it)', name), ownBox), actions: [{ label: 'Cancel' }, { label: 'Hire', kind: '', onClick: async () => {
+    const r = cur(); const n = name.value.trim();
+    if (r?.blocked) { toast(r.blocked, 'err'); return false; }
+    if (!r && !n) { toast('Give your own agent a name.', 'err'); return false; }
+    try {
+      const a = await api(API + 'hire', { body: r ? { roleId: r.id, name: n } : { name: n, role: ownRole.value.trim(), personality: pers.value.trim() } });
+      toast(a.message || `${a.line || agentLine(a)} joined your team.`, 'ok'); done?.(a);
+    } catch (e) { toast(e.message, 'err'); return false; }
   } }] });
-  setTimeout(() => name.focus(), 30);
+  setTimeout(() => role.focus(), 30);
 }
 
 function words(name) { return String(name).replace(/_/g, ' '); }

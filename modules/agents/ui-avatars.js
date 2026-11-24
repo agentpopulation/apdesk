@@ -3,6 +3,7 @@
 // The file name starts with "ui" because the desk serves only ui*.js files of a module to the window.
 // Every drawing is our own simple shapes on a 48 x 48 grid: white shapes, dark ink for eyes, a warm yellow here and there.
 
+import { ownName, roleOf } from './ui-roles.js';
 const W = '#ffffff', K = '#1b1440', Y = '#ffd36b', S = 'rgba(255,255,255,.55)';
 // An eye is two groups: "pu" moves (the pupil follows the pointer), "ey" blinks. Both are driven by the CSS and script below.
 const eye = (inner) => `<g class="pu"><g class="ey">${inner}</g></g>`;
@@ -58,7 +59,7 @@ export function defaultAvatar(id = '') {
   let n = 0; for (const ch of String(id)) n = (n * 31 + ch.charCodeAt(0)) >>> 0;
   return { look: LETTER, colour: COLOURS[n % COLOURS.length].id };
 }
-export const letters = (name) => String(name || '?').split(/\s+/).filter(Boolean).map(w => w[0]).join('').slice(0, 2).toUpperCase() || '?';
+export const letters = (name) => String(name || '?').split(' · ')[0].split(/\s+/).filter(Boolean).map(w => w[0]).join('').slice(0, 2).toUpperCase() || '?';
 export const lookLabel = (look) => look === LETTER ? 'Letters' : (AVATARS.find(a => a.id === look)?.label || 'Letters');
 
 /**
@@ -75,7 +76,7 @@ export function avatarEl(agent, size = '', choice = null, opts = null) {
   el.dataset.look = a.look;
   el.style.background = `var(${COLOURS.find(c => c.id === a.colour).token})`;
   const art = AVATARS.find(x => x.id === a.look);
-  if (!art) { el.textContent = letters(agent?.name); return el; }
+  if (!art) { el.textContent = letters(ownName(agent) || roleOf(agent) || agent?.name); return el; }   // its own name, else its role
   el.innerHTML = `<svg viewBox="0 0 48 48" width="100%" height="100%">${art.art}</svg>`;   // our own constant drawings, never input
   el.dataset.eyes = art.art.includes('class="ey"') ? '1' : '0';
   const r = Math.random();   // each avatar blinks and sways on its own rhythm, so a list never moves in step

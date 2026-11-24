@@ -159,3 +159,18 @@ test('a toast given an element shows that element', () => {
   const el = h('b', null, 'Done');
   assert.equal(toast(el).textContent, 'Done');
 });
+
+test('in a dialog the main button looks different from a plain one', () => {
+  globalThis.location = { hash: '' };
+  kit.modal({ title: 'T', body: 'x', actions: [{ label: 'Cancel' }, { label: 'Save', kind: '' }, { label: 'Remove', kind: 'stop' }] });
+  const cls = (label) => [...document.querySelectorAll('#modal button')].find(b => b.textContent === label)?.getAttribute('class') || '';
+  assert.match(cls('Cancel'), /ghost/); assert.doesNotMatch(cls('Save'), /ghost/); assert.match(cls('Remove'), /stop/);
+});
+
+test('a small amount keeps its cents; a currency with no smaller unit shows none', () => {
+  setPrefs({ timeZone: 'UTC', locale: 'en-US', currency: 'USD' });
+  assert.equal(fmt.money(5050), '$50.50');
+  assert.equal(fmt.money(42), '$0.42');
+  assert.equal(fmt.money(5050, 'JPY'), '¥51');
+  assert.doesNotMatch(fmt.money(5050, 'JPY'), /\./);
+});

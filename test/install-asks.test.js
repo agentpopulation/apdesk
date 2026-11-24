@@ -69,7 +69,10 @@ test('install: a download the owner starts is one card, inside an auto-approve w
     assert.equal(t.core.approval.listPending().length, 1, 'one card, not two');
     assert.match(card.title, /Download the test model \(40\.0 KB\)/);
     assert.match(card.detail, /From 127\.0\.0\.1/);
-    assert.equal(card.payload.url, host.url('/one')); assert.equal(card.payload.file, 'one.bin');
+    assert.equal(card.payload.file, 'one.bin');
+    assert.ok(!JSON.stringify(card).includes(host.url('/one')), 'what the screen is given holds no raw address: the host is in the detail line');
+    const st = await t.call('/api/state');
+    assert.ok(!st.text.includes(host.url('/one')), 'nor does the state a page reads');
     t.core.approval.decide(card.id, 'approve');
     assert.equal((await t.core.downloads.whenDone(d.id)).state, 'done');
     assert.equal(t.core.approval.listPending().length, 0, 'nothing else asked');

@@ -7,7 +7,7 @@
 import { testDesk } from '../../test/helpers/desk.js';
 import fs from 'node:fs'; import path from 'node:path';
 
-const KEEPER_NO = 'Only the keeper of this PC can do that.';
+const KEEPER_NO = 'Only the Admin of this PC can do that.';
 const t = await testDesk({ modules: ['chat', 'network', 'files'] });
 const as = (token) => (p, o = {}) => t.call(p, { ...o, session: false, headers: token ? { 'x-apd-session': token } : {} });
 const out = [];

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>AP Desk on your phone</title>
+<link rel="stylesheet" href="/phone.css">
+<script type="module" src="/phone.js"></script>
+</head>
+<body>
+<main>
+  <header><h1>AP Desk</h1><p id="who" class="sub"></p></header>
+  <p class="note">This page uses plain http on your home network. Someone on the same Wi-Fi could read what it shows, so it never shows keys, passwords or PINs. It works while the desk is Offline: nothing here leaves your network.</p>
+  <section id="link" hidden>
+    <h2>Link this phone</h2>
+    <p class="sub">At the desk, open Settings, Approve from your phone, and press Make a code. Type the code here.</p>
+    <label>Code<input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7"></label>
+    <label>A name for this phone<input id="name" maxlength="40" autocomplete="off" placeholder="My phone"></label>
+    <button id="go" type="button">Link this phone</button>
+    <p id="linkmsg" class="msg" role="status"></p>
+  </section>
+  <section id="list" hidden>
+    <div class="row"><h2>Waiting for you</h2><button id="again" class="ghost" type="button">Check again</button></div>
+    <p id="listmsg" class="msg" role="status"></p>
+    <div id="items"></div>
+    <button id="unlink" class="ghost" type="button">Unlink this phone</button>
+  </section>
+</main>
+</body>
+</html>

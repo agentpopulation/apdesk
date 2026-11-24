@@ -35,7 +35,7 @@ export function allowedAddresses(ui) {
 
 export function renderComputer(el, ui, agent) {
   const { h, btn, pill, api, toast, fmt } = ui;
-  const id = agent?.id || 'operator'; const name = agent?.name || id;
+  const id = agent?.id || 'operator'; const name = agent ? ui.agentLine(agent).split(' · ')[0] : 'The agent';   // the own name, or the role when it has none
   const base = `/api/m/browser/${encodeURIComponent(id)}`;
   let st = { mode: 'idle', steps: [], open: false }; let frameNo = -1; let alive = true; let objUrl = null; let typed = ''; let typeTimer = null; let wasOpen = null;
 

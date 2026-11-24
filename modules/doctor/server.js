@@ -96,6 +96,8 @@ export async function activate(ctx) {
       C.portCheck({ port: ctx.port, usual, usualTaken: Number(ctx.port) === Number(usual) ? false : await portTaken(usual) }),
       C.switchesCheck({ online: on, halted, benchOn: ctx.modules.isOn('bench'), benchEnabled, networkOn: ctx.modules.isOn('network') }),
     ];
+    const proxy = C.proxyCheck({ env: process.env, failing: checks.find(c => c.id === 'internet')?.state === 'problem' });
+    if (proxy) checks.splice(3, 0, proxy);   // beside the internet check
     return { at: new Date().toISOString(), atText: when(new Date().toISOString()), problems: checks.filter(c => c.state === 'problem').length, checks, learned: learned() };
   }
 

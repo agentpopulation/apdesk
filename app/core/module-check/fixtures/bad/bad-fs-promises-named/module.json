@@ -1,0 +1,1 @@
+{"id": "bad-fs-promises-named", "number": 149, "name": "Fs promises named", "description": "A hostile test module for the checker: Imports the promises part of node:fs by name and writes outside its folders. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

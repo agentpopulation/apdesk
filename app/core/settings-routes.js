@@ -66,7 +66,7 @@ export function settingsRoutes(core, sessionOk) {
       for (let [k, v] of Object.entries(body && typeof body === 'object' ? body : {})) {
         if (OWNER_ONLY_PREFIX.some(p => k.startsWith(p))) continue;        // these have their own guarded routes
         if (!(PLAIN_KEYS.has(k) || /^provider\.[a-z]+\.model$/.test(k) || /^ui\.[\w.-]+$/.test(k))) return sendJson(res, { error: `"${String(k).slice(0, 40)}" is not a setting on this desk, so nothing was saved.` }, 400);
-        if (settings.isHouseKey?.(k)) return sendJson(res, { error: k === 'online' ? 'Online and offline are set for the whole desk, by the keeper.' : 'The local model addresses are set for the whole PC, on the keeper\'s own desk. Nothing was saved.' }, 403);
+        if (settings.isHouseKey?.(k)) return sendJson(res, { error: k === 'online' ? 'Online and offline are set for the whole desk, by the Admin.' : 'The local model addresses are set for the whole PC, on the Admin\'s own desk. Nothing was saved.' }, 403);
         if (k === 'business.about') v = String(v ?? '').trim().slice(0, 600);   // the owner's own words about his business, capped
         if (PLACE.has(k)) { const c = checkPlace(k, v); if (!c.ok) return sendJson(res, { error: c.reason }, 400); v = c.value; }
         take[k] = v;

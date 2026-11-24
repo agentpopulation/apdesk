@@ -306,3 +306,35 @@ test('console and log lines: the owner\'s zone with its short name, the computer
   assert.match(logStamp({ zone: 'Not/AZone', date: d }), /^\d\d:\d\d:\d\d \S+$/, 'a bad setting falls back to the computer\'s zone');
   assert.match(logStamp({ date: d }), /^\d\d:\d\d:\d\d \S+$/);
 });
+
+test('agents are named by role and own name everywhere the shell names one: tracker, footer, approvals, first start', async () => {
+  const { setAgentLine, agentsNow, jobWho, whoAsks, writingWords, trackWriting } = await import('../app/ui/tracker-data.js');
+  const { agentLine } = await import('../modules/agents/ui-roles.js');
+  const agents = [{ id: 'scout', name: 'Scout' }, { id: 'closer', name: 'Kent' }, { id: 'secretary', name: 'Secretary', meta: { roleId: 'secretary' } }];
+  setAgentLine(agentLine);
+  try {
+    assert.deepEqual(agentsNow(agents, []).map(a => a.name), ['Researcher', 'Kent · Sales expert', 'Secretary']);
+    assert.equal(jobWho(agents, { agentId: 'closer' }), 'Kent · Sales expert');
+    assert.equal(whoAsks(agents, { agentId: 'scout' }), 'Researcher asks');
+    const m = new Map(); const now = Date.now();
+    trackWriting(m, { type: 'message', chatId: 'c', message: { id: 1, chatId: 'c', role: 'assistant', agentId: 'closer', status: 'streaming' } }, now);
+    trackWriting(m, { type: 'message', chatId: 'c', message: { id: 2, chatId: 'c', role: 'assistant', agentId: 'scout', status: 'streaming' } }, now);
+    assert.equal(writingWords(agents, m, now), 'Kent · Sales expert and Researcher are writing…');
+    assert.equal(jobWho(agents, { agentId: 'gone' }), 'An agent');
+  } finally { setAgentLine(null); }
+  assert.equal(jobWho(agents, { agentId: 'scout' }), 'Scout', 'without the helper the stored name shows');
+  // first start speaks to a small business owner first, with roles to hire for customers, invoices and marketing
+  const { ROLES, hiresFor, chipsFor, customTag } = await import('../app/ui/pages/home.js');
+  assert.equal(Object.keys(ROLES)[0], 'business');
+  assert.deepEqual(hiresFor('business'), ['finance', 'marketing', 'customer-care']);
+  assert.deepEqual(hiresFor('student'), []);
+  const words = chipsFor('business').map(c => typeof c === 'string' ? c : c.text).join(' ');
+  for (const w of [/leads/, /invoice/, /customer/, /marketing/]) assert.match(words, w);
+  const { HIRE_ROLES } = await import('../modules/agents/ui-roles.js');
+  for (const id of hiresFor('business')) assert.ok(HIRE_ROLES.some(r => r.id === id), id);
+  assert.doesNotMatch(JSON.stringify(ROLES.business), /GST|₹|rupee|India/i, 'no one country in the first words');
+  // the quiet "Custom" tag: only when the module list says custom: true
+  const h = (tag, attrs, text) => ({ tag, attrs, text });
+  assert.equal(customTag(h, { custom: true }).text, 'Custom');
+  assert.equal(customTag(h, { custom: false }), null); assert.equal(customTag(h, {}), null); assert.equal(customTag(h, null), null);
+});

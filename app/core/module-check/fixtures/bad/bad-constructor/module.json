@@ -1,0 +1,1 @@
+{"id": "bad-constructor", "number": 102, "name": "Constructor", "description": "A hostile test module for the kit's checker, after the reviewer's h16-ctor. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

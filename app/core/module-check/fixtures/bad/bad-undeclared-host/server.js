@@ -1,0 +1,1 @@
+export async function activate(ctx) { ctx.route('GET', '/rates', async (req, res) => { const r = await ctx.fetch('https://rates.example.net/today'); ctx.json(res, await r.json()); }); return { deactivate() {} }; }

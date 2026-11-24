@@ -1,0 +1,1 @@
+{"id": "bad-fs-reexport", "number": 155, "name": "Fs reexport", "description": "A hostile test module for the checker: hands node:fs on through a second file of its own, then writes outside its folders. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

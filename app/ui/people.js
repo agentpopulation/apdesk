@@ -1,5 +1,5 @@
 // Several people on one PC, on screen (contracts/PEOPLE.md): the chooser (pick who you are, with a PIN), the switcher
-// (top-right avatar: switch person, lock the window, and for the keeper add a person and manage people), and the small
+// (top-right avatar: switch person, lock the window, and for the admin (the keeper in code) add a person and manage people), and the small
 // screen under Settings where each person sets their own name, emoji, colour, theme and PIN. The routes are the house's
 // own (/api/people...); this file only draws them. No emoji in the desk's own words: a person's emoji is their own data.
 import * as kit from '/ui/kit.js';
@@ -67,7 +67,7 @@ export async function showChooser(ui, { mode = 'enter' } = {}) {
   const screenList = () => {
     const grid = h('div', { class: 'people' }, list.map(p => h('button', { class: 'person', onclick: () => choose(p) },
       personAvatar(p, 'big'), h('b', { class: 'pn' }, p.name),
-      p.waiting ? h('span', { class: 'sub' }, p.waiting === 1 ? '1 waiting' : `${p.waiting} waiting`) : (p.keeper ? h('span', { class: 'sub' }, 'Keeper') : null))));
+      p.waiting ? h('span', { class: 'sub' }, p.waiting === 1 ? '1 waiting' : `${p.waiting} waiting`) : (p.keeper ? h('span', { class: 'sub' }, 'Admin') : null))));
     return [h('h2', null, mode === 'switch' ? 'Switch person' : 'Who is at this desk?'),
       h('p', { class: 'sub' }, mode === 'switch' ? 'Pick a person to switch this window to. Everyone else keeps working.' : 'Pick who you are to open your desk.'),
       grid,
@@ -167,7 +167,7 @@ export async function switcherMenu(ui) {
   const full = (label, onClick, kind = 'ghost') => btn(label, { kind: kind + ' wide', onClick });
   const others = list.filter(p => p.id !== me.id);
   const body = h('div', { class: 'stack', style: { gap: '12px' } },
-    h('div', { class: 'row' }, personAvatar(me, 'big'), h('div', null, h('b', null, me.name), h('span', { class: 'sub', style: { display: 'block' } }, me.keeper ? 'Keeper of this PC' : 'At this desk'))),
+    h('div', { class: 'row' }, personAvatar(me, 'big'), h('div', null, h('b', null, me.name), h('span', { class: 'sub', style: { display: 'block' } }, me.keeper ? 'Admin of this PC' : 'At this desk'))),
     spacesSection(ui, me),
     others.length ? h('div', { class: 'row', style: { gap: '6px' } }, others.map(p => h('span', { class: 'who-chip', title: p.name }, personAvatar(p), h('span', { class: 'sub' }, p.name)))) : null,
     h('div', { class: 'stack', style: { gap: '6px' } },
@@ -268,7 +268,7 @@ async function keeperPeopleCard(ui, me, list) {
   const rows = h('div');
   const paint = async () => {
     let people; try { people = (await api('people')).people; } catch { people = list; }
-    rows.replaceChildren(...people.map(p => line(p.name, p.keeper ? 'Keeper of this PC' : (p.hasPin ? 'Has a PIN' : 'No PIN yet'),
+    rows.replaceChildren(...people.map(p => line(p.name, p.keeper ? 'Admin of this PC' : (p.hasPin ? 'Has a PIN' : 'No PIN yet'),
       personAvatar(p),
       p.keeper ? null : btn('Reset PIN', { kind: 'ghost sm', onClick: () => resetPinModal(ui, p, paint) }),
       p.keeper ? null : btn('Remove', { kind: 'ghost sm', onClick: () => removeModal(ui, p, paint) }))));
@@ -284,7 +284,7 @@ async function keeperPeopleCard(ui, me, list) {
 /** Each keeper action asks the keeper's own PIN, with the plain wording the routes return. */
 function keeperPinModal(ui, { title, body: extra, confirm, confirmLabel, onDone }) {
   const pin = pinField('Your PIN'), err = h('p', { class: 'sub perr', role: 'status' });
-  const body = h('div', { class: 'stack', style: { gap: '10px' } }, extra, h('label', { class: 'f' }, 'Your keeper PIN', pin), err);
+  const body = h('div', { class: 'stack', style: { gap: '10px' } }, extra, h('label', { class: 'f' }, 'Your admin PIN', pin), err);
   const run = async () => {
     err.textContent = '';
     try { const r = await confirm(pin.value); onDone?.(r); return undefined; }

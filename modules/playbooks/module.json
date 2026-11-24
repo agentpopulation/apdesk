@@ -1,0 +1,17 @@
+{
+  "id": "playbooks",
+  "number": 39,
+  "name": "Playbooks",
+  "description": "One-click jobs for a small business: a weekly competitor watch, chasing unpaid invoices, a Monday pipeline review and more. Run one now or on a schedule; the agent whose work fits does it. Write your own and share them as a file.",
+  "kind": "switch-on",
+  "defaultOn": true,
+  "menu": [{ "id": "playbooks", "label": "Playbooks", "order": 120 }],
+  "pages": ["playbooks"],
+  "settings": [{ "id": "playbooks", "label": "Playbooks" }],
+  "agentTabs": [],
+  "tools": ["playbook_list", "playbook_run"],
+  "requires": [],
+  "npm": {},
+  "attribution": [],
+  "status": "partial"
+}

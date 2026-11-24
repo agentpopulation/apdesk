@@ -321,7 +321,7 @@ export async function statEntry(env, rootId, rel) {
   const agentId = meta.agent_id || hit.root.agentId || null;
   let children = null;
   if (kind === 'folder') { try { children = (await fs.readdir(hit.abs)).filter((n) => !hiddenEntry(hit.root, hit.parts, n)).length; } catch {} }
-  return { ...row, root: rootId, created: (st.birthtime || st.ctime).toISOString(), agentId, agentName: agentId ? agentNames(env).get(agentId) || agentId : null, chatId: meta.chat_id || null, starred: Boolean(meta.starred), children, location: crumbsFor(hit.root, hit.parts.slice(0, -1)).map((c) => c.label).join(' › ') };
+  return { ...row, root: rootId, created: (st.birthtime || st.ctime).toISOString(), agentId, agentName: agentId ? agentNames(env).get(agentId) || 'An agent' : null, chatId: meta.chat_id || null, starred: Boolean(meta.starred), children, location: crumbsFor(hit.root, hit.parts.slice(0, -1)).map((c) => c.label).join(' › ') };
 }
 
 export async function setEntryMeta(env, rootId, rel, patch = {}) {

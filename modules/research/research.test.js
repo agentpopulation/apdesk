@@ -100,9 +100,9 @@ test('numbers sanity: two totals, parts over the whole, shares over 100 (only va
 test('swarm merge keeps every sourced finding, whole URLs and a matching count', () => {
   const long = 'https://example.org/a/very/long/path/that/must/not/be/cut?id=12345&lang=en#section-7';
   const tiles = [
-    { agent: 'Scout 1', title: 'Makers', label: 'Model A', findings: [{ text: 'Alpha has made pumps since 1999.', url: long, title: 'Alpha' }, { text: 'Beta sells valves in 40 countries.', url: 'https://b.example/p', title: '' }] },
-    { agent: 'Scout 2', title: 'Prices', label: 'Model B', findings: [{ text: 'Alpha has made pumps since 1999.', url: long, title: 'Alpha' }, { text: 'A pump costs 300 euros.', url: 'https://c.example/x', title: 'C' }, { text: 'no source', url: '' }] },
-    { agent: 'Scout 3', title: 'Empty', label: 'Model B', findings: [] },
+    { agent: 'Researcher 1', title: 'Makers', label: 'Model A', findings: [{ text: 'Alpha has made pumps since 1999.', url: long, title: 'Alpha' }, { text: 'Beta sells valves in 40 countries.', url: 'https://b.example/p', title: '' }] },
+    { agent: 'Researcher 2', title: 'Prices', label: 'Model B', findings: [{ text: 'Alpha has made pumps since 1999.', url: long, title: 'Alpha' }, { text: 'A pump costs 300 euros.', url: 'https://c.example/x', title: 'C' }, { text: 'no source', url: '' }] },
+    { agent: 'Researcher 3', title: 'Empty', label: 'Model B', findings: [] },
   ];
   const m = mergeFindings(tiles, 'Overview [1].');
   assert.equal(m.count, 3); assert.equal(m.scouts, 2); assert.equal(m.dupes, 1);

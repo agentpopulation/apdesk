@@ -1,0 +1,1 @@
+{"id": "bad-timers-import", "number": 95, "name": "Timers import", "description": "A hostile test module for the kit's checker, after the reviewer's h07-timer. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

@@ -49,11 +49,13 @@ export async function activate(ctx) {
   }
   ctx.expose({ makeTable, makeDoc });
 
+  // A tool call writes only into the fixed folders (tables, reports): any folder an agent passes is ignored, so a tool
+  // call can never write into Knowledge or another folder. Direct callers inside the desk (makeTable, makeDoc) may pass dir.
   const whoOf = (call) => ({ agentId: call?.agentId || null, jobId: call?.jobId || null, chatId: call?.chatId || null, signal: call?.signal });
   const card = (r, note) => ({ kind: 'file', path: r.path, name: r.name, size: r.size, note });
   ctx.tool({
     name: 'table_file',
-    description: 'Save a table as an Excel (xlsx) or CSV file in the workspace. Give one row per item and one value per column; put units in the column name (e.g. "Weight (kg)") and numbers as plain numbers.',
+    description: 'Save a table as an Excel (xlsx) or CSV file in the workspace\'s tables folder, for the owner to open or send. Give one row per item and one value per column; put units in the column name (e.g. "Weight (kg)") and numbers as plain numbers. Not for the owner\'s customer records: contacts, companies and deals live in the desk\'s own CRM and are added with the crm tools, never kept in a file.',
     parameters: {
       type: 'object',
       properties: {
@@ -66,7 +68,7 @@ export async function activate(ctx) {
     },
     async run(args, call) {
       try {
-        const r = await makeTable(args, whoOf(call));
+        const r = await makeTable({ title: args?.title, columns: args?.columns, rows: args?.rows, format: args?.format }, whoOf(call));
         const c = card(r, `${r.rows} row${r.rows === 1 ? '' : 's'}, ${r.columns} column${r.columns === 1 ? '' : 's'}`); call?.emitCard?.(c);
         return { ok: true, path: r.path, name: r.name, rows: r.rows, cards: [c] };
       } catch (e) { return { ok: false, error: e.message }; }
@@ -74,14 +76,14 @@ export async function activate(ctx) {
   });
   ctx.tool({
     name: 'doc_file',
-    description: 'Save a document written in Markdown as Word (docx), PDF or Markdown in the workspace. Headings, lists, tables and links are kept.',
+    description: 'Save a document written in Markdown as Word (docx), PDF or Markdown in the workspace\'s reports folder. Headings, lists, tables and links are kept. Not for the owner\'s customer records: those live in the desk\'s own CRM (crm tools).',
     parameters: {
       type: 'object',
       properties: { title: { type: 'string' }, markdown: { type: 'string' }, format: { type: 'string', enum: ['docx', 'pdf', 'md'] } },
       required: ['title', 'markdown'],
     },
     async run(args, call) {
-      try { const r = await makeDoc(args, whoOf(call)); const c = card(r, 'Document'); call?.emitCard?.(c); return { ok: true, path: r.path, name: r.name, cards: [c] }; }
+      try { const r = await makeDoc({ title: args?.title, markdown: args?.markdown, format: args?.format }, whoOf(call)); const c = card(r, 'Document'); call?.emitCard?.(c); return { ok: true, path: r.path, name: r.name, cards: [c] }; }
       catch (e) { return { ok: false, error: e.message }; }
     },
   });

@@ -91,6 +91,7 @@ test('Check the doors: send to a person asks and is cancelled; the route needs t
 test('Settings notes match the door: installs always ask, and the window never covers them', async () => {
   const { NOTES } = await import('./policy.js');
   const note = (k) => NOTES.find(([name]) => name === k)?.[1] || '';
-  assert.match(note('Auto-approve window'), /sending to a person, installing anything and spending over a limit/);
+  const { WINDOW_NEVER } = await import('../../app/core/approval-door.js');
+  assert.ok(note('Auto-approve window').endsWith(WINDOW_NEVER), 'the note says what the door says a window never covers');
   assert.equal(note('Installing'), 'Always asks, at every level and inside an auto-approve window. The card says what will be installed and where it comes from.');
 });

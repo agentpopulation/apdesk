@@ -82,7 +82,7 @@ export async function runSwarm(ctx, job, { sid, task, agents, agentId, chatId, s
     } catch (e) { if (stopped(e, signal)) throw e; ctx.log('split failed', e.message); }
   }
   const models = await liveModels(ctx);
-  const tiles = parts.map((p, i) => ({ i, agent: `Scout ${i + 1}`, title: p.title, query: p.query, status: 'waiting', detail: 'Waiting for a free slot', progress: 0, pick: models.length > 1 ? models[i % models.length] : null }));
+  const tiles = parts.map((p, i) => ({ i, agent: `Researcher ${i + 1}`, title: p.title, query: p.query, status: 'waiting', detail: 'Waiting for a free slot', progress: 0, pick: models.length > 1 ? models[i % models.length] : null }));
   const emit = () => { save({ tiles }); ctx.events.emit('research', { kind: 'swarm', id: sid, tiles }); };
   const setTile = (t, patch) => { Object.assign(t, patch); emit(); const done = tiles.filter((x) => ['done', 'failed'].includes(x.status)).length; tick(0.08 + 0.77 * (done / tiles.length), `${done} of ${tiles.length} parts done, ${tiles.filter((x) => x.status === 'running').length} running`); };
   emit();

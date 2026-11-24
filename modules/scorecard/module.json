@@ -1,0 +1,17 @@
+{
+  "id": "scorecard",
+  "number": 40,
+  "name": "Scorecard",
+  "description": "A weekly record for each agent: work done, your ratings, cost and which model answered. It suggests a better model when an agent keeps scoring low, and changes nothing by itself.",
+  "kind": "switch-on",
+  "defaultOn": true,
+  "menu": [{ "id": "scorecard", "label": "Scorecard", "order": 121 }],
+  "pages": ["scorecard"],
+  "settings": [{ "id": "scorecard", "label": "Scorecard" }],
+  "agentTabs": ["scorecard"],
+  "tools": [],
+  "requires": [],
+  "npm": {},
+  "attribution": [],
+  "status": "partial"
+}

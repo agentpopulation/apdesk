@@ -6,7 +6,9 @@ import { testDesk } from '../../test/helpers/desk.js';
 import { recordLine } from './ui-text.js';
 
 const kvSet = (t, k, v) => t.core.storage.kvScope('m:chat').set(k, v);
-const whoIs = (b) => (String(b.messages?.[0]?.content || '').match(/^You are (\w+), an agent/) || [])[1] || null;
+const ROLE_KEY = { Researcher: 'Scout', 'Sales expert': 'Closer', 'Operations expert': 'Operator', Coder: 'Coder', Manager: 'Coordinator' };
+/** Which agent a prompt is for, keyed by its old id-like name: "You are the Researcher on the owner's team" is Scout. */
+const whoIs = (b) => { const s = String(b.messages?.[0]?.content || ''); const m = s.match(/^You are the (.+?) on the owner's team/); return m ? ROLE_KEY[m[1]] || m[1] : (s.match(/^You are ([\w-]+)(?:, an agent| on the owner's team)/) || [])[1] || null; };
 const isSummary = (b) => /You sum up a group chat turn/.test(String(b.messages?.[0]?.content || ''));
 const isPlan = (b) => /You plan how the desk answers/.test(String(b.messages?.[0]?.content || ''));
 const isChoice = (b) => /Reply with one word: GO or PASS/.test(String(b.messages?.[0]?.content || ''));
@@ -43,7 +45,7 @@ test('in a group every agent answers in its own reply, one passes in a quiet lin
     const replies = msgs.filter(m => m.role === 'assistant');
     const by = (id) => replies.filter(m => m.agentId === id);
     for (const id of ['scout', 'operator', 'coder']) { assert.equal(by(id).length, 1, id); assert.match(by(id)[0].text, /answer from my role/); assert.ok(by(id)[0].meta.groupOf); }
-    assert.equal(by('closer')[0].text, 'Closer had nothing to add'); assert.equal(by('closer')[0].meta.passed, true);
+    assert.equal(by('closer')[0].text, 'Sales expert had nothing to add'); assert.equal(by('closer')[0].meta.passed, true);
     const sum = replies.find(m => m.meta?.groupSummary);
     assert.equal(sum.agentId, 'coordinator'); assert.ok(sum.meta.groupSummary); assert.match(sum.text, /Next: start with the sheet/);
     assert.deepEqual(sum.meta.of, ['scout', 'operator', 'coder'], 'the line under it lists exactly the agents summed up');
@@ -56,7 +58,8 @@ test('in a group every agent answers in its own reply, one passes in a quiet lin
     assert.match(sys, /You chose to answer because your role adds something/); assert.match(sys, /reply with exactly PASS/); assert.match(sys, /do not repeat what belongs to another role/);
     // each agent first made its own short choice, told who else is in the group and that small talk is the Coordinator's
     const choice = t.fake.calls.find(b => whoIs(b) === 'Closer' && isChoice(b)).messages[0].content;
-    assert.match(choice, /Scout: /); assert.match(choice, /Coordinator: answers greetings and small talk itself/); assert.match(choice, /greeting, thanks or small talk is the Coordinator's to answer/);
+    assert.match(choice, /Researcher: /); assert.match(choice, /Manager: answers greetings and small talk itself/); assert.match(choice, /greeting, thanks or small talk is the Manager's to answer/);
+    assert.doesNotMatch(choice.replace(/^You are [^\n]*/, ''), /\b(?:Scout|Closer|Coordinator)\b/, 'the desk\'s own lines name roles only');
     // naming an agent does not decide who answers: everyone still does
     await t.call('/api/m/chat/chats/everyone/send', { body: { text: '@Closer what do you think?' } });
     const msgs2 = await settle(t, 'everyone');
@@ -89,7 +92,7 @@ test('the overall time limit: an agent not done shows "did not answer in time" a
     await t.call('/api/m/chat/chats/everyone/send', { body: { text: 'Hello' } });
     const msgs = await settle(t, 'everyone');
     const op = msgs.find(m => m.agentId === 'operator');
-    assert.equal(op.text, 'Operator did not answer in time.'); assert.equal(op.meta.late, true);
+    assert.equal(op.text, 'Operations expert did not answer in time.'); assert.equal(op.meta.late, true);
     assert.ok(msgs.some(m => m.meta?.groupSummary), 'the summary still came');
   } finally { await t.close(); }
 });
@@ -121,7 +124,7 @@ test('a research ask in a group is run once, by the research agent; the others r
     assert.ok(scout.meta.research, 'Scout ran the research turn'); assert.ok(scout.meta.steps.some(s => s.tool === 'web_read'));
     assert.ok(!msgs.some(m => m.agentId !== 'scout' && m.meta?.research), 'run once');
     const coderSys = t.fake.calls.find(b => whoIs(b) === 'Coder' && !isChoice(b)).messages[0].content;
-    assert.match(coderSys, /Scout researched this ask for the group/);
+    assert.match(coderSys, /Researcher researched this ask for the group/);
     assert.equal(msgs.filter(m => m.meta?.passed).length, 2);
     assert.ok(msgs.some(m => m.meta?.groupSummary), 'Scout and Coder answered: a summary');
   } finally { await t.close(); }
@@ -181,7 +184,7 @@ test('only the agents that go write; the others are one quiet line; an agent is 
     await t.call('/api/m/chat/chats/everyone/send', { body: { text: 'What should a small bakery do this week to get three new office customers?' } });
     const msgs = await settle(t, 'everyone');
     assert.deepEqual(msgs.filter(m => m.role === 'assistant' && m.meta?.groupOf).map(m => m.agentId).sort(), ['closer', 'coder']);
-    const line = msgs.find(m => m.role === 'system' && m.meta?.passedOf); assert.equal(line.text, 'Nothing to add from Scout and Operator');
+    const line = msgs.find(m => m.role === 'system' && m.meta?.passedOf); assert.equal(line.text, 'Nothing to add from Researcher and Operations expert');
     const coder = t.fake.calls.find(b => whoIs(b) === 'Coder' && !isChoice(b));
     assert.deepEqual((coder.tools || []).map(x => x.function.name), ['file_list'], 'the Coder is not offered a web search');
     assert.match(coder.messages[0].content, /your tools are only these: file_list\. No other tool exists here/);
@@ -204,15 +207,15 @@ test('a call to a tool the turn does not offer is not a step and is not shown as
 });
 
 test('a summary that names someone wrongly is written once more, then replaced by a plain list of who said what', async () => {
-  const { t, seen } = await groupDesk({ Scout: 'Visit ten offices with samples. Then call.', Closer: 'Send a sample box to each office manager.' }, { go: { Operator: 'PASS', Coder: 'PASS' }, summary: () => 'All three agree. Operator: visit offices. Next: start.' });
+  const { t, seen } = await groupDesk({ Scout: 'Visit ten offices with samples. Then call.', Closer: 'Send a sample box to each office manager.' }, { go: { Operator: 'PASS', Coder: 'PASS' }, summary: () => 'All three agree. Operations expert: visit offices. Next: start.' });
   try {
     await t.call('/api/m/chat/chats/everyone/send', { body: { text: 'How do I get three office customers?' } });
     const msgs = await settle(t, 'everyone');
     assert.equal(seen.filter(x => x === 'summary').length, 2, 'rewritten once');
-    const fix = t.fake.calls.filter(isSummary)[1].messages[1].content; assert.match(fix, /Your last summary was wrong: it names Operator, who did not answer/);
+    const fix = t.fake.calls.filter(isSummary)[1].messages[1].content; assert.match(fix, /Your last summary was wrong: it names Operations expert, who did not answer/);
     const sum = msgs.find(m => m.meta?.groupSummary);
-    assert.equal(sum.text, 'Scout: Visit ten offices with samples.\nCloser: Send a sample box to each office manager.'); assert.equal(sum.meta.plainList, true);
-    const sys = t.fake.calls.find(isSummary).messages[0].content; assert.match(sys, /Exactly these agents answered: Scout and Closer; Operator and Coder did not answer/);
+    assert.equal(sum.text, 'Researcher: Visit ten offices with samples.\nSales expert: Send a sample box to each office manager.'); assert.equal(sum.meta.plainList, true);
+    const sys = t.fake.calls.find(isSummary).messages[0].content; assert.match(sys, /Exactly these agents answered: Researcher and Sales expert; Operations expert and Coder did not answer/);
   } finally { await t.close(); }
 });
 
@@ -224,8 +227,8 @@ test('"Still writing" names only the agents writing now, not those still waiting
     t.core.events.on((type, d) => { if (type === 'chat' && d.type === 'message' && d.message?.meta?.groupLine) lines.push(d.message.text); });
     await t.call('/api/m/chat/chats/everyone/send', { body: { text: 'How do I get office customers?' } });
     await settle(t, 'everyone');
-    assert.ok(lines.includes('Still writing: Scout') && lines.includes('Still writing: Closer'), JSON.stringify(lines));
-    assert.ok(!lines.some(l => /Scout, Closer|Closer, Scout/.test(l)), JSON.stringify(lines));
+    assert.ok(lines.includes('Still writing: Researcher') && lines.includes('Still writing: Sales expert'), JSON.stringify(lines));
+    assert.ok(!lines.some(l => /Researcher, Sales expert|Sales expert, Researcher/.test(l)), JSON.stringify(lines));
   } finally { await t.close(); }
 });
 
@@ -234,10 +237,10 @@ test('a new group of the owner\'s choice: the Coordinator stays in it (it sums u
   try {
     const c = (await t.call('/api/m/chat/chats', { body: { title: 'New chat', members: ['coordinator'] } })).json;
     let r = await t.call(`/api/m/chat/chats/${c.id}/members`, { method: 'PUT', body: { members: ['scout', 'closer'] } });
-    assert.deepEqual(r.json.members, ['coordinator', 'scout', 'closer']); assert.equal(r.json.title, 'Scout and Closer'); assert.equal(r.json.kind, 'group');
-    const line = (await t.call(`/api/m/chat/chats/${c.id}/messages`)).json.messages.at(-1); assert.equal(line.text, 'Now in this chat: Coordinator, Scout, Closer. The conversation above stays.');
+    assert.deepEqual(r.json.members, ['coordinator', 'scout', 'closer']); assert.equal(r.json.title, 'Researcher and Sales expert'); assert.equal(r.json.kind, 'group');
+    const line = (await t.call(`/api/m/chat/chats/${c.id}/messages`)).json.messages.at(-1); assert.equal(line.text, 'Now in this chat: Manager, Researcher, Sales expert. The conversation above stays.');
     r = await t.call(`/api/m/chat/chats/${c.id}/members`, { method: 'PUT', body: { members: ['scout', 'closer', 'coder'] } });
-    assert.equal(r.json.title, 'Scout, Closer and Coder');
+    assert.equal(r.json.title, 'Researcher, Sales expert and Coder');
     await t.call(`/api/m/chat/chats/${c.id}`, { method: 'PATCH', body: { title: 'Bakery team' } });
     r = await t.call(`/api/m/chat/chats/${c.id}/members`, { method: 'PUT', body: { members: ['scout'] } });
     assert.equal(r.json.title, 'Bakery team', 'the owner\'s own name stays');

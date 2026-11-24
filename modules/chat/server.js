@@ -2,9 +2,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { makeStore, SEED_GROUPS, EVERYONE, EVERYONE_LINE } from './store.js';
-import { makeCoordinator, cardKey, RESEARCH_JOBS, deliverableFor, NOT_NOW } from './coordinator.js';
+import { makeCoordinator, cardKey, RESEARCH_JOBS, deliverableFor, NOT_NOW, costOfCalls } from './coordinator.js';
 import { aboutOf, clipAbout, ABOUT_KEY, ASK_ABOUT, ASK_ABOUT_SITE, savedLine, siteAddressOf, siteProposal } from './business.js';
 import { dropFileClaims, previewText, cutAtWord, bareStart, BARE_LINES, NEXT_LINE } from './ui-text.js';
+import { commandsOf, commandIn, commandReply } from './ui-commands.js';
+import { who as whoOf } from './ui-names.js';
 
 const TEXT_EXT = /\.(txt|md|markdown|csv|tsv|json|js|mjs|ts|py|html?|css|xml|ya?ml|ini|log|sql|sh|bat|ps1|rtf)$/i;
 
@@ -48,6 +50,11 @@ export async function activate(ctx) {
     return c;
   };
   const co = makeCoordinator(ctx, store, bus);
+  /** How an agent is shown: by role, with the owner's own name when set (ui-names.js; the agents module's helper when on). */
+  const names = () => whoOf((id) => ctx.agents.get(id), ctx.modules.api('agents'));
+  const nameOf = (id) => names().line(id);
+  /** A short name for a group's title: the own name, else the role. */
+  const shortOf = (id) => { const p = names().parts(id); return p.name || p.role || p.line; };
   // Panic drops every wait for the owner's business text, as it stops everything else
   ctx.panic.onStop(() => { for (const c of store.list()) if (c.settings.awaitBusiness) store.setSettings(c.id, { awaitBusiness: null }); });
   const speakerOf = (c, forced) => forced && ctx.agents.get(forced) ? forced : co.speakerFor(c, '');
@@ -200,18 +207,60 @@ export async function activate(ctx) {
     let n = store.setMembers(c.id, members);
     // a new group is named from its members until the owner renames it; it never takes another room's name
     if (!everyone && !c.seeded && n.members.length > 1 && (c.title === 'New chat' || c.settings.named === 'members')) {
-      const who = n.members.filter(id => id !== 'coordinator').map(id => ctx.agents.get(id)?.name).filter(Boolean);
+      const who = n.members.filter(id => id !== 'coordinator' && ctx.agents.get(id)).map(shortOf);
       if (who.length) { store.rename(c.id, who.length > 1 ? who.slice(0, -1).join(', ') + ' and ' + who.at(-1) : who[0]); n = store.setSettings(c.id, { named: 'members' }); }
     }
-    const names = n.members.map(id => ctx.agents.get(id)?.name).filter(Boolean);
-    const m = store.add(c.id, { role: 'system', text: `Now in this chat: ${names.join(', ')}. The conversation above stays.` });
+    const shown = n.members.filter(id => ctx.agents.get(id)).map(nameOf);
+    const m = store.add(c.id, { role: 'system', text: `Now in this chat: ${shown.join(', ')}. The conversation above stays.` });
     bus.emitMessage(m); emit({ type: 'chats' }); ctx.json(res, n);
   });
+  // ---------- commands from modules: a module's manifest names them, its door answers them (ui-commands.js). Only modules that
+  // are on and answer command() offer theirs; a name two modules declare goes to the first in the module order.
+  const manifestCommands = new Map();   // module id -> its manifest's commands, read once (the module list may not carry them)
+  const commandsOfModule = (m) => {
+    if (Array.isArray(m.commands)) return commandsOf(m);
+    if (!manifestCommands.has(m.id)) { let list = []; try { list = commandsOf(JSON.parse(fs.readFileSync(path.join(ctx.dir, '..', m.id, 'module.json'), 'utf8'))); } catch {} manifestCommands.set(m.id, list); }
+    return manifestCommands.get(m.id);
+  };
+  function commandList() {
+    const out = [];
+    for (const m of ctx.modules.list()) {
+      if (!m.on || m.id === 'chat' || typeof ctx.modules.api(m.id)?.command !== 'function') continue;
+      for (const c of commandsOfModule(m)) if (!out.some(x => x.name === c.name)) out.push({ ...c, module: m.id, moduleName: m.name });
+    }
+    return out;
+  }
+  ctx.route('GET', '/commands', (req, res) => ctx.json(res, { commands: commandList().map(({ name, hint }) => ({ name, hint })) }));
+  /** One command: the owner's line is stored, the module's answer is the reply. No model sees it. Stop and Panic end the wait. */
+  function runCommand(c, cmd, typed, agentId) {
+    const um = store.add(c.id, { role: 'user', text: typed, meta: { command: cmd.name } }); bus.emitMessage(um);
+    if (c.title === 'New chat') store.rename(c.id, cutAtWord(typed, 48));
+    let reply = store.add(c.id, { role: 'assistant', agentId, text: '', status: 'streaming', meta: { command: cmd.name, moduleName: cmd.moduleName || null, posted: true } }); bus.emitMessage(reply);
+    const ac = new AbortController(); const signal = ctx.panic.child(ac.signal);
+    co.running.set(c.id, { ac, replyId: reply.id }); emit({ type: 'running', chatId: c.id, on: true });
+    (async () => {
+      let patch;
+      try {
+        const out = commandReply(await ctx.modules.api(cmd.module).command(cmd.name, { text: cmd.text, chatId: c.id, agentId, signal }));
+        patch = out ? { text: out.text, cards: out.cards, status: 'done' } : { text: `The ${cmd.moduleName || 'module'} module gave nothing back for /${cmd.name}.`, status: 'error' };
+      } catch (e) {
+        ctx.log('command failed', cmd.name, e?.message || e);
+        patch = { text: signal.aborted ? 'Stopped.' : `/${cmd.name} did not work: ${ctx.plainFailure(e).line}`, status: signal.aborted ? 'stopped' : 'error' };
+      } finally { signal.release?.(); }
+      if (store.message(reply.id)?.status === 'streaming') { reply = store.update(reply.id, patch); bus.emitMessage(reply); }
+      if (co.running.get(c.id)?.ac === ac) { co.running.delete(c.id); emit({ type: 'running', chatId: c.id, on: false }); }
+      store.touch(c.id, reply.text || typed); emit({ type: 'chats' });
+    })();
+    return reply;
+  }
   ctx.route('POST', '/chats/:id/send', async (req, res, { params, body, owner }) => {
     const c = resolveChat(params.id); if (!c) return ctx.json(res, { error: 'That chat is gone.' }, 404);
     const text = String(body?.text || '').trim(); if (!text) return ctx.json(res, { error: 'Type a message first.' }, 400);
     if (co.running.has(c.id)) return ctx.json(res, { error: 'A reply is still coming in this chat. Stop it first.' }, 409);
     if (ctx.panic.halted) return ctx.json(res, { error: 'Everything is stopped. Press Resume first.', code: 'halted' }, 503);
+    // a module's command is handed to that module, never sent to a model as text
+    const cmd = text.startsWith('/') ? commandIn(text, commandList()) : null;
+    if (cmd) { const r = runCommand(c, cmd, text, speakerOf(c, body?.agentId)); return ctx.json(res, { ok: true, chatId: c.id, replyId: r.id, command: cmd.name }); }
     const bare = bareStart(text); if (bare) return ctx.json(res, { error: BARE_LINES[bare], code: 'empty_ask' }, 400);   // a side-panel prefix alone asks for nothing
     const first = !deskStarted();
     const chip = body?.chip === true;
@@ -286,7 +335,7 @@ export async function activate(ctx) {
     if (!ctx.modules.tools().some(t => t.name === tool)) return ctx.json(res, { error: 'That action is not available now. Its module may be off.' }, 404);
     const agentId = c.members.length === 1 ? c.members[0] : co.handoffFor(tool);
     // the agent's own switches on the Agents page hold for a card's button too: a tool switched off for it does not run as it
-    if (!co.toolsFor(agentId).some(t => t.name === tool)) { const n = ctx.agents.get(agentId)?.name || 'This agent'; return ctx.json(res, { error: `${n} may not use this tool. Switch it on in Agents › ${n} › Tools it may use.`, code: 'tool_off' }, 403); }
+    if (!co.toolsFor(agentId).some(t => t.name === tool)) { const n = ctx.agents.get(agentId) ? nameOf(agentId) : 'This agent'; return ctx.json(res, { error: `${n} may not use this tool. Switch it on in Agents › ${n} › Tools it may use.`, code: 'tool_off' }, 403); }
     const label = String(body?.label || '').slice(0, 80);
     const um = store.add(c.id, { role: 'user', text: label || 'Run this', meta: { action: tool } }); bus.emitMessage(um);
     const reply = store.add(c.id, { role: 'assistant', agentId, text: '', status: 'streaming', meta: { steps: [{ tool, agentId, status: 'running' }] } }); bus.emitMessage(reply);
@@ -367,10 +416,13 @@ export async function activate(ctx) {
   // ---------- what other modules call (the inter-module API)
   ctx.expose({
     postCard: (chatId, card) => bus.postCard(chatId, card),
-    postMessage(chatId, { agentId = 'coordinator', text = '', cards = [], label = null } = {}) {
+    /** welcome: this is a newly hired agent's hello note; an agent with no own name gets a "Give me a name" button under it. */
+    postMessage(chatId, { agentId = 'coordinator', text = '', cards = [], label = null, welcome = false } = {}) {
       const c = resolveChat(chatId); if (!c) return null;
+      const list = (cards || []).filter(x => x && typeof x === 'object');
+      if (welcome && ctx.agents.get(agentId) && !names().parts(agentId).name) list.push({ kind: 'actions', actions: [{ label: 'Give me a name', nameAgent: agentId }] });
       // posted: a note a module wrote (a new agent's welcome, a job's line), not a model's answer: it gets no rating controls
-      const m = store.add(c.id, { role: 'assistant', agentId, text: String(text || ''), cards: (cards || []).filter(x => x && typeof x === 'object'), label, meta: { posted: true } });
+      const m = store.add(c.id, { role: 'assistant', agentId, text: String(text || ''), cards: list, label, meta: { posted: true, ...(welcome ? { welcome: true } : {}) } });
       store.touch(c.id, text || cards?.[0]?.title || ''); bus.emitMessage(m); emit({ type: 'chats' });
       return { chatId: c.id, messageId: m.id };
     },
@@ -378,17 +430,26 @@ export async function activate(ctx) {
     messagesSince: (since, limit = 2000) => ctx.db.all('SELECT * FROM m_chat_messages WHERE at >= ? ORDER BY id LIMIT ?', String(since || ''), Math.min(5000, Number(limit) || 2000)).map(r => store.message(r.id)),
     /** The owner's answer ratings since a time, oldest first (thumb, research, reasons, comment, ratedAt). Read-only. */
     ratingsSince,
-    createChat({ title, members } = {}) { const c = store.create({ title, members }); emit({ type: 'chats' }); return c; },
+    /** createChat({ title, members, plain }): plain true draws every message of that chat as plain text only (no links,
+     *  pictures or markup); it is set once here and cannot be changed later. */
+    createChat({ title, members, plain = false } = {}) { let c = store.create({ title, members }); if (plain === true) c = store.setSettings(c.id, { plain: true }); emit({ type: 'chats' }); return c; },
     // what Home shows under "Pick up where you left off": plain words (a value stored before the preview was cleaned is cleaned here)
-    recent(n = 6) { return store.list().filter(c => c.last).slice(0, n).map(c => ({ id: c.id, title: c.title || ctx.agents.get(c.members[0])?.name || 'Chat', last: cutAtWord(previewText(c.last), 140), updated: c.updated })); },
-    /** A full Coordinator turn, for schedules and channels. */
-    async ask({ chatId, agentId, text, signal, jobId, quiet = false, note = null } = {}) {
+    recent(n = 6) { return store.list().filter(c => c.last).slice(0, n).map(c => ({ id: c.id, title: c.title || (c.members.length === 1 ? nameOf(c.members[0]) : 'Chat'), last: cutAtWord(previewText(c.last), 140), updated: c.updated })); },
+    /** What ask() takes beyond its first options: 'tools' (a list of tool names for that one turn). */
+    askTakes: ['tools'],
+    /** What this Chat offers other modules: ask() with a tool list, ask() giving back its cost, commands from manifests. */
+    supports: ['ask.tools', 'ask.cost', 'commands', 'chat.plain'],
+    /** What these model calls (call log ids, as ask() gives them back) cost: { minor, currency, known }. */
+    costOf: (ids) => costOfCalls(ctx, ids),
+    /** A full Coordinator turn, for schedules, channels and modules. tools: only these tool names are offered and run in it.
+     *  Gives back, besides the reply, cost { minor, currency, known } and callIds (the call log rows of its model calls). */
+    async ask({ chatId, agentId, text, signal, jobId, quiet = false, note = null, tools = null } = {}) {
       const c = chatId ? resolveChat(chatId) : agentId ? store.direct(agentId) : store.chat('everyone');
       if (!c) throw new Error('That chat is gone.');
       // a job asking in a chat whose own reply is still finishing (it started that job) waits for it, up to two minutes
       if (co.running.has(c.id) && (jobId || signal)) { const t0 = Date.now(); while (co.running.has(c.id) && Date.now() - t0 < 120000 && !signal?.aborted) await new Promise(r => setTimeout(r, 250)); }
       const inJob = !!(jobId || signal);
-      let m = await co.turn(c.id, String(text || ''), { speaker: agentId, signal, jobId, quiet: !!quiet, note: note ? String(note).slice(0, 120) : null, inJob });
+      let m = await co.turn(c.id, String(text || ''), { speaker: agentId, signal, jobId, quiet: !!quiet, note: note ? String(note).slice(0, 120) : null, inJob, allowTools: Array.isArray(tools) ? tools : null });
       // A job's turn that started research is not over until the research is: it waits here (the chat stays free), and the
       // research that did not finish makes the turn unfinished.
       const started = inJob ? (m.meta?.steps || []).filter(st => st.status === 'done' && RESEARCH_JOBS.test(st.tool) && st.result?.jobId).map(st => st.result.jobId) : [];
@@ -399,7 +460,8 @@ export async function activate(ctx) {
         const bad = started.map(id => ctx.jobs.get(id)).find(j => j && j.status !== 'done');
         if (bad && !signal?.aborted) m = store.update(m.id, { meta: { ...m.meta, unfinished: `The research did not finish${bad.status === 'failed' && bad.error ? ': ' + String(bad.error).replace(/\s+/g, ' ').trim().slice(0, 200) : ` (${bad.status === 'failed' ? 'it failed' : 'it was stopped'})`}` } });
       }
-      return { chatId: c.id, messageId: m.id, text: m.text, label: m.label, cards: m.cards, status: m.status, posted: true, unfinished: m.meta?.unfinished || null };
+      const callIds = Array.isArray(m.meta?.calls) ? m.meta.calls : [];
+      return { chatId: c.id, messageId: m.id, text: m.text, label: m.label, cards: m.cards, status: m.status, posted: true, unfinished: m.meta?.unfinished || null, cost: costOfCalls(ctx, callIds), callIds };
     },
     /** One chat's own options ({ remember, ... }), for Memory; null when there is no such chat. */
     settings: (chatId) => store.chat(chatId)?.settings ?? null,

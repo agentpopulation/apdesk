@@ -1,0 +1,1 @@
+{ "id": "run-env", "number": 112, "name": "Run env", "description": "A test module whose own test reports what the locked-down test run can see. Never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "stub" }

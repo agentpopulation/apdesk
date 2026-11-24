@@ -13,7 +13,7 @@ What one space holds, no other space can see. What the house holds, every space 
 |---|---|
 | the loopback HTTP server, its port, the Host and cross-site checks | `app/server.js` |
 | browser pairing (the cookie, the six-digit code) and the windows' tokens | `app/server.js` |
-| the people of this PC: names and looks, PIN hashes, wrong tries and waits, the keeper | `app/core/people.js`, in `data/desk.sqlite` |
+| the people of this PC: names and looks, PIN hashes, wrong tries and waits, the admin | `app/core/people.js`, in `data/desk.sqlite` |
 | Panic: one stop stops every space; Resume resumes every space | `app/core/panic.js` (one `Panic`; each space sees it through `panic.scope()`) |
 | Online and Offline, and the offline guard on `globalThis.fetch` | `app/core/offline.js`, `settings.online` (see "Kept by the house") |
 | downloads and the local model engine (llama-server and its model) | `app/core/downloads.js`, `modules/models/local-engine.js`, made in `downloads-routes.js` |
@@ -47,8 +47,10 @@ one desk did before. A listener on a process-wide emitter runs in the space of w
 
 While Offline, a call is judged by the allow list of the space that made it: the desk itself, the local engine, and the
 Ollama address and LAN model nodes. Those two (`ollama.baseUrl`, `network.lanNodes`) are kept by the house, like
-`online`: every space reads the keeper's, and only the keeper's desk can change them. Only loopback, private or
-link-local addresses and plain local names count as local (offline.js `isLocalAddress`). A closed space may call nothing.
+`online`: every space reads the admin's, and only the admin's desk can change them. Only these count as local
+(offline.js `isLocalAddress`, words in `LOCAL_WORDS`): loopback, private addresses (including 100.64/10, used by mesh
+VPNs), link-local, IPv4 written as IPv6, plain one-word names, and names ending in .local, .lan, .home, .home.arpa,
+.internal, .localdomain, .ts.net or .fritz.box. A closed space may call nothing.
 
 Closing a space alone (`space.close()`) aborts every signal it was handed (`panic.signal`, `panic.child()`), so its
 fetches, model calls and waiting approvals stop with it, then runs its own stop hooks and closes its file.
@@ -62,11 +64,11 @@ A space other than the main one reads these settings from the house and cannot w
 ## People, PINs and windows
 
 The house keeps the people of this PC in `data/desk.sqlite` (`app/core/people.js`): each person's name, emoji and colour,
-the PIN hash and salt, the wrong tries and the wait, who the keeper is, and a version.
+the PIN hash and salt, the wrong tries and the wait, who the admin is, and a version.
 
 - **Person 1** is made from the existing desk at the first start after this change, with no PIN. Person 1 is the
-  **keeper of this PC**, and their space is the data folder exactly as it was (the main space).
-- **A new person** gets an empty space in `data/people/<id>/work/` when the keeper adds them. Every person's space opens
+  **admin of this PC** (the field `keeper` in code), and their space is the data folder exactly as it was (the main space).
+- **A new person** gets an empty space in `data/people/<id>/work/` when the admin adds them. Every person's space opens
   when the desk starts, so their jobs, schedules and Bench run while someone else is at the desk.
 - **One person and no PIN** ("open"): the desk behaves as before. The page gets its token, a read without a token
   answers from person 1's space, and a change needs the token.
@@ -75,20 +77,20 @@ the PIN hash and salt, the wrong tries and the wait, who the keeper is, and a ve
 
 | route | who | what |
 |---|---|---|
-| `GET /api/people` | any paired browser | names, emoji, colour, keeper, whether a PIN is set, and a count of what waits for each person (never titles); `you` |
+| `GET /api/people` | any paired browser | names, emoji, colour, `keeper` (the admin), whether a PIN is set, and a count of what waits for each person (never titles); `you` |
 | `POST /api/people/enter` `{ id, pin }` | any paired browser | a token for this window, and a notice: wrong tries since the last entry, who reset the PIN and when |
 | `POST /api/people/leave` | the window | the token stops working and its event stream ends |
 | `POST /api/people/switch` `{ id, pin }` | the window | a token for the other person; the old token stops working |
 | `GET /api/people/me` | the window | the person and their theme |
 | `POST /api/people/me/pin` `{ current, pin }` | the window | set or change one's own PIN (the old one is asked) |
 | `POST /api/people/me/look` `{ name, emoji, colour, theme }` | the window | only these four keys; a body with any other key is refused and nothing changes |
-| `POST /api/people` `{ name, emoji, colour, pin }` | the keeper (with a PIN set) | add a person |
-| `POST /api/people/:id/remove` `{ pin }` | the keeper, with the keeper's PIN | the person's windows end and their space closes; the folder is not deleted, the answer says where it is |
-| `POST /api/people/:id/reset-pin` `{ pin, newPin }` | the keeper, with the keeper's PIN | the person is told who reset it and when, on their next entry |
+| `POST /api/people` `{ name, emoji, colour, pin }` | the admin (with a PIN set) | add a person |
+| `POST /api/people/:id/remove` `{ pin }` | the admin, with the admin's PIN | the person's windows end and their space closes; the folder is not deleted, the answer says where it is |
+| `POST /api/people/:id/reset-pin` `{ pin, newPin }` | the admin, with the admin's PIN | the person is told who reset it and when, on their next entry |
 
 Every core route and every module route answers from the space of the token's person. Each window's event stream (the
 token goes in the address, `/api/events?session=`) carries only that person's events. Panic stops everyone; any person
-who has entered may Resume. The router endpoint for other programs is served from the keeper's space. The paired-browser
+who has entered may Resume. The router endpoint for other programs is served from the admin's space. The paired-browser
 cookie means only "this browser may show the chooser".
 
 **The PIN.** scrypt (N=2^15, r=8, p=1), a 16-byte salt, compared with `timingSafeEqual`; 4 to 12 digits. After 5 wrong
@@ -97,23 +99,23 @@ only ever refuses a *wrong* PIN: the right PIN is checked and enters even while 
 the wait is already running does not push it out further. So one person cannot lock another out — `POST /api/people/enter`
 takes no token, so anyone could send wrong PINs for anyone, but the person who knows their PIN is never kept out by it.
 Tries for one person are checked one after another. Each wrong try that was checked goes in that person's activity log.
-Forgot the keeper's PIN: `node setup/reset-pin.mjs` at the PC, with the desk stopped, clears it and writes that to the
-keeper's activity log.
+Forgot the admin's PIN: `node setup/reset-pin.mjs` at the PC, with the desk stopped, clears it and writes that to the
+admin's activity log.
 
 **The PIN encrypts nothing.** It keeps people at this desk apart. Anyone who can open the files on this PC can read every
 person's chats and keys, and code that runs on this PC as the same user can too — the Files guard below is a convenience
 for the people sharing one login, not a wall against another OS user. For real separation, use a separate Windows account
 for each person and disk encryption. The Files module keeps the whole data folder closed in every space except that
-person's own workspace, and also keeps the keeper's backups folder (which lives outside the data folder) closed to
-everyone but the keeper; the keeper is told this plainly when they add a person.
+person's own workspace, and also keeps the admin's backups folder (which lives outside the data folder) closed to
+everyone but the admin; the admin is told this plainly when they add a person.
 
-**The keeper's gates.** Only the keeper may install updates (every `/api/update` change), switch modules on or off,
+**The admin's gates.** Only the admin may install updates (every `/api/update` change), switch modules on or off,
 switch the desk Online or Offline, start the local engine and model downloads (`/api/local-engine`, `/api/downloads`
 pause, resume and cancel, the Models module's Ollama download and delete), add or remove people and reset PINs, show the
 six-digit code that pairs another browser (`/api/security/pair-code`, which admits new browsers to the whole PC), and
 switch paid OpenRouter models on (`/api/settings/paid-models`; the OpenRouter key is read from the PC's environment and
-shared by every space, so a non-keeper must not be able to spend it — spend limits stay each person's own). Anyone else
-gets 403: "Only the keeper of this PC can do that." Which modules are on is the house's choice for everyone: a switch
+shared by every space, so a non-admin must not be able to spend it — spend limits stay each person's own). Anyone else
+gets 403: "Only the admin of this PC can do that." (server wording, to become "Only the admin of this PC can do that.") Which modules are on is the house's choice for everyone: a switch
 holds for every person's space, and a space other than the main one reads it from the house.
 
 ## The folder layout
@@ -133,7 +135,7 @@ When people come (later parts):
 
 ```
 data/
-  desk.sqlite              people, PIN hashes and tries, the keeper, paired browsers, update and online settings, downloads, module on/off
+  desk.sqlite              people, PIN hashes and tries, the admin, paired browsers, update and online settings, downloads, module on/off
   shared/                  the local engine and its models
   people/<id>/work/        a space: apd.sqlite  workspace/  profiles/  bin/
   people/<id>/personal/    another space of the same person
@@ -160,7 +162,7 @@ so switching between them needs no new PIN (`POST /api/people/me/space { space }
 person with only Work sees no choice and behaves exactly as today. Each person's spaces open at desk start.
 
 - **Keys** are each space's own in this version. The full move to a shared `data/people/<id>/keys.sqlite` was deferred: it
-  would rework `modules/backup/archive.js`, whose per-space backup/restore is a keeper gate (`DELETE FROM secrets`, the
+  would rework `modules/backup/archive.js`, whose per-space backup/restore is an admin gate (`DELETE FROM secrets`, the
   trusted-restore checks and `13_backup_foreign_restore`), and a half-moved keys store risks either losing keys or leaking
   them. So a person adds their keys in each space they use. A person's keys are still never seen by another person or by
   Incognito. (`storage.js`, `modules.js`, `model-door.js`, `service-keys.js`, `vault/server.js`, `backup/archive.js`.)
@@ -187,5 +189,5 @@ address guard and the website rules; approvals still apply; Panic still stops it
 
 - Moving an existing data folder into `data/people/<id>/work/`, with a journal and a safety copy.
 - The person switcher and chooser on screen (the routes are above).
-- Keys in a shared `data/people/<id>/keys.sqlite`, once backup/restore can carry it without weakening its keeper gate.
+- Keys in a shared `data/people/<id>/keys.sqlite`, once backup/restore can carry it without weakening its admin gate.
 - A whole-PC backup.

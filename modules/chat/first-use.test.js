@@ -187,7 +187,7 @@ test('a background task for a leads ask goes to the agent whose role is leads, n
     await t.call('/api/m/chat/chats/everyone/send', { body: { text: LEADS } });
     const { last } = await waitReply(t, 'everyone');
     assert.equal(runs[1].agentId, 'coordinator');
-    assert.match(last.text, /Closer is not on your team, so I did this myself\./);
+    assert.match(last.text, /The Sales expert is not on your team, so I did this myself\./); assert.doesNotMatch(last.text, /Closer/);
   } finally { await t.close(); }
 });
 

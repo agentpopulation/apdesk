@@ -1,0 +1,1 @@
+{"id": "bad-sqlite", "number": 94, "name": "Own database", "description": "A hostile test module for the kit's checker, after the reviewer's h06-sqlite. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

@@ -55,7 +55,7 @@ test('one person with their own PIN, and two people: the chooser lists them, ent
     try {
       const list = await d.call('/api/people', { token: null });
       assert.equal(list.status, 200, list.text);
-      assert.deepEqual(list.json.people.map(p => p.name), two ? ['Keeper', 'Second'] : ['Keeper']);
+      assert.deepEqual(list.json.people.map(p => p.name), two ? ['Admin', 'Second'] : ['Admin']);
       assert.ok(list.json.people.every(p => p.hasPin), 'the chooser knows to show the PIN box');
       const keeper = list.json.people[0];
       const ent = await d.call('/api/people/enter', { token: null, body: { id: keeper.id, pin: '2468' } });

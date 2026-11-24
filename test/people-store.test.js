@@ -120,7 +120,7 @@ test('reset by the keeper, the looks, and removal that only detaches the folder'
     assert.deepEqual(p.setLook(b.id, { name: 'Person B2', emoji: '🌻', colour: '#aa5500' }), { ...p.get(b.id) });
     assert.throws(() => p.setLook(b.id, { colour: 'red; background: url(x)' }), /colour/);
     assert.throws(() => p.setLook(b.id, { name: '' }), /name/);
-    assert.throws(() => p.remove(k.id), /keeper/);
+    assert.throws(() => p.remove(k.id), /^Error: The Admin of this PC stays\.$/);
     const gone = p.remove(b.id);
     assert.equal(gone.folder, path.join(dir, 'people', b.id));
     assert.equal(p.get(b.id), null);

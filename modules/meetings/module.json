@@ -1,0 +1,17 @@
+{
+  "id": "meetings",
+  "number": 41,
+  "name": "Meeting notes",
+  "description": "Record or paste a meeting; get notes, tasks for the team and follow-up drafts that wait for your approval. Each item shows the meeting line it comes from; the wording is the model's, so read each line.",
+  "kind": "switch-on",
+  "defaultOn": true,
+  "menu": [{ "id": "meetings", "label": "Meetings", "order": 122 }],
+  "pages": ["meetings"],
+  "settings": [{ "id": "meetings", "label": "Meeting notes" }],
+  "agentTabs": [],
+  "tools": ["meeting_notes"],
+  "requires": [],
+  "npm": {},
+  "attribution": [],
+  "status": "partial"
+}

@@ -100,5 +100,16 @@ test('a group summary is checked against the record: no one named who did not an
   assert.match(summaryWrong('Scout: a list. Operator: a script.', ['Scout', 'Closer'], ['Operator']), /names Operator, who did not answer/);
   assert.match(summaryWrong('Scout: a list. All three agree.', ['Scout'], []), /all three/i);
   assert.match(summaryWrong('Scout: a. Closer: b. All three agree.', ['Scout', 'Closer'], []), /"All three" but 2 answered/i);
-  assert.equal(plainList([{ agentId: 'scout', text: '**Plan:** visit ten offices. Then call.' }, { agentId: 'closer', text: 'Send a sample box.' }]), 'Scout: Plan: visit ten offices.\nCloser: Send a sample box.');
+  assert.equal(plainList([{ agentId: 'scout', text: '**Plan:** visit ten offices. Then call.' }, { agentId: 'closer', text: 'Send a sample box.' }]), 'Researcher: Plan: visit ten offices.\nSales expert: Send a sample box.');
+  // an agent may be named by any of its names; a role that did not answer counts only written as a name
+  assert.equal(summaryWrong('Kent: a list. The Sales expert: a script.', [['Kent · Researcher', 'Kent', 'Researcher'], ['Sales expert']], [{ as: 'Coder', exact: true }]), null);
+  assert.equal(summaryWrong('Kent: ask a coder later.', [['Kent']], [{ as: 'Coder', exact: true }]), null);
+  assert.match(summaryWrong('Kent: a list. Coder: a script.', [['Kent']], [{ as: 'Coder', exact: true }]), /names Coder, who did not answer/);
+});
+
+test('a figure a CRM tool returned is the owner\'s own record, in his number style too: it is not marked "not checked"', () => {
+  const given = figuresIn(JSON.stringify({ deals: [{ title: 'Rao Exports annual order', value: '₹3,50,000', close: '28 Nov 2026' }, { title: 'Big order', value: '₹12,25,000' }] }));
+  const r = checkFigures('The Rao Exports deal is worth ₹3,50,000 and the big one ₹12,25,000.', { given, currency: 'INR' });
+  assert.equal(r.marked, 0, r.text);
+  assert.equal(checkFigures('Another is worth ₹4,10,000.', { given, currency: 'INR' }).marked, 1, 'a figure no record gave is still marked');
 });

@@ -144,7 +144,7 @@ async function swarmTab(ui, body, pickId) {
   const setLabel = () => { label.textContent = ui.plural(n, 'agent'); };
   const each = h('div', { class: 'sub' }, 'Each takes one part of the job');
   ui.api('m/research/swarm-size').then((r) => { if (Number(r?.atOnce) > 0) each.textContent = `Each takes one part of the job; up to ${r.atOnce} work at once, the rest wait their turn`; }).catch(() => {});
-  const placeholders = () => grid.replaceChildren(...Array.from({ length: n }, (_, i) => h('div', { class: 'tile' }, h('b', null, `Scout ${i + 1}`), 'Ready for its part', h('div', { class: 'meter', style: { marginTop: '6px' } }, h('b', { style: { width: '0%' } })))));
+  const placeholders = () => grid.replaceChildren(...Array.from({ length: n }, (_, i) => h('div', { class: 'tile' }, h('b', null, `Researcher ${i + 1}`), 'Ready for its part', h('div', { class: 'meter', style: { marginTop: '6px' } }, h('b', { style: { width: '0%' } })))));
   let showing = null;
   range.addEventListener('input', () => { n = Number(range.value); setLabel(); try { localStorage.setItem('apd-swarm-n', String(n)); } catch {} if (!showing || showing.status !== 'running') { showing = null; head.replaceChildren(); answer.replaceChildren(); placeholders(); } });
   const start = async () => {

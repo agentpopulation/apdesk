@@ -43,3 +43,17 @@ test('on: Open level within limits is allowed and logged; record() and limits() 
     assert.equal(t.core.modules.tools.has('spend_request'), false);
   } finally { await t.close(); }
 });
+
+test('a spend asked from inside a strict job asks the owner, even at Open and within the limits', async () => {
+  const t = await testDesk({ modules: ['payments'] });
+  try {
+    await t.call('/api/modules/payments/on', { body: {} });
+    t.core.settings.set('currency', 'INR');
+    let r;
+    const job = await t.core.jobs.start({ kind: 'test', title: 'strict buy', strictApprovals: true, run: async (j) => { r = await t.core.modules.runTool('spend_request', { what: 'Cable', price: 100 }, { agentId: 'operator', jobId: j.id }); } });
+    await t.core.jobs.wait(job.id, 5000);
+    assert.equal(r.decision, 'waiting', 'it waits for the owner');
+    const p = t.core.approval.listPending().find(a => a.action === 'spend');
+    assert.equal(p?.jobId, job.id);
+  } finally { await t.close(); }
+});

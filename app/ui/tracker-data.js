@@ -6,6 +6,13 @@ const ENDED = ['done', 'failed', 'stopped', 'interrupted'];
 const at = (iso) => Date.parse(iso || '') || 0;
 /** The desk's own upkeep stays out of sight unless it failed (the rule Home and the notices already follow). */
 const shownJob = (j) => !j.quiet || j.status === 'failed';
+/** How an agent is named on screen. The shell sets it to agentLine() from the Agents module (modules/agents/ui-roles.js:
+ *  "Kent · Secretary", or the role alone) once that file has loaded; until then, and when it cannot load, the stored name. */
+const storedLine = (a) => String(a?.name || '').trim() || 'An agent';
+let lineOf = storedLine;
+/** fn: agentLine from modules/agents/ui-roles.js; null goes back to the stored name. */
+export function setAgentLine(fn) { lineOf = typeof fn === 'function' ? (a) => (a ? fn(a) : 'An agent') : storedLine; }
+export const agentLineOf = (a) => lineOf(a);
 
 /** Keep the latest copy of a job from a 'job' event. */
 export function mergeJob(map, j) { if (j && j.id) map.set(j.id, j); return map; }
@@ -26,7 +33,7 @@ export function agentsNow(agents, jobs) {
   return agents.map(a => {
     const mine = open.filter(j => j.agentId === a.id).sort((x, y) => (x.status === 'running' ? 0 : 1) - (y.status === 'running' ? 0 : 1));
     const j = mine[0];
-    return { id: a.id, name: a.name || 'An agent', avatar: a.avatar || null, busy: !!j, job: j || null, more: Math.max(0, mine.length - 1), text: !j ? 'Not working on anything' : j.status === 'waiting' ? `Waiting for you: ${j.title}` : j.title };
+    return { id: a.id, name: lineOf(a), avatar: a.avatar || null, busy: !!j, job: j || null, more: Math.max(0, mine.length - 1), text: !j ? 'Not working on anything' : j.status === 'waiting' ? `Waiting for you: ${j.title}` : j.title };
   });
 }
 
@@ -40,7 +47,7 @@ export function deskNow(jobs) {
 /** Who a job belongs to, in plain words: the agent's name, never its id. */
 export function jobWho(agents, j) {
   if (!j || !j.agentId) return 'The desk';
-  return (agents || []).find(a => a.id === j.agentId)?.name || 'An agent';
+  const a = (agents || []).find(x => x.id === j.agentId); return a ? lineOf(a) : 'An agent';
 }
 /** Which agents are writing a chat reply, kept from the chat's own events: a message that streams starts it, the end of
  *  that message, the end of the chat's run or a stop ends it. A line older than `maxAge` is dropped (a missed end). */
@@ -54,12 +61,12 @@ export function trackWriting(map, d, now = Date.now()) {
   else if (d.type === 'removed') map.delete(d.messageId);
   return map;
 }
-/** The footer words for those writers: "Scout is writing…", "Scout and Closer are writing…", "3 agents are writing…". */
+/** The footer words for those writers: "Researcher is writing…", "Kent · Secretary and Coder are writing…", "3 agents are writing…". */
 export function writingWords(agents, map, now = Date.now(), maxAge = 10 * 60000) {
   const names = [];
   for (const v of map.values()) {
     if (now - v.at > maxAge) continue;
-    const n = (agents || []).find(a => a.id === v.agentId)?.name || 'An agent';
+    const a = (agents || []).find(x => x.id === v.agentId); const n = a ? lineOf(a) : 'An agent';
     if (!names.includes(n)) names.push(n);
   }
   if (!names.length) return '';

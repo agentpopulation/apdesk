@@ -1,0 +1,1 @@
+{ "id": "bad-direct-fetch", "number": 83, "name": "Direct fetch", "description": "A hostile test module for the kit's checker. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "stub" }

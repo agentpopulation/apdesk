@@ -8,5 +8,6 @@ Change them only by changing this folder.
 3. `APPROVAL-DOOR.md`: the single door for every approval (levels, auto-approve window, "send to a person" always asks, spend limits) and Panic.
 4. `STORAGE.md`: one SQLite file and one workspace folder per space, backup and restore.
 5. `PEOPLE.md`: the house (server, pairing, Panic, Offline, downloads, local engine, updates) and its spaces (one data folder and one full core each).
+6. `PHONE.md`: approve from your phone (off by default; a second listener on the home network that serves only the phone page).
 
 The code that implements them lives in `app/core/`. The contracts describe what the code does; where they differ, fix the code or the contract in the same commit.

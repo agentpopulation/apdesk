@@ -6,6 +6,9 @@ import { parseWhen, describeCron, stripWhen, short } from './when.js';
 import * as briefMod from './brief.js';
 const { gatherBrief, composeBrief, openingLine } = briefMod;
 
+/** The owner says yes to the card a repeating schedule from a tool now asks for ('schedule.repeat'). Returns a stop function. */
+const approving = (t) => { const i = setInterval(() => { for (const p of t.core.approval.listPending()) if (p.action === 'schedule.repeat') t.core.approval.decide(p.id, 'approve'); }, 20); return () => clearInterval(i); };
+
 test('plain words become schedules in the owner zone', () => {
   const tz = 'Asia/Kolkata'; const now = Date.parse('2026-11-13T12:00:00Z');   // 5:30 PM in Kolkata
   assert.deepEqual(parseWhen('Every morning at 8, brief me', { timeZone: tz, now }).cron, '0 8 * * *');
@@ -217,7 +220,7 @@ for (const [name, p] of Object.entries(PLACES)) {
       const at = text.match(/Compare suppliers: done \(Scout\), finished ([^.]+)\./)?.[1];
       assert.match(at || '', p.time, text);
       assert.ok(text.endsWith(`Times are in ${p.timeZone}.`));
-      const s = await t.core.modules.runTool('schedule_create', { when: 'every day at 8', prompt: 'check the stock sheet' }, { agentId: 'coordinator' });
+      const stop = approving(t); const s = await t.core.modules.runTool('schedule_create', { when: 'every day at 8', prompt: 'check the stock sheet' }, { agentId: 'coordinator' }); stop();
       assert.match(s.next, p.eight, s.next);
     } finally { await t.close(); }
   });

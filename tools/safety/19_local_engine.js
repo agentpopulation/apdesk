@@ -99,7 +99,7 @@ try {
       await new Promise(r => setTimeout(r, 150));
       const cards = t.core.approval.listPending().filter(a => a.action === 'install');
       const fetched = host.hits.length - before; const auto = t.core.approval.listRecent(20).filter(a => a.action === 'install' && a.how === 'auto').length;
-      const held = cards.length === 2 && fetched === 0 && auto === 0 && cards.every(c => /From 127\.0\.0\.1/.test(c.detail || '') && c.payload?.url);
+      const held = cards.length === 2 && fetched === 0 && auto === 0 && cards.every(c => /From 127\.0\.0\.1/.test(c.detail || '') && c.payload?.file);
       say(held, 'install-window-' + level, held ? `${level} with auto-approve on: two cards (engine, model), each naming the file and its host; nothing fetched before the owner answers` : JSON.stringify({ cards: cards.length, fetched, auto }));
       for (const c of cards) t.core.approval.decide(c.id, 'deny');
     } finally { await t.close(); }

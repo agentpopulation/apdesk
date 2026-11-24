@@ -132,7 +132,7 @@ export async function activate(ctx) {
       } else {
         const e = got.e; const ms = local ? (tries === 2 ? L.localRetry : L.localFirst) : L.hosted;
         let error = got.late ? `No answer within ${seconds(ms)}.` + (local ? ' The model may still be loading; try again in a minute.' : '') : testReason(e);
-        out = { ok: false, provider, model, label: ctx.model.label(provider, model), ms: Date.now() - t0, at, tries, local, error, code: e.code || null };
+        out = { ok: false, provider, model, label: ctx.model.label(provider, model), ms: Date.now() - t0, at, tries, local, error, code: e.code || null, why: (typeof ctx.plainFailure === 'function' ? ctx.plainFailure(e).code : null) || e.why || null };
       }
       const all = tests(); all[tkey(provider, upstream ? 'up:' + upstream : null, keyId)] = out; ctx.kv.set('tests', all);
       ctx.events.emit('models', { change: 'test', provider, ok: out.ok });

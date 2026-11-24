@@ -54,6 +54,8 @@ async function open(b, w, hgt, theme = 'light', hash = '#/home', ctxOpts = {}) {
   const errs = []; p.on('pageerror', e => errs.push(e.message));
   await p.addInitScript((th) => { try { localStorage.setItem('apd-theme', th); } catch {} }, theme);
   t.core.settings.set('theme', theme); t.core.settings.set('ui.themeChosen', true); t.core.settings.set('onboarded', true);
+  // the first page's Skip left first start's step two open (ui.firstStep 'open'), which covered every later page
+  if (t.core.settings.get('ui.firstStep') === 'open') t.core.settings.set('ui.firstStep', 'skipped');
   await p.goto(t.base + '/' + hash); await p.waitForSelector('#menu .nav'); await p.waitForTimeout(700);
   return { ctx, p, errs };
 }
@@ -193,8 +195,9 @@ async function trackerChecks(b) {
     await until(() => p.evaluate(() => document.getElementById('trk').textContent === '1'));
     check('a running job: the tracker icon counts it', await p.evaluate(() => document.getElementById('trk').textContent === '1' && /1 job running/.test(document.getElementById('trk').getAttribute('aria-label'))));
     await p.click('#trk'); await p.waitForTimeout(300);
+    const agentLine = agent ? await p.evaluate((id) => window.apd.agentLine(id), agent.id) : null;   // an agent shows by role and own name, not its stored name
     const pop = await p.evaluate(() => { const q = document.getElementById('pop'); return { text: q.textContent, running: !!q.querySelector('[data-todo="running"] [data-job]'), waiting: !!q.querySelector('[data-todo="waiting"] [data-job]'), panic: !!q.querySelector('[data-apd="tracker-panic"]'), open: [...q.querySelectorAll('button')].some(x => x.textContent === 'Open Tracker'), stop: q.querySelectorAll('[data-job] button[aria-label^="Stop"]').length }; });
-    check('the pop-up: agents now, running and waiting jobs with progress and a dash for time left, Stop on each, Open Tracker and Panic', pop.running && pop.waiting && pop.panic && pop.open && pop.stop === 2 && /Agents now/.test(pop.text) && /Progress 20%/.test(pop.text) && /Time left –/.test(pop.text) && (!agent || pop.text.includes(agent.name)), JSON.stringify(pop).slice(0, 300));
+    check('the pop-up: agents now, running and waiting jobs with progress and a dash for time left, Stop on each, Open Tracker and Panic', pop.running && pop.waiting && pop.panic && pop.open && pop.stop === 2 && /Agents now/.test(pop.text) && /Progress 20%/.test(pop.text) && /Time left –/.test(pop.text) && (!agent || pop.text.includes(agentLine)), JSON.stringify(pop).slice(0, 300));
     await p.screenshot({ path: `${SHOTS}/tracker_pop_1366x768_light.png` });
     const before = lists; step(0.6); await p.waitForTimeout(800);
     check('progress moves from the event stream, not polling', lists === before && await p.evaluate(() => /Progress 60%/.test(document.getElementById('pop').textContent)), `job list reads: ${lists - before}`);
@@ -580,14 +583,14 @@ async function firstStartChecks() {
     if (opts.offline) d.core.settings.set('online', false);
     if (opts.hw) { d.core.localEngine.hardwareFn = typeof opts.hw === 'function' ? opts.hw : async () => opts.hw; d.core.localEngine.hw = null; }
     await p.goto(d.base + '/#/chat'); await p.waitForSelector('#roles .role');
-    const t0 = Date.now(); await p.click(`#roles .role >> nth=${opts.role ?? 1}`);
+    const t0 = Date.now(); await p.click(`#roles .role >> nth=${opts.role ?? 2}`);
     await p.waitForSelector('#onb-about', { timeout: 3000 }).catch(() => {});
     const ms = Date.now() - t0;
     return { d, ctx, p, errs, gets, ms, close: async () => { await ctx.close(); await d.close(); } };
   };
   const box = (p) => p.evaluate(() => { const cb = document.getElementById('onb-local'); return { checked: cb?.checked, disabled: cb?.disabled, text: document.querySelector('[data-apd="local-model"]')?.textContent || '' }; });
   try {
-    let f = await fresh({ slowChat: true, role: 0 });   // Sales: two agents left unticked, so Save asks Chat to fit the rooms
+    let f = await fresh({ slowChat: true, role: 1 });   // Sales: two agents left unticked, so Save asks Chat to fit the rooms
     check('Chat routes slow: the first-start card is there at once', f.ms < 2000 && await f.p.evaluate(() => /What do you do\?/.test(document.querySelector('#onb .card').textContent)), `${f.ms} ms`);
     await until(async () => (await box(f.p)).disabled === false, 8000);
     let bx = await box(f.p);

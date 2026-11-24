@@ -1,8 +1,8 @@
 {
   "id": "chat",
   "number": 1,
-  "name": "Chat and Coordinator",
-  "description": "Chats with one agent or a group. The Coordinator answers, uses tools and hands work to the agent that owns it.",
+  "name": "Chat and Manager",
+  "description": "Chats with one agent or a group. The Manager answers, uses tools and hands work to the agent that owns it. Modules can add commands you type with a slash.",
   "kind": "core",
   "defaultOn": true,
   "menu": [],

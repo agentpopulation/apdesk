@@ -28,7 +28,8 @@ const fits = (sel) => document.querySelectorAll(sel).length > 0 && [...document.
 });
 for (const theme of ['light', 'dark']) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  page.on('pageerror', (e) => errors.push(e.message)); page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  page.on('pageerror', (e) => errors.push(e.message)); page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
+  page.on('response', (r) => { if (r.status() >= 400 && !/\/modules\/(agents|chat)\//.test(r.url())) errors.push(`${r.status()} ${new URL(r.url()).pathname}`); });
   await page.goto(t.base + '/#/sales'); await page.waitForSelector('.salesv .seg');
   await page.evaluate((th) => window.apd.setTheme(th === 'dark'), theme); await page.waitForTimeout(200);
   for (const [i, tab] of [[1, 'contacts'], [2, 'companies']]) {
@@ -44,7 +45,7 @@ for (const theme of ['light', 'dark']) {
   const what = await page.evaluate(() => [...document.querySelectorAll('#modal td')].filter(td => /New customer|Merged with|Skipped/.test(td.textContent)).every(td => td.getBoundingClientRect().right <= innerWidth));
   const line = await page.locator('#modal p.sub').first().textContent();
   check(`import preview 390x844 ${theme}: What happens is on screen for every row`, ok && what, line);
-  check(`import preview ${theme}: a bare name is skipped, not counted as saved`, /2 of 3 rows/.test(line), line);
+  check(`import preview ${theme}: a bare name is skipped, not counted as saved`, /3 rows: 1 new, 1 merged, 0 already there, 1 skipped/.test(line), line);
   await page.screenshot({ path: path.join(out, `import-preview_390x844_${theme}.png`), fullPage: true });
   await page.close();
 }

@@ -161,7 +161,7 @@ test('offline: the local model addresses are the keeper\'s alone, and an outside
     const house = new Settings(store(dir, 'house'), { system: US });
     const other = new Settings(store(dir, 'b'), { system: US, house });
     for (const [k, v] of [['ollama.baseUrl', 'https://example.org'], ['network.lanNodes', [{ id: 'x', baseUrl: 'https://example.com' }]]]) {
-      assert.throws(() => other.set(k, v), /keeper's own desk/);
+      assert.throws(() => other.set(k, v), /Admin's own desk/);
       assert.equal(other.isHouseKey(k), true);
     }
     house.set('network.lanNodes', [{ id: 'n1', baseUrl: 'http://192.168.1.20:11434' }, { id: 'n2', baseUrl: 'https://example.com/v1' }]);
@@ -184,7 +184,7 @@ test('settings route: another person\'s space is refused the keeper\'s keys with
     const routes = settingsRoutes({ settings: other, approval: { activity() {} }, events: { emit() {} } }, () => true);
     const res = { writableEnded: false, writeHead(s) { this.status = s; }, end(b) { this.body = JSON.parse(b); this.writableEnded = true; } };
     routes['POST /api/settings']({}, res, { body: { 'ollama.baseUrl': 'https://example.org' } });
-    assert.equal(res.status, 403); assert.match(res.body.error, /keeper's own desk\. Nothing was saved\./);
+    assert.equal(res.status, 403); assert.match(res.body.error, /Admin's own desk\. Nothing was saved\./);
     assert.equal(house.stored('ollama.baseUrl'), false);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

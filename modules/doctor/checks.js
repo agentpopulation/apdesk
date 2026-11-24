@@ -111,6 +111,20 @@ export function updatesCheck({ setUp, layout, version, last, daily, channel, whe
   return row('updates', 'Updates', 'fine', last?.at ? 'Set up and checked.' : 'Set up, not checked yet.', { details, ...(last?.at ? {} : { todo: 'Press Check for updates in Settings, Backup.', place }) });
 }
 
+/** A proxy set on this PC (HTTPS_PROXY or HTTP_PROXY): where it points (host and port only, never a name or password) and
+ *  whether the desk's web calls use it. null when none is set. failing: the internet check did not pass. */
+export function proxyCheck({ env = process.env, failing = false } = {}) {
+  const raw = env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy;
+  if (!raw) return null;
+  let where; try { where = new URL(/^[a-z]+:\/\//i.test(raw) ? raw : 'http://' + raw).host; } catch { where = null; }
+  if (!where) return row('proxy', 'A proxy', failing ? 'problem' : 'fine', 'A proxy is set on this PC, but its address could not be read.', { todo: failing ? 'Check the proxy setting of this PC, then check again.' : undefined });
+  const used = env.NODE_USE_ENV_PROXY === '1';
+  const line = used
+    ? `A proxy is set on this PC: the desk's web calls go through ${where}. The desk itself, Ollama and the local engine never go through it.`
+    : 'A proxy is set on this PC, but the desk was not started with it, so its web calls go straight out. Start the desk with start.bat (start.sh on Linux, start.command on a Mac) to use it.';
+  return row('proxy', 'A proxy', failing ? 'problem' : 'fine', line, failing ? { todo: used ? 'Check that the proxy is reachable, then check again.' : 'If calls fail only here, start the desk with start.bat (start.sh on Linux, start.command on a Mac).' } : {});
+}
+
 export function portCheck({ port, usual = USUAL_PORT, usualTaken }) {
   if (Number(port) === Number(usual)) return row('port', 'Port', 'fine', `The desk uses port ${port}, the usual one.`);
   if (usualTaken) return row('port', 'Port', 'problem', `Another program is using port ${usual}. The desk uses port ${port}.`, { todo: `Close the other program if you want port ${usual} back; the desk works on port ${port} meanwhile.`, place: { page: 'settings', section: 'general' } });

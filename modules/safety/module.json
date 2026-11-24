@@ -7,7 +7,7 @@
   "defaultOn": true,
   "menu": [],
   "pages": [],
-  "settings": [{ "id": "security", "label": "Security" }],
+  "settings": [{ "id": "security", "label": "Security" }, { "id": "phone", "label": "Approve from your phone" }],
   "agentTabs": [],
   "tools": [],
   "requires": [],

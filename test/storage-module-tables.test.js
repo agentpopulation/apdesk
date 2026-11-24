@@ -48,3 +48,15 @@ test("a module cannot read another module's tables, except the one read a shippe
     assert.ok(s.scope('mail').all('SELECT * FROM m_mail_accounts').length === 1, 'Mail reads its own');
   } finally { done(); }
 });
+
+test('a module whose id has a dash uses its own tables, and still not another module\'s', () => {
+  const { s, done } = store();
+  try {
+    const h = s.scope('hello-notes');
+    h.exec('CREATE TABLE IF NOT EXISTS m_hello_notes_items (id TEXT, text TEXT)');
+    h.run("INSERT INTO m_hello_notes_items VALUES ('1', 'hi')");
+    assert.equal(h.get('SELECT text FROM m_hello_notes_items').text, 'hi');
+    h.migrate(1, 'CREATE TABLE IF NOT EXISTS m_hello_notes_more (id TEXT)');
+    refused(() => h.all('SELECT * FROM m_mail_accounts'), 'another module, read');
+  } finally { done(); }
+});

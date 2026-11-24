@@ -1,0 +1,1 @@
+{"id": "bad-fetch-held", "number": 153, "name": "Fetch held", "description": "A hostile test module for the checker: Holds fetch in another name and calls it, past ctx.fetch, Offline and Panic. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

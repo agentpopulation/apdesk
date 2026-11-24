@@ -107,7 +107,7 @@ try {
   await s.p.locator('#modal').getByRole('button', { name: 'Switch person' }).click();
   await s.p.waitForSelector('#chooser .person'); await wait(200);
   check('Switch person returns this window to the chooser (in switch mode, with Cancel)', await s.p.evaluate(() => !document.getElementById('chooser').hidden && /Switch person/.test(document.getElementById('chooser').textContent) && [...document.querySelectorAll('#chooser button')].some(x => x.textContent === 'Cancel')));
-  await s.p.getByRole('button', { name: /Person A|Keeper/ }).first().click().catch(async () => { await s.p.locator('#chooser .person').first().click(); });
+  await s.p.getByRole('button', { name: /Person A|Admin|Keeper/ }).first().click().catch(async () => { await s.p.locator('#chooser .person').first().click(); });
   await wait(200);
   if (await s.p.evaluate(() => !!document.querySelector('#chooser .pinf'))) { await s.p.fill('#chooser .pinf', '2468'); await s.p.locator('#chooser').getByRole('button', { name: 'Open' }).click(); }
   await s.p.waitForSelector('#menu .nav', { timeout: 8000 }); await skipOnb(s.p); await wait(300);
@@ -119,6 +119,8 @@ try {
   releaseJob(); await t.core.jobs.wait(bgJob.id, 3000);
 
   // ---- 5. lock this window: the token is dropped and the chooser returns
+  // the dialog the check above closed is opened again here: waiting on a dialog that may or may not still be open was the flaw
+  await s.p.click('#who'); await s.p.waitForFunction(() => !document.getElementById('modal').hidden && [...document.querySelectorAll('#modal button')].some(x => x.textContent === 'Lock this window'), null, { timeout: 8000 });
   await s.p.locator('#modal').getByRole('button', { name: 'Lock this window' }).click();
   await s.p.waitForSelector('#chooser .person', { timeout: 8000 }); await wait(200);
   check('Lock this window drops the token and shows the chooser again', await s.p.evaluate(() => !document.getElementById('chooser').hidden && document.querySelectorAll('#chooser .person').length === 2));

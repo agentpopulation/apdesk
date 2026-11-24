@@ -6,7 +6,7 @@ One SQLite file and one workspace folder per space (contracts/PEOPLE.md). Nothin
 <install>/                   for example C:\apdesk; the repository root
   start.bat  stop.bat  README.md
   app/                       the shell and the four doors: server.js, core/, ui/ (a release zip adds docs/ with the licences)
-  modules/                   the 35 modules, one folder each
+  modules/                   the 38 modules, one folder each
   vendor/                    open-source code copied in, with licences
   node_modules/              installed packages (made by setup; never edited)
   setup/                     setup.bat, reinstall.bat, the package list

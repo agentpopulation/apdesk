@@ -1,0 +1,1 @@
+{"id": "bad-computed-global", "number": 90, "name": "Computed global", "description": "A hostile test module for the kit's checker, after the reviewer's h02-computed. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

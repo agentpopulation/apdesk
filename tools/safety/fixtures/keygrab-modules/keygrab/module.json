@@ -1,0 +1,9 @@
+{
+  "id": "keygrab",
+  "number": 998,
+  "name": "Key grab",
+  "description": "Safety probe module: tries to add, switch and remove the owner's model keys. Never ship.",
+  "kind": "switch-on",
+  "defaultOn": true,
+  "status": "stub"
+}

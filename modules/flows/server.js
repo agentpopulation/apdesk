@@ -25,6 +25,8 @@ export async function activate(ctx) {
       last_run TEXT, last_status TEXT, last_job TEXT, last_note TEXT, next_run TEXT, missed_at TEXT);
     CREATE TABLE IF NOT EXISTS m_flows_chains (id TEXT PRIMARY KEY, title TEXT NOT NULL, steps TEXT NOT NULL, chat_id TEXT, created TEXT, updated TEXT, last_run TEXT, last_job TEXT, last_status TEXT);`);
 
+  ctx.db.migrate(2, `ALTER TABLE m_flows_schedules ADD COLUMN module_id TEXT; ALTER TABLE m_flows_schedules ADD COLUMN module_ref TEXT;`);
+
   const zone = () => ownerZone(ctx);
   const crons = new Map();             // schedule id -> Cron
   const runningChats = new Set();      // chats with a scheduled turn in progress (no schedule may be made from inside one)
@@ -53,15 +55,31 @@ export async function activate(ctx) {
   }
   function view(r) {
     if (!r) return null;
-    const what = plainWhat(r);
+    const what = r.kind === 'module' ? `Runs a job for ${moduleName(r.module_id)}` : plainWhat(r);
     const { work, context } = splitContext(r.prompt);
     const c = crons.get(r.id);
     const next = r.enabled ? (c?.nextRun()?.toISOString() || null) : null;
     const lastJob = r.last_job ? ctx.jobs.get(r.last_job) : null;
     const ch = r.chain_id ? ctx.db.get('SELECT title FROM m_flows_chains WHERE id = ?', r.chain_id) : null;
-    return { id: r.id, title: r.title, kind: r.kind, when: r.cron ? describeCron(r.cron) : r.at ? 'Once' : 'Not set', cron: r.cron, at: r.at, words: r.words, prompt: r.prompt, work, context, what, builtIn: r.kind !== 'brief' && what !== work.replace(/\s+/g, ' ').trim(), agentId: r.agent_id || 'coordinator', agentName: agentName(r.agent_id || 'coordinator'),
+    return { id: r.id, title: r.title, kind: r.kind, when: r.cron ? describeCron(r.cron) : r.at ? 'Once' : 'Not set', cron: r.cron, at: r.at, words: r.words, prompt: r.prompt, work, context, what, builtIn: r.kind !== 'brief' && what !== work.replace(/\s+/g, ' ').trim(), agentId: r.agent_id || 'coordinator', agentName: r.kind === 'module' ? moduleName(r.module_id) : agentName(r.agent_id || 'coordinator'), moduleId: r.module_id || null,
       chatId: r.chat_id, chainId: r.chain_id, chainTitle: ch?.title || null, topics: j(r.topics, []), enabled: !!r.enabled, armed: !!c && !!next, nextRun: next, lastRun: r.last_run, lastStatus: lastJob?.status || r.last_status, lastNote: r.last_note, lastJob: r.last_job,
       missedAt: r.missed_at, running: !!lastJob && ['running', 'waiting'].includes(lastJob.status), created: r.created };
+  }
+  // ---------- schedules that hand the run to another module (kind 'module')
+  const HOUR = 3600000;
+  const moduleName = (id) => ctx.modules.list().find(m => m.id === id)?.name || 'that module';
+  /** A repeating schedule that hands its run to a module may never come due more than once an hour. */
+  function runsTooOften(cron, tz) {
+    try { const c = new Cron(cron, { timezone: tz, paused: true }); const runs = c.nextRuns(400); c.stop(); return runs.some((d, i) => i && d - runs[i - 1] < HOUR - 1000); } catch { return false; }
+  }
+  /** Why a module's schedule cannot run right now, in plain words, or null when it can. */
+  function moduleBlock(r) {
+    const name = moduleName(r.module_id);
+    if (ctx.panic.halted) return 'Not run: everything was stopped (Panic). Press Resume. It runs at its next time.';
+    if (ctx.settings.get('online') === false) return 'Not run: the desk is offline. It runs at its next time once the desk is online.';
+    if (ctx.incognito) return 'Not run: schedules do not run in Incognito.';
+    if (typeof ctx.modules.api(r.module_id)?.runScheduled !== 'function') return `Not run: ${name} is switched off.`;
+    return null;
   }
   const get = (id) => ctx.db.get('SELECT * FROM m_flows_schedules WHERE id = ?', id);
   const list = () => ctx.db.all('SELECT * FROM m_flows_schedules ORDER BY created').map(view);
@@ -96,6 +114,10 @@ export async function activate(ctx) {
     const firedAt = nowIso();
     if (r.at) { disarm(id); ctx.db.run('UPDATE m_flows_schedules SET enabled = 0 WHERE id = ?', id); }
     ctx.db.run('UPDATE m_flows_schedules SET next_run = ? WHERE id = ?', crons.get(id)?.nextRun()?.toISOString() || null, id);
+    if (r.kind === 'module') {
+      const why = moduleBlock(r) || (r.last_run && Date.parse(firedAt) - Date.parse(r.last_run) < HOUR - 1000 ? 'Not run: it already ran in the last hour. A schedule like this runs at most once an hour.' : null);
+      if (why) { ctx.db.run('UPDATE m_flows_schedules SET last_status = ?, last_note = ? WHERE id = ?', 'skipped', why, id); emit('schedule', { id, change: 'skipped' }); return; }
+    }
     if (ctx.panic.halted) {
       ctx.db.run('UPDATE m_flows_schedules SET last_run = ?, last_status = ?, last_note = ? WHERE id = ?', firedAt, 'skipped', 'Skipped: everything was stopped (Panic) at that time', id);
       emit('schedule', { id, change: 'skipped' }); return;
@@ -106,11 +128,19 @@ export async function activate(ctx) {
   /** Start one run of a schedule as a job. */
   async function start(r, { firedAt = nowIso(), manual = false } = {}) {
     const title = r.title;
-    const agentId = r.agent_id || 'coordinator';
+    const agentId = r.kind === 'module' ? null : (r.agent_id || 'coordinator');
     const job = await ctx.jobs.start({
       kind: 'flows.schedule', title: `${manual ? 'Run now' : 'Scheduled'}: ${title}`, agentId, chatId: r.chat_id || (r.kind === 'brief' && ctx.modules.api('chat') ? `dm-${agentId}` : null),
       input: { scheduleId: r.id, kind: r.kind, title, prompt: r.prompt, agentId, chatId: r.chat_id, scheduledFor: manual ? null : r.next_run, firedAt, manual },
       async run(job) {
+        if (r.kind === 'module') {
+          const target = ctx.modules.api(r.module_id);
+          if (typeof target?.runScheduled !== 'function') throw new Error(`${moduleName(r.module_id)} is switched off, so this did not run.`);
+          job.progress(0.1, `${moduleName(r.module_id)} is working on it`);
+          const out = await target.runScheduled(j(r.module_ref, null), { signal: job.signal, jobId: job.id });
+          job.throwIfStopped();
+          return { ...(out && typeof out === 'object' ? out : { answer: out == null ? '' : String(out) }), delivered: 'job', firedAt };
+        }
         if (r.kind === 'chain' && r.chain_id) {
           const chain = chainRow(r.chain_id); if (!chain) throw new Error('The chain this schedule runs was deleted.');
           return runSteps(job, chain, { chatId: r.chat_id, note: `Scheduled: ${title}` });
@@ -225,7 +255,15 @@ export async function activate(ctx) {
     return morning ? 'Morning brief' : 'Brief';
   }
   function cleanAgent(id) { return id && ctx.agents.get(id) ? id : 'coordinator'; }
-  async function schedule({ title, cron, at, when, prompt, agentId, chatId, kind, chainId, topics, enabled = true } = {}) {
+  /** schedule({ title, when | cron | at, prompt, ... }) -> the stored schedule. Any module may call it.
+   *  A schedule that hands its run to a module: schedule({ title, when | cron | at, moduleId, ref }). When due, the desk starts a job (it shows
+   *  in Tasks) that calls ctx.modules.api(moduleId).runScheduled(ref, { signal, jobId }); the return value (an object, or text) is the job's output.
+   *  `ref` is a small JSON value the module understands (at most 500 characters). Rules the desk keeps for it, not the module: it never
+   *  comes due more than once an hour (a faster time is refused, and a run is skipped if one ran in the last hour); it does not run, and says so
+   *  on the page, while the desk is offline, after Panic, in Incognito, or when that module is off; the owner pauses, edits, deletes it
+   *  and presses Run now in the one Schedules list. No model tool creates one, so only a module's own code can. Refusals throw a plain sentence. */
+  async function schedule({ title, cron, at, when, prompt, agentId, chatId, kind, chainId, topics, enabled = true, moduleId, ref } = {}) {
+    if (moduleId) return scheduleModule({ title, cron, at, when, moduleId, ref, enabled });
     const w = await resolveWhen({ cron, at, when });
     let what = String(prompt || '').trim() || stripWhen(when || '');
     const work = workOf(what); title = workOf(title);
@@ -240,10 +278,30 @@ export async function activate(ctx) {
     emit('schedule', { id, change: 'create' });
     return view(get(id));
   }
+  async function scheduleModule({ title, cron, at, when, moduleId, ref, enabled }) {
+    if (ctx.incognito) throw bad('Schedules do not run in Incognito.');
+    moduleId = String(moduleId);
+    const name = workOf(title).trim().slice(0, 120); if (!name) throw bad('Give the schedule a name.');
+    if (moduleId === ctx.id) throw bad('Flows and Schedules cannot hand a run to itself.');
+    if (typeof ctx.modules.api(moduleId)?.runScheduled !== 'function') throw bad(`${moduleName(moduleId)} is not on, or cannot run schedules.`, 409);
+    const refJson = JSON.stringify(ref ?? null); if (refJson.length > 500) throw bad('The schedule carries too much to keep. Keep it short.');
+    const w = await resolveWhen({ cron, at, when });
+    if (w.cron && runsTooOften(w.cron, zone())) throw bad('That is too often. A schedule that runs a module can run at most once an hour.');
+    const t = nowIso(); const id = newId('sch_');
+    ctx.db.run('INSERT INTO m_flows_schedules (id, title, kind, cron, at, words, tz, prompt, agent_id, enabled, created, updated, module_id, module_ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      id, name, 'module', w.cron, w.at, w.words, zone(), '', null, enabled ? 1 : 0, t, t, moduleId, refJson);
+    arm(get(id)); emit('schedule', { id, change: 'create' });
+    return view(get(id));
+  }
   async function edit(id, patch = {}) {
     const r = get(id); if (!r) throw bad('No such schedule.', 404);
     const sets = {};
-    if (patch.when != null || patch.cron || patch.at) { const w = await resolveWhen(patch); Object.assign(sets, { cron: w.cron, at: w.at, words: w.words }); }
+    if (r.kind === 'module') { patch = { when: patch.when, cron: patch.cron, at: patch.at, title: patch.title, enabled: patch.enabled }; }   // its work belongs to the module
+    if (patch.when != null || patch.cron || patch.at) {
+      const w = await resolveWhen(patch);
+      if (r.kind === 'module' && w.cron && runsTooOften(w.cron, zone())) throw bad('That is too often. A schedule that runs a module can run at most once an hour.');
+      Object.assign(sets, { cron: w.cron, at: w.at, words: w.words });
+    }
     if (patch.title != null) sets.title = workOf(patch.title).slice(0, 120) || r.title;
     if (r.kind === 'brief' && (sets.cron !== undefined || sets.title)) sets.title = briefTitle(sets.title || r.title, { cron: sets.cron !== undefined ? sets.cron : r.cron });
     // the page edits only the work part: the stored context note is kept after it
@@ -261,7 +319,15 @@ export async function activate(ctx) {
     return view(get(id));
   }
   function remove(id) { disarm(id); ctx.db.run('DELETE FROM m_flows_schedules WHERE id = ?', id); emit('schedule', { id, change: 'delete' }); return { ok: true }; }
-  async function runNow(id) { const r = get(id); if (!r) throw bad('No such schedule.', 404); const job = await start(r, { manual: true }); return job; }
+  /** Run now. The owner's button passes byOwner; another module calling it is held to the same rules as the clock. */
+  async function runNow(id, { byOwner = false } = {}) {
+    const r = get(id); if (!r) throw bad('No such schedule.', 404);
+    if (r.kind === 'module') {
+      const why = moduleBlock(r) || (!byOwner && r.last_run && Date.now() - Date.parse(r.last_run) < HOUR - 1000 ? 'It already ran in the last hour. A schedule like this runs at most once an hour.' : null);
+      if (why) throw bad(why.replace(/^Not run: /, ''), 409);
+    }
+    return start(r, { manual: true });
+  }
 
   armAll({ startup: true });
   const offEvents = ctx.events.on((type) => { if (type === 'settings' && zone() !== armedZone) armAll(); });
@@ -282,7 +348,7 @@ export async function activate(ctx) {
   ctx.route('POST', '/schedules', wrap(({ body, owner: o }) => { owner(o); return schedule(body || {}); }));
   ctx.route('PATCH', '/schedules/:id', wrap(({ params, body, owner: o }) => { owner(o); return edit(params.id, body || {}); }));
   ctx.route('DELETE', '/schedules/:id', wrap(({ params, owner: o }) => { owner(o); return remove(params.id); }));
-  ctx.route('POST', '/schedules/:id/run', wrap(({ params, owner: o }) => { owner(o); return runNow(params.id); }));
+  ctx.route('POST', '/schedules/:id/run', wrap(({ params, owner: o }) => { owner(o); return runNow(params.id, { byOwner: true }); }));
   ctx.route('POST', '/parse', wrap(({ body }) => { const p = parseWhen(body?.when, { timeZone: zone() }); if (!p) return { ok: false }; let next = p.at || null; if (p.cron) { const c = new Cron(p.cron, { timezone: zone(), paused: true }); next = c.nextRun()?.toISOString(); c.stop(); } return { ok: true, text: p.text, next }; }));
   ctx.route('GET', '/chains', wrap(() => ({ chains: ctx.db.all('SELECT * FROM m_flows_chains ORDER BY created').map(chainView) })));
   ctx.route('POST', '/chains', wrap(({ body, owner: o }) => { owner(o); return saveChain(body || {}); }));
@@ -292,12 +358,28 @@ export async function activate(ctx) {
 
   // ---------- Coordinator tools
   const say = (v) => ({ ok: true, title: v.title, when: v.when, next: v.nextRun ? zonedTime(v.nextRun, zone(), ownerLocale(ctx)) + ` (${zone()})` : 'not armed', what: v.kind === 'brief' ? 'a brief' : v.work, repeats: !!v.cron, note: 'Stored. It runs on time even when the browser is closed, and each run shows in Tasks.' });
+  /** An agent's turn that makes a REPEATING schedule asks the owner first, every time ('schedule.repeat' always asks, at every
+   *  level and inside an auto-approve window). The card says what will repeat and how often. A one-time run does not ask, and a
+   *  schedule the owner makes on the page does not ask. Returns null when it may be saved, else the tool's refusal ({ ok: false, decision }). */
+  async function askRepeat(w, what, call) {
+    if (!w.cron) return null;
+    const how = describeCron(w.cron);
+    const d = await ctx.approval.request({ action: 'schedule.repeat', agentId: call.agentId || 'coordinator', chatId: call.chatId, jobId: call.jobId || undefined, signal: call.signal,
+      title: 'Set up something that repeats', detail: `${how}${how === 'On a custom schedule' && w.words ? ` (${short(String(w.words), 80)})` : ''}: ${short(splitContext(String(what || '')).work, 200)}` });
+    if (d?.ok) return null;
+    const decision = d?.reason === 'timeout' ? 'not answered' : d?.reason === 'halted' ? 'stopped' : 'no';
+    return { ok: false, saved: false, refused: true, decision, error: decision === 'no' ? 'The owner said no to a schedule that repeats. Nothing was saved: do not say it was set up.' : decision === 'stopped' ? 'Everything was stopped (Panic). Nothing was saved.' : 'The owner did not answer in time. Nothing was saved: do not say it was set up.' };
+  }
   ctx.tool({
     name: 'schedule_create', description: 'Store something to run LATER by itself, once or repeating, and post the result into this chat. Use this (not task_create) whenever the owner names a time or a delay: "in one minute, brief me", "in 5 minutes remind me to call Ravi", "in an hour check the prices", "tomorrow at 7 ...", "every morning at 8, brief me", "every Monday at 10 ...". A delay such as "in one minute" is a one-time run.',
     parameters: { type: 'object', properties: { title: { type: 'string', description: 'Short name in the owner\'s words, e.g. Brief or Call Ravi; leave it out if unsure' }, when: { type: 'string', description: 'The time in the owner\'s own words, copied as he said it: "in one minute", "in 5 minutes", "in an hour", "tomorrow at 7" (these run once); "every morning at 8", "every weekday at 9", "every Monday at 10" (these repeat). A cron expression or an ISO time also works.' }, prompt: { type: 'string', description: 'What to do when it runs, without the time words, e.g. "brief me"' }, agentId: { type: 'string' }, topics: { type: 'array', items: { type: 'string' }, description: 'News topics for a brief, if the owner named any' } }, required: ['when', 'prompt'] },
     async run(args, call) {
       if (call.chatId && runningChats.has(call.chatId)) return { ok: false, error: 'This is already a scheduled run; do the work instead of scheduling it again.' };
-      try { return say(await schedule({ title: args.title, when: args.when, prompt: args.prompt, agentId: args.agentId || call.agentId, chatId: call.chatId, topics: args.topics })); } catch (e) { return { ok: false, error: e.message }; }
+      try {
+        const w = await resolveWhen({ when: args.when });
+        const no = await askRepeat(w, args.prompt || args.title, call); if (no) return no;
+        return say(await schedule({ title: args.title, cron: w.cron, at: w.at, when: args.when, prompt: args.prompt, agentId: args.agentId || call.agentId, chatId: call.chatId, topics: args.topics }));
+      } catch (e) { return { ok: false, error: e.message }; }
     },
   });
   ctx.tool({ name: 'schedule_list', description: 'List the stored schedules with their next run in the owner\'s time.', parameters: { type: 'object', properties: {} },
@@ -309,7 +391,11 @@ export async function activate(ctx) {
       try {
         const c = saveChain({ title: args.title, steps: args.steps, chatId: call.chatId });
         let sched = null, job = null;
-        if (args.when) sched = say(await schedule({ title: c.title, when: args.when, chainId: c.id, chatId: call.chatId, agentId: c.steps[0].agentId }));
+        if (args.when) {
+          const w = await resolveWhen({ when: args.when });
+          const no = await askRepeat(w, `the chain "${c.title}" (${c.steps.map(s => s.agentName).join(', then ')})`, call);
+          sched = no || say(await schedule({ title: c.title, cron: w.cron, at: w.at, when: args.when, chainId: c.id, chatId: call.chatId, agentId: c.steps[0].agentId }));
+        }
         if (args.runNow) job = await runChain(c.id, { chatId: call.chatId });
         return { ok: true, title: c.title, steps: c.steps.map((s, i) => `${i + 1}. ${s.agentName}: ${s.instruction}`), schedule: sched, started: !!job, note: 'It shows in Tasks under Chains of agents.' };
       } catch (e) { return { ok: false, error: e.message }; }
@@ -320,7 +406,7 @@ export async function activate(ctx) {
     schedule, list, runNow, edit, remove, get: (id) => view(get(id)),
     chains: () => ctx.db.all('SELECT * FROM m_flows_chains ORDER BY created').map(chainView), saveChain, runChain,
     /** Tasks › Run again for an interrupted or failed run. */
-    async runAgain(job) { if (job?.input?.scheduleId && get(job.input.scheduleId)) return runNow(job.input.scheduleId); if (job?.input?.chainId) return runChain(job.input.chainId, { chatId: job.chatId }); throw bad('This run can no longer be repeated: its schedule or chain is gone.', 404); },
+    async runAgain(job, { byOwner = false } = {}) { if (job?.input?.scheduleId && get(job.input.scheduleId)) return runNow(job.input.scheduleId, { byOwner }); if (job?.input?.chainId) return runChain(job.input.chainId, { chatId: job.chatId }); throw bad('This run can no longer be repeated: its schedule or chain is gone.', 404); },
   });
   return { async deactivate() { offEvents?.(); for (const id of [...crons.keys()]) disarm(id); } };
 }

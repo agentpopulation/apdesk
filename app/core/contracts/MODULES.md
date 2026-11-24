@@ -35,6 +35,8 @@ modules/<id>/
 
 There is no version field: a module has the version of the desk it ships in.
 
+**Commands.** A module may declare `"commands": [{ "name": "advisor", "hint": "Hand this work to your advisor" }]` in module.json (name: lower case letters, digits and `-`, up to 24 characters; hint: plain text, up to 80 characters) and expose `command(name, { text, chatId, agentId, signal })` on its API. When the owner types `/name` and text at the very start of the message box, Chat hands the text to that module (only while the module is on and exposes `command`) and shows what comes back: a string, or `{ text, card, cards }`. No model sees it. `ctx.modules.list()` and `/api/modules` carry each module's `commands` (an empty list when it declares none), so a custom module's commands are found wherever its folder is.
+
 The official menu is fixed: Chat, Research, Tasks, Sales, Files, Agents, Models, Settings. A core module owns each: `chat` -> Chat, `research` -> Research, `tasks` -> Tasks, `sales` -> Sales, `files` -> Files, `agents` -> Agents, `models` -> Models, and Settings is the shell's. A switch-on module may add a menu place after the eight (Mail, Calendar, Social, Life, ...) which appears only while the module is on.
 
 ## server.js
@@ -55,10 +57,10 @@ export async function activate(ctx) {
 |---|---|
 | `ctx.id`, `ctx.manifest`, `ctx.dir`, `ctx.port` | this module; the desk's own port |
 | `ctx.route(method, path, handler)` | registers `/api/m/<id><path>`; removed on deactivate. Handler gets `(req, res, { query, params, body })`; `body` is parsed JSON. Use `ctx.json(res, data, status?)` to answer. Throwing answers 500 with `{ error }`. Paths may have `:param`. |
-| `ctx.db` | the storage door, see STORAGE.md. Tables are prefixed `m_<id>_` by convention. `ctx.db.migrate(version, sql)` runs once per version. |
+| `ctx.db` | the storage door, see STORAGE.md. Tables are prefixed `m_<id>_`, each dash in the id written as an underscore (`hello-notes` owns `m_hello_notes_...`); the SQL guard refuses another module's tables. `ctx.db.migrate(version, sql)` runs once per version. |
 | `ctx.kv.get(key, fallback)`, `ctx.kv.set(key, value)` | settings that belong to this module, namespaced |
 | `ctx.workspace` | absolute path of the workspace folder; `ctx.workspacePath(...parts)` resolves inside it and refuses to escape |
-| `ctx.model` | the model door, see MODEL-DOOR.md |
+| `ctx.model` | the model door, see MODEL-DOOR.md. `ctx.model.keys` is `{ list }` for every module; only the Models and Vault modules that ship with the desk (`KEY_MODULES` in model-door.js, named in the core) get `add`, `toggle`, `remove` and `tier`. An added module never does, whatever its folder is called. |
 | `ctx.approval` | the approval door, see APPROVAL-DOOR.md |
 | `ctx.panic` | `ctx.panic.signal` (aborted on Panic), `ctx.panic.onStop(fn)` to kill child processes and browsers, `ctx.panic.halted`, `ctx.panic.child(signal)` (a signal that aborts on Panic or when the one you pass aborts) |
 | `ctx.jobs` | background jobs that outlive the browser: `ctx.jobs.start({ kind, title, agentId, chatId, input, run, quiet })`, `ctx.jobs.list()`, `ctx.jobs.get(id)`. See below. `quiet: true` marks a job the desk starts for its own upkeep (the nightly memory tidy): no finish notice, no menu count, not on Home or in the brief, listed under Housekeeping in Tasks; a quiet job that fails is still shown. A quiet job's `input` must be an object. Never mark work the owner asked for as quiet. |
@@ -70,7 +72,7 @@ export async function activate(ctx) {
 | `ctx.serviceKey(id)` | the owner's key for a dedicated service that is not a chat model: search (`serper`, `tavily`, `brave`, `exa`, `jina`) or audio (`elevenlabs`, `deepgram`, `cartesia`, `assemblyai`). Null when he has not added one. Added on the Models page or in Keys and logins through `/api/keys/services`; also picked up from the environment (`SERPER_API_KEY` ...) for that run. `ctx.services.list()` gives the masked list. |
 | `ctx.serviceKeyRefused(id, why)` | tell the desk the service refused the key it was given (`why` is `'refused'`) or its allowance ran out (`'allowance'`): that key rests and the next one is used |
 | route arg `owner` | `true` when the request carries the shell's session token (the owner clicked it in the desk). Routes that delete, reveal a secret, restore, or change what agents may do must refuse when `owner` is false. |
-| `ctx.tool({ name, description, parameters, run })` | registers a Coordinator tool. `run(args, call)` where `call = { agentId, chatId, signal, emitCard(card) }`. Return a plain object; the Coordinator shows it. Tool names use letters, digits and underscores only (`research_deep`), because some providers refuse dots. |
+| `ctx.tool({ name, description, parameters, run, agents? })` | registers a Coordinator tool. `run(args, call)` where `call = { agentId, chatId, signal, emitCard(card) }`. Return a plain object; the Coordinator shows it. Tool names use letters, digits and underscores only (`research_deep`), because some providers refuse dots. `agents: ['closer']` makes it a tool for those agents only: `ctx.modules.tools()` lists it with its `agents`, Chat offers it only to them, and `runTool` refuses it for any other agent (`not_for_agent`; a run with no agent is the owner's own). |
 | `ctx.untool(name)` | removes one of this module's own tools while it stays on |
 | `ctx.chatCard(chatId, card)` | posts a card into a chat (`{ kind: 'table'|'progress'|'file'|'draft'|'actions'|'text', ... }`). The Chat module renders kinds it knows; unknown kinds render as text. |
 | `ctx.expose(api)` | the object other modules reach with `ctx.modules.api(id)`; it runs in this module's space |
@@ -84,8 +86,10 @@ export async function activate(ctx) {
 | `ctx.requestRestart(reason)` | stop cleanly and start again (the launcher restarts the desk). For the Backup module after a restore; call only from a route where `owner` is true. In tests it only sets `desk.restartRequested`. |
 | `ctx.dataDir`, `ctx.backupsDir`, `ctx.root` | the data folder, the backups folder (outside data), the install folder |
 | `ctx.deskDataDir` | the desk's whole data folder, which holds every person's space (`PEOPLE.md`); for keeping it closed, never for reading |
-| `ctx.houseBackupsDir` | in another person's space, the keeper's backups folder (outside the data folder), so Files keeps it closed too; `null` in the keeper's own space |
-| `ctx.fetch(url, init)` | `fetch` that respects online/offline (throws `offline` when the desk is offline) and is aborted by Panic |
+| `ctx.houseBackupsDir` | in another person's space, the Admin's backups folder (outside the data folder), so Files keeps it closed too; `null` in the Admin's own space |
+| `ctx.fetch(url, init)` | `fetch` that respects online/offline (throws `offline` when the desk is offline) and is aborted by Panic. A custom module (below) reaches only the hosts its `module.json` names under `hosts` (`host_not_listed` otherwise) |
+| `ctx.incognito` | read-only: `true` in an Incognito space (PEOPLE.md), so a module can refuse what Incognito cannot keep, in plain words |
+| `ctx.moduleFolder` | the built-in Module Store only (never another module, never a custom one): the house-wide door to the modules folder. See "Custom modules" |
 
 ### Jobs
 ```js
@@ -128,3 +132,17 @@ export const chatCards = { 'mail.draft': (card, ui) => HTMLElement };   // optio
 - Every model call goes through `ctx.model`. Every action with a side effect goes through `ctx.approval`. Every long piece of work is a job. Every child process or browser registers `ctx.panic.onStop`.
 - Code copied from an open-source project gets a comment at the top of the copied file naming the project and a line in `ATTRIBUTION.md`.
 - Tests with `node:test` in `*.test.js` beside the code. Model-dependent behaviour is tested against the fake model in `test/helpers/fake-llm.js` for plumbing only; that is never evidence that the feature works. Say "not checked" where you could not run a real model.
+
+## Custom modules (built in or custom)
+
+`modules/shipped.json` (`{ version, entries }`) is the one list of the module folders that ship with the desk. It is written by `node tools/make-zip.mjs --shipped` (and again into every zip), read by the update step (`UPDATES.md`, "Module folders the owner added stay"), and kept true by `modules/store/shipped.test.js`: a new built-in module folder fails that test until the list is written again. Every other module folder is **custom**. A folder with no record (a test folder) has nothing custom unless it carries the Store's mark.
+
+A custom module lives under stricter rules, set in `app/core/modules.js`, not in its manifest: its id must be its folder name and never a built-in id (a built-in module is found first, so a custom folder cannot shadow one); it is never `core`, never `boot`, never on by itself (`defaultOn` is ignored); `ctx.tool` refuses a tool name its `module.json` does not list (`tool_not_listed`); `ctx.fetch` refuses a host its `hosts` does not name (`host_not_listed`; `"*"` for addresses the owner types in, `"*.example.org"` for subdomains). The module check (`app/core/module-check/`) reads its files before it is added; nothing runs it to check it.
+
+`GET /api/modules` carries `custom: true|false` for every module and, for a custom one, `added: { from: 'file' | 'built here' | 'built with a model' | 'by hand', at, signedBy, label: { can, hosts, tools, signed, red, yellow } }` (never a path), `hosts`, and `restart: true` while a replaced copy waits for a restart.
+
+**The Module Store** (`modules/store`, Settings › Modules) adds them. Anyone at the desk may ask; the keeper (the Admin on screen) approves, as an `install` approval in the keeper's own space (the main space's door: another person's space has no card to decide), at every level, with no standing yes. The work happens in `<house data folder>/module-store/`: a zip is unpacked only into `module-store/tmp/apd-check-*` (5 MB at most; entries that climb out, absolute names, links, twins and odd packing are refused), checked, kept as a request (`module-store/requests/<rid>/`), and on the keeper's yes copied to `modules/<id>/` with the Store's record (`.apd-added.json`) only if every file still has the hash the check took. The module is then found in every space without a restart (`ctx.moduleFolder.rediscover()`, which is safe while the desk runs: a module that is on keeps running the code it started with) and stays off until someone with the right switches it on. Replacing a custom module keeps the old one beside it as `<id>.old-<date>` with `module.json` and its tests renamed `.old`, and says a restart is needed when the old one was on. Removing one (keeper approves) switches it off everywhere, moves its folder to `module-store/removed/`, and keeps its data unless "also remove its data" was ticked (then its `m_<id>_` tables, kv, migrations and module secrets go in every space open now). Incognito adds, builds and removes nothing.
+
+`ctx.moduleFolder`: `dir`, `builtIn()`, `present()`, `isMainSpace()`, `askKeeper(req)` (an `install` request in the keeper's door), `assertKeeperGranted(id, payload)` (the keeper's own yes, for that payload, once), `rediscover()`, `stopEverywhere(id)` and `dropData(id)` (custom modules only).
+
+The check's one copy is `app/core/module-check/` (plain ESM, no dependencies; the module kit's `tools/lib` is made from it: see the README there). Its hostile samples and the words each must produce are one list, `hostile.mjs`, used by the check's own test and by the Store's `Add a module` test.

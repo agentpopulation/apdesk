@@ -1,0 +1,1 @@
+{ "id": "run-timer-chain", "number": 111, "name": "Timer chain", "description": "A hostile test module: a setTimeout chain that keeps running after switch-off. Never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "stub" }

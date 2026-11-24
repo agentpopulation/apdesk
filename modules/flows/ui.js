@@ -35,7 +35,7 @@ export const pages = {
       ui.on('job', (j) => { if (String(j?.kind || '').startsWith('flows.')) soon(); });
       ui.onLeave?.(() => clearTimeout(timer));
 
-      const agentName = (id) => ui.agent(id)?.name || 'Coordinator';
+      const agentName = (id) => ui.agent(id) ? ui.agentLine(id) : 'Manager';
       /** Shorten at a word, never in the middle of one; the full text stays on hover. */
       const short = (text, n) => { const s = String(text ?? '').replace(/\s+/g, ' ').trim(); if (s.length <= n) return s; const cut = s.slice(0, n + 1); const i = cut.lastIndexOf(' '); return (i > n * 0.4 ? cut.slice(0, i) : s.slice(0, n)).replace(/[\s,;:.-]+$/, '') + '…'; };
       const node = (title, small, cls = '', full = null) => h('div', { class: 'node ' + cls, title: full }, title, h('small', null, small));

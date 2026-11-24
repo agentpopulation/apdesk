@@ -1,0 +1,1 @@
+{"id":"bad-ctor-list-join","number":181,"name":"Tidy notes","description":"A hostile test module for the checker: the Function constructor reached by a built name. It is never added to a desk.","kind":"switch-on","defaultOn":false,"menu":[],"pages":[],"tools":[],"requires":[],"npm":{},"hosts":[],"status":"works"}

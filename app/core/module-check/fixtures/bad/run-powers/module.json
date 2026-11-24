@@ -1,0 +1,1 @@
+{ "id": "run-powers", "number": 110, "name": "Run powers", "description": "A hostile test module for the locked-down run: it tries a program, a file outside, a socket and the environment. Never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "stub" }

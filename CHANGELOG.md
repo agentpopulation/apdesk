@@ -316,6 +316,57 @@ Corrections after a full review of 0.1.1 on 22 Nov 2026: six reviewers read the 
 - README, the zip page and the contracts say what the code does today: the module count, what was run on Windows and when, the installer that opens in the browser, spend limits in your own currency. A test checks the records against the version, the module folders and the dates.
 - `ATTRIBUTION.md` credits the outside services the desk can call.
 
+## 0.2.0 (24 Nov 2026)
+
+New in this version: a team with plain roles and names of your own, three new modules, modules of your own in the Module Store, approvals from your phone, and corrections to the CRM. Each part was built, read by reviewers who tried to break it, corrected, and then checked part by part on a running desk on 24 Nov 2026. Built and tested on Linux; nothing in this version was run on Windows, and approving from a phone was not tried on a real phone.
+
+### Your team
+- The five built-in agents are named by what they do: Manager, Researcher, Sales expert, Operations expert and Coder. Ten more roles can be hired: AI Co-founder, Finance expert, Marketing expert, Product expert, AI expert, Secretary, Writer, Customer care expert, Recruiter and Data analyst.
+- An agent can carry a name of your own beside its role, shown as "Kent · Secretary" wherever the agent appears. The hire box has a name field with a suggestion, and a new agent's hello note offers "Give me a name".
+- On a desk from an earlier version, an agent you had renamed keeps its name and gains its role beside it; chats and messages are kept.
+- The word "keeper" on screen is now "Admin".
+- First start offers "Small business owner", with a team and starters that fit.
+
+### New modules
+- Playbooks: one-click jobs such as a weekly competitor watch, chasing unpaid invoices and a Monday pipeline review. Run one now or on a schedule, write your own, and share them as a file. A playbook that came from a file may read the web or your own records, never both in one run, has no tools that write, and shows its result as plain text.
+- Scorecard: a weekly record for each agent with work done, your ratings, cost, approvals asked and refused, and which model answered. It suggests a better model when an agent keeps scoring low and changes nothing by itself.
+- Meeting notes: record or paste a meeting and get notes, tasks and follow-up drafts that wait for your approval. Nothing is ticked for you, each item shows the meeting line it comes from, amounts are compared as figures, and a due day is set only from a short tested list of phrases.
+
+### Module Store: modules of your own
+- "Add a module" takes a zip. The desk reads its files, shows a label of what the module can do and who signed it, refuses it on any red line, and otherwise asks the Admin. An added module is off until you switch it on, reaches only the addresses and tools its own file lists, and gets the list of model keys but cannot change them.
+- "Build your own module" opens on two choices: a short form that makes a working starter at once, or the module kit and a filled task sheet to hand to any coding agent.
+- Added modules carry a quiet "Custom" tag, the Store has a filter for them, and the Admin can remove one. An update keeps them.
+- The Agents page has "Add a skill from a file" (text only; scripts and hidden characters are left out).
+- A module may list chat commands; typing one at the start of a message hands the text to that module.
+- The module check is one copy in the core, shared with the kit, and is tested against 61 hostile sample modules. Once an added module is loaded, no function on the desk leads to the constructors that make code from text, by any spelling.
+- The Store says plainly what the check cannot do: it reads files, never runs them, and cannot prove code is harmless.
+
+### Approvals
+- Changes to your customer records, repeating schedules and standing instructions for your agents always ask, at every security level and inside an auto-approve window, the same as sending to a person and adding a module. The auto-approve dialog and Settings › Security name all of them.
+- Approve from your phone: with the phone on the same network and paired by code, waiting approvals can be answered from it. It is off until you switch it on, and its settings say what plain http on your own network means.
+- Approval cards show plain words for the kind of action, never an internal name.
+- A job can be started so that every action in it asks.
+
+### Chat
+- Pictures from outside are never loaded by the desk, in chat or on any page; chat shows where the picture is and gives its address as a link.
+- A link in a reply shows the site it goes to.
+- A reply cannot say a contact or deal was saved when you said no to the card.
+- Agents can look up and change the CRM through tools of their own; figures from the CRM are marked as your own records.
+- A tool that a module registered for certain agents is offered only to them.
+
+### CRM and Office
+- An import over 5,000 rows is refused with the limit and the row count; nothing is cut quietly. Imports read `.xlsx` workbooks too.
+- Taking back an import keeps contacts and companies that another file, a watched list or a hand edit also has.
+- Phones are matched by the full number with its country code. An agent asks "the same one?" or "which one?" before making a second record.
+- Approval cards for CRM changes show the record in plain words.
+- Office tools write only into the tables and reports folders. The Markdown preview in Files shows where each link goes.
+- A currency with no smaller unit, such as yen, shows whole units.
+- With country India and no number style chosen, numbers group the Indian way (12,34,567).
+- Removed: the length cut on CRM name boxes, the stray "null" lines on empty CRM tabs and import previews, and the old agent names on the Sales and Research pages.
+
+### Records
+- README counts 38 modules and lists the roles; the measured table carries the numbers of 24 Nov 2026.
+
 ### Known weak points
 Each line that names a result carries the date it was measured. A line without a date is a limit of the design or of the code as of 22 Nov 2026.
 - Website rules apply only while the Network module is on, and an open auto-approve window lets an "ask first" site through.
@@ -338,3 +389,7 @@ Each line that names a result carries the date it was measured. A line without a
 - Offline does not cover programs the desk starts as separate processes, mail servers, or DNS lookups.
 - A module timer that ignores Panic keeps running after Panic; everything it tries through the desk's doors is refused
   while halted (`tools/safety/05_panic.js`, 14 Nov 2026).
+- Release 0.2.0, as of 24 Nov 2026: approving from a phone was not tried on a real phone. "Write the rest with a model" in Build your own module has not produced an accepted module on a free model in our runs. Saving meeting notes to a contact or company was pressed in the server test only, not in a browser. The CRM corrections were scored by the project's own reviewer, not yet by the independent tester.
+- The module check reads text. A member reached by a name worked out while the module runs (x[name]) can hide what it reaches; the label counts those places and the desk closes the way from there to code made from text, but a module still runs with the desk's own powers. Add one only from someone you would run a program from.
+- A plain fact an agent chooses to remember is kept without asking, even from a pasted meeting; only standing instructions ask. A reply can still say "saved" for a standing instruction you refused, with the footer line saying it did not work (seen with a scripted stand-in model on 24 Nov 2026).
+- The desk's own model work in this version was checked on free models in single asks only; the 17 acceptance asks and the independent first-user test have not been re-run on 0.2.0.

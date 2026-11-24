@@ -79,6 +79,18 @@ export async function activate(ctx) {
     return parts.join('\n\n');
   }
 
+  /** An agent's turn that saves a standing lesson or instruction asks the owner first, every time ('memory.lesson' always asks,
+   *  at every level and inside an auto-approve window). A lesson ("when I ask for leads, always include the city") and a
+   *  preference (how he wants work done) are both followed in later work, so both ask; an ordinary fact does not ask, and the
+   *  owner's own note on the Memory page does not ask. The card shows the exact words. { ok, decision }. */
+  const STANDING = new Set(['lesson', 'preference']);
+  async function askLesson(text, { agentId, chatId, jobId, signal } = {}) {
+    const d = await ctx.approval.request({ action: 'memory.lesson', agentId: agentId || 'coordinator', chatId: chatId || undefined, jobId: jobId || undefined, signal,
+      title: 'Keep a standing instruction', detail: `"${clip(text, 400)}" It would be followed in later work until you delete it on the Memory page.` });
+    return { ok: !!d?.ok, decision: d?.ok ? 'yes' : d?.reason === 'timeout' ? 'not answered' : d?.reason === 'halted' ? 'stopped' : 'no' };
+  }
+  const noLesson = (decision) => ({ ok: false, saved: false, refused: true, decision, error: decision === 'no' ? 'The owner said no to keeping this as a standing instruction. Nothing was saved: do not say it was.' : decision === 'stopped' ? 'Everything was stopped (Panic). Nothing was saved.' : 'The owner did not answer in time. Nothing was saved: do not say it was.' });
+
   // ---------- learning from chat
   const recentTurns = new Map();           // hash -> time, so a turn heard twice is learned once
   let queue = Promise.resolve();
@@ -112,6 +124,17 @@ export async function activate(ctx) {
       if (ev === 'NONE' || !text) { if (text) res.ignored.push('Already known: ' + text); continue; }
       if (looksSecret(text) || looksJunk(text)) { res.ignored.push('Not kept: ' + clip(text, 60)); continue; }
       const scope = kind === 'lesson' ? agentId : null;           // lessons belong to the agent taught; facts are shared
+      if (STANDING.has(kind)) {
+        // a lesson is kept only after the owner's yes on its card; the learning queue does not wait for him
+        const old = ev === 'UPDATE' && known.has(String(m.id)) ? known.get(String(m.id)) : null;
+        res.asked = [...(res.asked || []), text];
+        askLesson(text, { agentId, chatId }).then(({ ok }) => {
+          if (!ok) return;
+          const it = old ? store.update(old.id, { text, kind, keys: cleanKeys(m.keys) }) : store.add({ agentId: scope, text, kind, keys: cleanKeys(m.keys), sourceChat: chatId, source: 'chat' });
+          ctx.events.emit('memory', { change: 'learn', chatId, added: old ? 0 : 1, updated: old ? 1 : 0 });
+        }).catch(e => ctx.log('lesson not kept', e.message));
+        continue;
+      }
       if (ev === 'UPDATE' && known.has(String(m.id))) { const u = store.update(known.get(String(m.id)).id, { text, kind, keys: cleanKeys(m.keys) }); res.updated.push(u); continue; }
       const it = store.add({ agentId: scope, text, kind, keys: cleanKeys(m.keys), sourceChat: chatId, source: 'chat' });
       if (it.duplicate) { res.ignored.push('Already known: ' + text); continue; }
@@ -223,7 +246,10 @@ export async function activate(ctx) {
   // ---------- tools for the Coordinator
   ctx.tool({ name: 'memory_remember', description: 'Save something durable about the owner, his business or how he wants work done. kind: fact, preference, or lesson (a standing instruction for this agent).',
     parameters: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['fact', 'preference', 'lesson'] } }, required: ['text'] },
-    async run(args, call) { const it = await remember({ agentId: args.kind === 'lesson' ? call.agentId : null, text: args.text, kind: args.kind || 'fact', sourceChat: call.chatId, source: 'agent' }); return { saved: it.text, kind: it.kind, already: !!it.duplicate }; } });
+    async run(args, call) {
+      if (STANDING.has(args.kind)) { const a = await askLesson(args.text, call); if (!a.ok) return noLesson(a.decision); }
+      const it = await remember({ agentId: args.kind === 'lesson' ? call.agentId : null, text: args.text, kind: args.kind || 'fact', sourceChat: call.chatId, source: 'agent' }); return { saved: it.text, kind: it.kind, already: !!it.duplicate };
+    } });
   ctx.tool({ name: 'memory_recall', description: 'Look up what the desk remembers about the owner and his business.',
     parameters: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number' } }, required: ['query'] },
     async run(args, call) { const items = await recall({ agentId: call.agentId, query: args.query, limit: Math.min(10, args.limit || 5), signal: call.signal }); return { memories: items.map(m => ({ text: m.text, kind: m.kind, when: m.at })) }; } });

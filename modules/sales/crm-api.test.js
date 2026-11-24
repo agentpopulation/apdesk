@@ -15,8 +15,11 @@ test('crm api: other modules add companies and contacts through the merge rules,
     assert.equal(again.sources.find(s => s.from === A).at, '2026-11-05T10:00:00.000Z', 'a later read moves the date read forward');
     assert.equal(again.sources.length, 2, 'a source is kept once');
     const p = crm.addContact({ name: 'V Rao', email: 'v.rao@orbit.example', role: 'Buyer', companyId: c1.id }, { from: A, at: '2026-11-01T10:00:00.000Z' });
-    const p2 = crm.addContact({ name: 'Vik Rao', email: 'V.RAO@orbit.example' }, { from: A, at: '2026-11-03T10:00:00.000Z' });
-    assert.equal(p2.id, p.id, 'the same mail address merges'); assert.equal(p2.name, 'V Rao', 'a merge fills empty fields only');
+    const p2 = crm.addContact({ name: 'Vik Rao', email: 'V.RAO@orbit.example' }, { from: B, at: '2026-11-03T10:00:00.000Z' });
+    assert.equal(p2.id, p.id, 'the same mail address merges'); assert.equal(p2.name, 'V Rao', 'another source fills empty fields only');
+    assert.deepEqual(p2.left, ['name'], 'and says what it did not change');
+    const p3 = crm.addContact({ name: 'Vikram Rao', email: 'v.rao@orbit.example' }, { from: A, at: '2026-11-04T10:00:00.000Z' });
+    assert.equal(p3.name, 'Vikram Rao', 'the source that filled the name updates it on a later read'); assert.deepEqual(p3.synced, ['name']);
     assert.throws(() => crm.addCompany({ name: 'X' }, {}), /source/);
     assert.throws(() => crm.addCompany({ name: 'X' }, { from: 'typed by you' }), /source/, 'another module cannot pass for the owner');
     assert.equal(t.core.approval.listPending().length, 0, 'nothing asks to send');

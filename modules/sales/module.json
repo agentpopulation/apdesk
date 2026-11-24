@@ -9,7 +9,7 @@
   "pages": ["sales"],
   "settings": [],
   "agentTabs": [],
-  "tools": ["leads_find", "lead_add", "outreach_draft", "pipeline_move"],
+  "tools": ["leads_find", "lead_add", "outreach_draft", "pipeline_move", "crm_find", "crm_contact_save", "crm_company_save", "crm_deal_save", "crm_note_add"],
   "requires": [],
   "npm": { "ical.js": "^2.2.1" },
   "attribution": [],

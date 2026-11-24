@@ -75,6 +75,10 @@ export const NO_LIMITS = 'no limits';
 export const PAID_OFF = 'paid model calls are off until you set limits in Settings › Payments and spend. Free and local models work.';
 export const zeroLimit = (v) => v != null && v !== '' && Number(v) === 0;
 const KV_NS = 'core.model';
+// The modules that may add, switch and remove the owner's model keys. Named here, in the core, so a manifest cannot claim it.
+// Models manages them; Vault shows and removes them and already holds the plain database door (modules.js PRIVILEGED_DB),
+// so leaving it out would close nothing. core/modules.js names the module when it builds ctx.model (forModule(id)).
+export const KEY_MODULES = new Set(['models', 'vault']);
 /** Midnight at the start of the day (or of the month) that holds `ms`, in the owner's zone, as a Date. A zone this
  *  computer does not know falls back to the computer's own midnight. */
 export function dayStart(ms, timeZone, month = false) {
@@ -391,18 +395,18 @@ export class ModelDoor {
           if (shown) { shown = false; try { opts.onReset?.(); } catch {} }
           const r = await this.callOne(t, hopOpts, signal, deadline - Date.now());
           const ms = Date.now() - t0;
-          attempts.push({ provider: t.provider, model: t.model, ok: true, ms });
           this.last.set(t.provider, { ok: true, at: now(), model: t.model, ms });
           if (t.provider === 'llama') this.localEngine?.touch?.();
-          this.record({ ...opts, provider: t.provider, model: t.model, keyId: t.keyId, ok: true, ms, usage: r.usage });
-          return { ...r, provider: t.provider, model: t.model, via: t.via || null, label: this.label(t.provider, t.model, t.viaName), ms, attempts, fallbackUsed: attempts.length > 1, ...(t.small ? { small: true } : {}) };
+          const rec = this.record({ ...opts, provider: t.provider, model: t.model, keyId: t.keyId, ok: true, ms, usage: r.usage });
+          attempts.push({ provider: t.provider, model: t.model, ok: true, ms, callId: rec?.id ?? null, cost: rec?.cost ?? null });
+          return { ...r, provider: t.provider, model: t.model, via: t.via || null, label: this.label(t.provider, t.model, t.viaName), ms, attempts, fallbackUsed: attempts.length > 1, callId: rec?.id ?? null, cost: rec?.cost ?? null, ...(t.small ? { small: true } : {}) };
         } catch (e) {
           const ms = Date.now() - t0;
           if (signal.aborted || e.name === 'AbortError' || e.code === 'aborted') throw new ModelError('aborted', 'Stopped.', { attempts });
-          attempts.push({ provider: t.provider, model: t.model, ok: false, error: e.message, kind: failureKind(e), ms });
+          const rec = this.record({ ...opts, provider: t.provider, model: t.model, keyId: t.keyId, ok: false, ms, error: e.message });
+          attempts.push({ provider: t.provider, model: t.model, ok: false, error: e.message, kind: failureKind(e), ms, callId: rec?.id ?? null, cost: rec?.cost ?? null });
           if (!this.last.get(t.provider)?.ok || this.last.get(t.provider).model === t.model) this.last.set(t.provider, { ok: false, at: now(), model: t.model, error: short(e.message) });
           if (e.freeTier && t.keyId) this.reported(t.keyId, true);   // the provider said this key is on its free tier
-          this.record({ ...opts, provider: t.provider, model: t.model, keyId: t.keyId, ok: false, ms, error: e.message });
           if (t.via) { const b = this.backoffFor(e); this.cool('router', t.keyId, b.ms); this.coolWhy.set(t.keyId, { why: b.why, until: Date.now() + b.ms }); }
           else if (e.status === 429) this.cool(t.provider, (t.keyId || '-') + (t.via ? '' : '|' + t.model), /quota|per day|daily/i.test(e.message) ? 15 * 60000 : 60000);   // one model out of quota does not silence the key's other models
           else if (e.status === 401 || e.status === 403) this.cool(t.provider, t.keyId || '-', t.via ? 60000 : 10 * 60000);
@@ -747,8 +751,9 @@ export class ModelDoor {
   record(o) {
     try {
       const cost = this.estimate(o.provider, o.model, o.usage, o.keyId, !!o.ok);
-      this.s.run('INSERT INTO calls (at, agent_id, purpose, provider, model, ok, ms, input_tokens, output_tokens, cost_minor, currency, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', now(), o.agentId || null, o.purpose || 'chat', o.provider, o.model, o.ok ? 1 : 0, o.ms || 0, o.usage?.input || 0, o.usage?.output || 0, cost, this.settings.get('currency'), o.error || null);
-    } catch (e) { this.log('record failed', e.message); }
+      const r = this.s.run('INSERT INTO calls (at, agent_id, purpose, provider, model, ok, ms, input_tokens, output_tokens, cost_minor, currency, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', now(), o.agentId || null, o.purpose || 'chat', o.provider, o.model, o.ok ? 1 : 0, o.ms || 0, o.usage?.input || 0, o.usage?.output || 0, cost, this.settings.get('currency'), o.error || null);
+      return { id: Number(r?.lastInsertRowid ?? 0) || null, cost: cost ?? null };   // the row of this call: a caller sums its own calls by id
+    } catch (e) { this.log('record failed', e.message); return null; }
   }
   // ---------- learning from the call log
   /** The last LEARN.days of calls by kind of ask, provider and model: how many, how many answered, the median time of
@@ -874,8 +879,14 @@ export class ModelDoor {
     }
     finally { clearTimeout(t); }
   }
-  /** What a module gets. Keys are managed by the Models module through these calls; values never come back. */
-  forModule() {
+  /** What a module gets. Keys are managed only by the Models module (KEY_MODULES) through these calls; values never come
+   *  back. Every other module, an added module (core/modules.js passes '' for one) and a caller that names no module get
+   *  no way to add, switch or remove the owner's model keys. */
+  forModule(moduleId) {
+    // the list (labels and masked values, never a value) is for every module, the Doctor's key check among them
+    const keys = KEY_MODULES.has(moduleId)
+      ? Object.freeze({ list: () => this.listKeys(), add: (p, v, l, m) => this.addKey(p, v, l, m), toggle: (id, on) => this.toggleKey(id, on), remove: (id) => this.removeKey(id), tier: (id, t) => this.setKeyTier(id, t) })
+      : Object.freeze({ list: () => this.listKeys() });
     return Object.freeze({
       chat: (o) => this.chat(o), embed: (o) => this.embed(o), active: () => this.active(), listModels: (p) => this.listModels(p), modelCatalog: (p) => this.modelCatalog(p), resolve: (id) => this.resolve(id), label: (p, m) => this.label(p, m),
       providers: () => Object.fromEntries(Object.entries(PROVIDERS).map(([k, v]) => [k, { name: v.name, baseUrl: v.baseUrl, signup: v.signup, defaultModel: v.defaultModel, tier: v.tier || 'paid', freeNote: v.freeNote || null }])),
@@ -885,7 +896,7 @@ export class ModelDoor {
       learned: () => this.learnedView(), lastCalls: () => this.lastCalls(),
       /** The assistant message to send back before the tool results, with everything the provider needs kept (Gemini's signature). */
       toolMessage: (r) => toolMessage(r),
-      keys: { list: () => this.listKeys(), add: (p, v, l, m) => this.addKey(p, v, l, m), toggle: (id, on) => this.toggleKey(id, on), remove: (id) => this.removeKey(id), tier: (id, t) => this.setKeyTier(id, t) },
+      keys,
       routerModels: () => this.routerModels(), ollamaModels: () => this.ollamaModels(), usage: () => this.usage(), get online() { return undefined; },
     });
   }

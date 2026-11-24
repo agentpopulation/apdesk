@@ -202,7 +202,7 @@ test('a space reached from outside it: its exposed functions and doors run in it
 
     // Offline: the local model addresses are the keeper's for the whole PC: another space cannot set its own, it reads
     // the keeper's, and no space reaches an address the keeper did not set
-    assert.throws(() => B.settings.set('ollama.baseUrl', urlB.slice(0, -1)), /keeper's own desk/);
+    assert.throws(() => B.settings.set('ollama.baseUrl', urlB.slice(0, -1)), /Admin's own desk/);
     A.settings.set('ollama.baseUrl', urlA.slice(0, -1));
     assert.equal((await t.call('/api/settings', { body: { online: false } })).status, 200);
     try {

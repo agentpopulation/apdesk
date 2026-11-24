@@ -1,0 +1,1 @@
+{"id": "bad-fs-join-climb", "number": 93, "name": "Path join climb", "description": "A hostile test module for the kit's checker, after the reviewer's h05-fsclimb. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

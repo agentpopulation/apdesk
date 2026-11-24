@@ -1,0 +1,1 @@
+{"id": "bad-template-import", "number": 154, "name": "Template import", "description": "A hostile test module for the checker: Imports node:child_process with a template literal at run time. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

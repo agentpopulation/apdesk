@@ -502,12 +502,12 @@ export const pages = {
       async function tabAgents() {
         st.groups = await availableGroups(ui);
         const agents = (await ui.api('agents')).agents;
-        const rows = agents.map(a => { const r = agentModelRow(ui, a, st.groups); return ui.h('tr', null, ui.h('td', null, ui.h('b', null, a.name), r.note.textContent ? ui.h('div', null, r.note) : null), ui.h('td', null, r.main), ui.h('td', null, r.fb), ui.h('td', { class: 'mk' }, r.mark)); });
+        const rows = agents.map(a => { const r = agentModelRow(ui, a, st.groups); return ui.h('tr', null, ui.h('td', null, ui.h("b", null, ui.agentLine(a)), r.note.textContent ? ui.h('div', null, r.note) : null), ui.h('td', null, r.main), ui.h('td', null, r.fb), ui.h('td', { class: 'mk' }, r.mark)); });
         return [...groupNotes(ui, st.groups), ui.h('div', { class: 'scroll' }, ui.h('table', { class: 'mdl-agents' }, ui.h('thead', null, ui.h('tr', null, ui.h('th', null, 'Agent'), ui.h('th', null, 'Main model'), ui.h('th', null, 'Fallback'), ui.h('th', null, ''))), ui.h('tbody', null, rows))),
           ui.h('p', { class: 'mdl-note', 'data-apd': 'saved-as-made', style: { marginTop: '8px' } }, 'Each choice is saved as you make it.'),
           ui.h('p', { class: 'sub', style: { marginTop: '4px' } }, `Main model, then fallback, then the ${(st.groups.defaultLabel || 'desk default').replace(/^Desk default/, 'desk default')}. Only models that answer or are installed now are offered.`)];
       }
-      const coolWords = (c) => c.why === 'not_online' ? 'not reached: this PC is not online' : c.why === 'unavailable' ? 'Unavailable at the host' : c.why === 'busy' ? `busy, tried again after ${ui.fmt.time(c.until)}` : c.why === 'timeout' ? `slow, tried again after ${ui.fmt.time(c.until)}` : `skipped until ${ui.fmt.time(c.until)}`;
+      const coolWords = (c) => c.why === 'not_online' ? 'not reached: this PC is not online' : c.why === 'unavailable' ? 'Unavailable at the host' : c.why === 'busy' ? `busy, tried again after ${ui.fmt.time(c.until)}` : c.why === 'timeout' ? `slow, tried again after ${ui.fmt.time(c.until)}` : c.why === 'no_credit' ? `out of credit, tried again after ${ui.fmt.time(c.until)}` : `skipped until ${ui.fmt.time(c.until)}`;
       async function tabRouter() {
         const rs = await ui.api(API + 'router');
         const url = ui.h('input', { type: 'text', value: rs.baseUrl, style: { width: '260px' }, 'aria-label': 'Router address' });

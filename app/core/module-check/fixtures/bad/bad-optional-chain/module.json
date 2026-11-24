@@ -1,0 +1,1 @@
+{"id": "bad-optional-chain", "number": 141, "name": "Optional chain", "description": "A hostile test module for the checker: Starts a program through optional chaining (process?.getBuiltinModule). It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

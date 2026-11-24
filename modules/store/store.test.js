@@ -5,11 +5,12 @@ import fs from 'node:fs'; import path from 'node:path'; import { fileURLToPath }
 import { CATALOG, merge } from './ui-catalog.js';
 const MODS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-// Every module folder that has a manifest.
-const FOLDERS = fs.readdirSync(MODS, { withFileTypes: true }).filter(d => d.isDirectory() && fs.existsSync(path.join(MODS, d.name, 'module.json'))).map(d => d.name);
+// Every built-in module folder that has a manifest: the one list, modules/shipped.json (shipped.test.js keeps it true).
+const SHIPPED = JSON.parse(fs.readFileSync(path.join(MODS, 'shipped.json'), 'utf8')).entries;
+const FOLDERS = SHIPPED.filter(n => fs.existsSync(path.join(MODS, n, 'module.json')));
 const manifest = (id) => JSON.parse(fs.readFileSync(path.join(MODS, id, 'module.json'), 'utf8'));
 
-test('catalog lists every module folder in this build, once, and nothing else', () => {
+test('catalog lists every built-in module folder, once, and nothing else', () => {
   assert.deepEqual(CATALOG.map(c => c.id).sort(), [...FOLDERS].sort());
   assert.equal(new Set(CATALOG.map(c => c.number)).size, CATALOG.length, 'numbers are unique');
 });

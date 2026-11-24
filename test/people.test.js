@@ -10,7 +10,7 @@ import { testDesk } from './helpers/desk.js';
 import { createDesk } from '../app/server.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const KEEPER_NO = 'Only the keeper of this PC can do that.';
+const KEEPER_NO = 'Only the Admin of this PC can do that.';
 const MODS = ['chat', 'memory', 'sales', 'search', 'network', 'bench', 'finder', 'tables', 'models'];
 
 /** A call with a given token (or none). */
@@ -202,7 +202,7 @@ test('reset: by the keeper with the keeper\'s PIN (the person is told who and wh
     assert.equal((await k(`/api/people/${B.id}/reset-pin`, { body: { pin: '2468', newPin: '9999' } })).status, 200);
     const e = await as(t, null)('/api/people/enter', { body: { id: B.id, pin: '9999' } });
     assert.equal(e.status, 200);
-    assert.equal(e.json.notice.resetBy, 'Keeper'); assert.ok(e.json.notice.resetAt);
+    assert.equal(e.json.notice.resetBy, 'Admin'); assert.ok(e.json.notice.resetAt);
     assert.ok(cB(d, B.id).approval.activityList(20).some(r => r.action === 'people.pin.reset'), 'the reset is in B\'s activity log');
     // the tool refuses while the desk runs
     const tool = () => spawnSync(process.execPath, [path.join(ROOT, 'setup', 'reset-pin.mjs')], { encoding: 'utf8', env: { ...process.env, APD_DATA: dir } });

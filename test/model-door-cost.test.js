@@ -148,3 +148,16 @@ test('many small calls of unknown cost still add up against the limit: their lis
     assert.equal(t.core.model.overLimit(), 'daily spend limit');
   } finally { await t.close(); }
 });
+
+test('a call names its own row in the call log: callId and cost on the answer and on each attempt', async () => {
+  const t = await testDesk();
+  try {
+    const r = await ask(t, { agentId: 'scout' });
+    assert.ok(Number.isInteger(r.callId) && r.callId > 0, 'callId ' + r.callId);
+    const row = t.core.storage.get('SELECT id, agent_id, cost_minor FROM calls WHERE id = ?', r.callId);
+    assert.equal(row.agent_id, 'scout');
+    assert.equal(r.cost, row.cost_minor);
+    const last = r.attempts.at(-1);
+    assert.equal(last.callId, r.callId); assert.equal(last.cost, row.cost_minor);
+  } finally { await t.close(); }
+});

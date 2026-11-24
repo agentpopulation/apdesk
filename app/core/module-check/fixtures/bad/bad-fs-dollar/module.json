@@ -1,0 +1,1 @@
+{"id": "bad-fs-dollar", "number": 100, "name": "Dollar alias", "description": "A hostile test module for the kit's checker, after the reviewer's h12-secondfile. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

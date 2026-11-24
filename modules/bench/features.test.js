@@ -126,7 +126,7 @@ test('usage: a per-agent view from the model-call log, with an owner-only CSV ex
     assert.ok(scout); assert.equal(scout.calls, 2); assert.equal(scout.errors, 1); assert.equal(scout.inputTokens, 1000);
     assert.ok(u.agents.find((a) => a.agent === 'closer'));
     const csv = await t.call('/api/m/bench/usage.csv');
-    assert.equal(csv.status, 200); assert.match(csv.text.split('\r\n')[0], /^agent,calls,errors,/); assert.match(csv.text, /scout,2,1,/);
+    assert.equal(csv.status, 200); assert.match(csv.text.split('\r\n')[0], /^agent,calls,errors,/); assert.match(csv.text, /Researcher,2,1,/); assert.doesNotMatch(csv.text, /scout|closer/); assert.equal(scout.name, 'Researcher'); assert.equal(u.agents.find((a) => a.agent === 'closer').name, 'Sales expert');
     const denied = await t.call('/api/m/bench/usage.csv', { session: false });
     assert.equal(denied.status, 403, 'CSV export is owner-only');
   } finally { await t.close(); }

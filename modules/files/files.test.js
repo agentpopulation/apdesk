@@ -95,3 +95,17 @@ test('PDF text: a pdfkit document reads in order, per page, with plain errors', 
   await assert.rejects(pdfToText(await made({}, (d) => d.rect(50, 50, 100, 100).fill('#000'))), { code: 'pdfNoText' });
   await assert.rejects(pdfToText(await made({ userPassword: 'secret' }, (d) => d.text('hidden'))), { code: 'encrypted' });
 });
+
+test('readTable: an .xlsx workbook gives every row of its first sheet as cell text; CSV too; anything else is refused plainly', async () => {
+  const { readTable } = await import('./convert.js');
+  const { createRequire } = await import('node:module');
+  const ExcelJS = createRequire(import.meta.url)('exceljs');
+  const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet('Customers');
+  ws.addRow(['Company', 'Phone']); for (let i = 0; i < 2500; i++) ws.addRow([`Firm ${i}`, `+91 98000 ${String(i).padStart(5, '0')}`]);
+  const t = readTable(Buffer.from(await wb.xlsx.writeBuffer()), '.xlsx');
+  assert.equal(t.sheet, 'Customers'); assert.equal(t.rows.length, 2501, 'every row, not cut at the preview limit');
+  assert.deepEqual(t.rows[1], ['Firm 0', '+91 98000 00000']);
+  assert.deepEqual(readTable(Buffer.from('a,b\n1,2\n'), 'csv').rows, [['a', 'b'], ['1', '2']]);
+  assert.throws(() => readTable(Buffer.from('x'), '.pdf'), /Only \.xlsx and \.csv/);
+  assert.throws(() => readTable(Buffer.from('not a zip'), '.xlsx'), /damaged/);
+});

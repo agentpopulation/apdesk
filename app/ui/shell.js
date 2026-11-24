@@ -1,10 +1,10 @@
 // The shell: top bar, the official menu, theme, Panic, approvals, Home, onboarding, Settings frame, module pages.
 import * as kit from '/ui/kit.js';
-import { homePage, ROLES, applyRole, teamFor, STARTING_TEAM } from '/ui/pages/home.js';
+import { homePage, ROLES, applyRole, teamFor, hiresFor, STARTING_TEAM } from '/ui/pages/home.js';
 import { settingsPage, coreSettingsSections, ABOUT_MAX, ABOUT_HELP, placeChoice, placeOptions, modernZone } from '/ui/pages/settings.js';
 import { trackerPage, trackerBody } from '/ui/pages/tracker.js';
 import { MENU_KEY, cleanMenu, arrangeMenu, firstPlace, placeName, tabTitle, cutPlaces, menuEnds } from '/ui/menus.js';
-import { mergeJob, runningCount, needsYou, updateReady, leftWords, popShowsDownloads, whoAsks, jobWho, trackWriting, writingWords } from '/ui/tracker-data.js';
+import { mergeJob, runningCount, needsYou, updateReady, leftWords, popShowsDownloads, whoAsks, jobWho, trackWriting, writingWords, setAgentLine, agentLineOf } from '/ui/tracker-data.js';
 import { showChooser, switcherMenu, personAvatar, takeEntryNotice } from '/ui/people.js';
 const { $, $$, h, api, toast } = kit;
 
@@ -23,6 +23,8 @@ const ui = {
   onLeave(fn) { pageCleanup.push(fn); },
   moduleOn: (id) => state.modules.some(m => m.id === id && m.on),
   agent: (id) => state.agents.find(a => a.id === id) || null,
+  /** The one line that names an agent on screen ("Kent · Secretary", or the role alone): pass the agent or its id. */
+  agentLine: (a) => agentLineOf(typeof a === 'string' ? state.agents.find(x => x.id === a) || null : a),
   whoAsks: (a) => whoAsks(state.agents, a),
   label: (page, fallback) => ownName(page) || roleLabel(page, fallback),
   /** The owner's name for a menu place (his own name, else the default), for a module's own texts; null when it is not a place. */
@@ -170,7 +172,7 @@ function paintWho() {
   b.hidden = !show;
   if (!show) return;
   b.replaceChildren(personAvatar(state.me, 'bar'));
-  const name = `${state.me.name}${state.me.keeper ? ', keeper of this PC' : ''}. Switch person, lock the window`;
+  const name = `${state.me.name}${state.me.keeper ? ', admin of this PC' : ''}. Switch person, lock the window`;
   b.setAttribute('aria-label', name); b.title = name;
 }
 // An Incognito window wears a plain mark in the top bar: nothing is saved here. Shown only while this window is in
@@ -215,7 +217,7 @@ function stoppedSection() {
   return h('div', { class: 'card', 'data-apd': 'stopped', style: { marginBottom: '8px' } },
     h('div', { class: 'row' }, h('h3', null, 'Stopped by Panic'), h('span', { class: 'grow' }), one ? null : kit.btn('Dismiss all', { kind: 'ghost sm', onClick: () => dismissStopped({ all: true }) })),
     h('p', { class: 'sub' }, one ? 'This was waiting for you when you pressed Panic. It was cancelled. Ask again if you still want it.' : 'These were waiting for you when you pressed Panic. They were cancelled. Ask again if you still want them.'),
-    ...list.map(a => kit.line(a.title, `${jobWho(state.agents, a)} · ${ACTION_WORDS[a.action] || a.action} · stopped ${kit.fmt.when(a.decided)}`,
+    ...list.map(a => kit.line(a.title, `${jobWho(state.agents, a)} · ${ACTION_WORDS[a.action] || 'Action'} · stopped ${kit.fmt.when(a.decided)}`,
       kit.btn('Dismiss', { kind: 'ghost sm', onClick: () => dismissStopped({ id: a.id }) }))));
 }
 // The rows of an approval card in plain words: a key becomes words ("toAddress" reads "To address"), a size in bytes
@@ -229,19 +231,21 @@ function approvalCard(a) {
   const rows = []; const walk = (obj, prefix) => { for (const [k, v] of Object.entries(obj || {})) { if (v == null) continue; if (typeof v === 'object') walk(v, prefix + k + '.'); else rows.push([prefix + k, String(v)]); } };
   if (a.payload && typeof a.payload === 'object') walk(a.payload, ''); else if (a.payload != null) rows.push(['', String(a.payload)]);
   const download = a.payload?.kind === 'download';
-  const shown = rows.filter(([k]) => !(download && DOWNLOAD_BOOKKEEPING.has(k))).map(([k, v]) => [k, /(^|\.)(size|bytes)$/i.test(k) && /^\d+$/.test(v) ? kit.fmt.bytes(Number(v)) : v]);
+  // the address stays off an install or a download whose own line already names the host ("From example.org, ...")
+  const hostNamed = (a.action === 'install' || download) && /^From \S/.test(a.detail || '');
+  const shown = rows.filter(([k]) => !(download && DOWNLOAD_BOOKKEEPING.has(k)) && !(hostNamed && k === 'url')).map(([k, v]) => [k, /(^|\.)(size|bytes)$/i.test(k) && /^\d+$/.test(v) ? kit.fmt.bytes(Number(v)) : v]);
   const total = shown.reduce((n, r) => n + r[1].length, 0);
   const body = shown.length ? h('div', { class: 'draft', style: { marginTop: '8px', maxHeight: '260px', overflow: 'auto' } },
     shown.map(([k, v]) => h('div', { style: { marginBottom: '6px' } }, k ? h('span', { class: 'sub', style: { display: 'block' } }, rowWords(k) + (v.length > 400 ? ` (${v.length} characters)` : '')) : null, h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: /code|command|script|body|text|content/i.test(k) && v.length > 120 ? 'var(--mono)' : null, fontSize: v.length > 600 ? '12.5px' : null } }, v)))) : null;
   return h('div', { class: 'card', style: { marginBottom: '8px' } },
-    h('div', { class: 'row' }, h('b', null, a.title), kit.pill(ACTION_WORDS[a.action] || a.action, 'wait')),
+    h('div', { class: 'row' }, h('b', null, a.title), kit.pill(ACTION_WORDS[a.action] || 'Action', 'wait')),
     h('div', { class: 'sub' }, `${whoAsks(state.agents, a)}${a.detail ? ' · ' + a.detail : ''}${a.amount ? ' · ' + kit.fmt.money(a.amount, a.currency) : ''}`),
     body, total > 1500 ? h('div', { class: 'sub', style: { marginTop: '4px' } }, `Scroll to read all of it: ${total} characters. What you approve is exactly this.`) : null,
     h('div', { class: 'row', style: { marginTop: '8px' } }, h('span', { class: 'grow' }),
       kit.btn('Deny', { kind: 'ghost sm', onClick: () => ui.decide(a.id, 'deny').catch(e => toast(e.message, 'err')) }),
       kit.btn(a.action === 'send.person' ? 'Approve and send' : 'Approve', { kind: 'sm', onClick: () => ui.decide(a.id, 'approve').catch(e => toast(e.message, 'err')) })));
 }
-const ACTION_WORDS = { 'file.write': 'Write a file', 'file.delete': 'Delete a file', 'file.read.outside': 'Open a folder', 'shell.run': 'Run a command', 'browser.open': 'Open a site', 'browser.act': 'Act in the browser', 'net.post': 'Send data', 'send.person': 'Send to a person', spend: 'Spend money', 'module.toggle': 'Switch a module', install: 'Install', login: 'Sign in', 'calendar.write': 'Change the calendar', custom: 'Action' };
+const ACTION_WORDS = { 'file.write': 'Write a file', 'file.delete': 'Delete a file', 'file.read.outside': 'Open a folder', 'shell.run': 'Run a command', 'browser.open': 'Open a site', 'browser.act': 'Act in the browser', 'net.post': 'Send data', 'send.person': 'Send to a person', spend: 'Spend money', 'module.toggle': 'Switch a module', install: 'Install', login: 'Sign in', 'calendar.write': 'Change the calendar', 'record.change': 'Change your records', 'schedule.repeat': 'Repeating schedule', 'memory.lesson': 'Standing instruction', custom: 'Action' };
 ui.approvalCard = approvalCard; ui.ACTION_WORDS = ACTION_WORDS;
 // ---------- one pop-up under the top bar: what waits for the owner, the downloads, or the network
 const POP_BUTTON = { approvals: 'waiting', downloads: 'dl', network: 'net', tracker: 'trk' };
@@ -620,7 +624,7 @@ function paintOnboarding() {
   if (state.settings.onboarded) { if (open) firstStep(state.settings.role); return; }
   $('#onb-place')?.remove();
   $('#roles').before(placeRow());
-  $('#roles').replaceChildren(...Object.entries(ROLES).map(([id, r]) => h('button', { class: 'role', onclick: () => chooseRole(id) }, h('b', null, r.name), h('span', null, r.desc))));
+  $('#roles').replaceChildren(...Object.entries(ROLES).map(([id, r]) => h('button', { class: 'role', 'data-role': id, onclick: () => chooseRole(id) }, h('b', null, r.name), h('span', null, r.desc))));
 }
 async function chooseRole(id) {
   const fresh = !state.settings.onboarded;
@@ -697,16 +701,22 @@ function localModelBox({ openModels } = {}) {
 async function firstStep(roleId) {
   const box = $('#onb .card'); const done = () => { $('#onb').hidden = true; paintChrome(); render(); };
   const role = ROLES[roleId];
-  const help = roleId === 'sales' ? 'What you sell, who buys it, and where. Your agents use this for leads, drafts and research.' : ABOUT_HELP;
-  const about = h('textarea', { id: 'onb-about', rows: 3, maxlength: String(ABOUT_MAX), 'aria-label': 'What do you do?', placeholder: 'For example: Payroll software for small firms. HR heads buy it, in our region.' });
-  // the team: the agents a fresh desk has, ticked from the role; the Coordinator is always on
+  const help = roleId === 'business' ? 'What you sell, who buys it, and where. Your agents use this for customers, invoices, leads and posts.' : roleId === 'sales' ? 'What you sell, who buys it, and where. Your agents use this for leads, drafts and research.' : ABOUT_HELP;
+  const about = h('textarea', { id: 'onb-about', rows: 3, maxlength: String(ABOUT_MAX), 'aria-label': 'What do you do?', placeholder: 'For example: A bakery. Shops and offices nearby buy our bread and cakes.' });
+  // the team: the agents a fresh desk has, ticked from the role; the Manager is always on
   const want = new Set(teamFor(roleId));
   const ticks = state.agents.filter(a => STARTING_TEAM.includes(a.id)).map(a => {
     const always = a.id === 'coordinator';
-    const cb = h('input', { type: 'checkbox', value: a.id, checked: always || want.has(a.id), disabled: always, 'aria-label': a.name });
-    return h('label', { class: 'tick' }, cb, h('span', null, h('b', null, a.name), h('span', { class: 'd' }, always ? 'Always on. ' + a.role : a.role)));
+    const cb = h('input', { type: 'checkbox', value: a.id, checked: always || want.has(a.id), disabled: always, 'aria-label': ui.agentLine(a) });
+    return h('label', { class: 'tick' }, cb, h('span', null, h('b', null, ui.agentLine(a)), h('span', { class: 'd' }, always ? 'Always on. It sums up every group. ' + a.role : a.role)));
   });
-  const team = ui.moduleOn('agents') && ticks.length > 1 ? h('div', null, h('h3', null, 'Your team'), h('p', { class: 'sub' }, 'Ticked for ' + (role ? role.name.toLowerCase() : 'everything') + '. You can hire or retire agents later on the Agents page.'), h('div', { class: 'ticks' }, ticks)) : null;
+  // roles to hire for this kind of work, ticked; one whose module is off says which module to switch on, unticked
+  const hireTicks = hiresFor(roleId).map(id => hireRoles.find(r => r.id === id)).filter(Boolean).filter(r => !state.agents.some(a => a.id === r.id)).map(r => {
+    const off = r.module && !ui.moduleOn(r.module) ? (state.modules.find(m => m.id === r.module)?.name || r.module) : null;
+    const cb = h('input', { type: 'checkbox', value: r.id, checked: !off, disabled: !!off, 'data-hire': r.id, 'aria-label': r.label });
+    return h('label', { class: 'tick' + (off ? ' blocked' : '') }, cb, h('span', null, h('b', null, r.label), h('span', { class: 'd' }, off ? `${r.line}. Switch on ${off} in Settings › Modules first.` : r.line)));
+  });
+  const team = ui.moduleOn('agents') && ticks.length > 1 ? h('div', null, h('h3', null, 'Your team'), h('p', { class: 'sub' }, 'Ticked for ' + (role ? role.name.toLowerCase() : 'everything') + '. You can hire or retire agents later on the Agents page.'), h('div', { class: 'ticks' }, ticks, hireTicks)) : null;
   // the model note comes in when the desk has said whether a fast model is there; the screen does not wait for it
   const noteSeen = !!state.settings['ui.modelNoteSeen'];
   const noteSlot = h('div', { hidden: true });
@@ -732,8 +742,13 @@ async function firstStep(roleId) {
         // an agent left unticked is retired the way the Agents page retires it; the rooms then follow the team
         const off = ticks.map(t => t.querySelector('input')).filter(cb => !cb.checked && !cb.disabled).map(cb => cb.value);
         for (const id of off) await api(`m/agents/agents/${encodeURIComponent(id)}`, { method: 'DELETE' });
-        if (off.length && ui.moduleOn('chat')) api('m/chat/rooms/fit', { method: 'POST' }).catch(() => {});   // the rooms follow in the background
-        if (off.length) state.agents = (await api('agents')).agents;
+        // a ticked role to hire joins by its role (no own name yet: its hello note offers "Give me a name")
+        const hires = hireTicks.map(t => t.querySelector('input')).filter(cb => cb.checked && !cb.disabled).map(cb => cb.value);
+        const missed = [];
+        for (const roleId of hires) { try { await api('m/agents/hire', { body: { roleId } }); } catch (e) { missed.push(hireRoles.find(r => r.id === roleId)?.label || roleId); } }
+        if (missed.length) toast(`Not hired: ${missed.join(', ')}. You can hire them on the Agents page.`, 'err', 9000);
+        if ((off.length || hires.length) && ui.moduleOn('chat')) api('m/chat/rooms/fit', { method: 'POST' }).catch(() => {});   // the rooms follow in the background
+        if (off.length || hires.length) state.agents = (await api('agents')).agents;
       }
       // the local model: only on Save, only when ticked. Each download then asks the owner, as every download does.
       const modelId = saveIt && withLocal ? local.wanted() : null;
@@ -849,8 +864,11 @@ async function startDesk() {
   takeEntryNotice();              // wrong tries or a PIN reset, told once on entry
   await boot();
 }
+/** The Agents module's display line (one helper for every page); the stored name stays when it cannot be read. */
+let hireRoles = [];   // the roles to hire (modules/agents/ui-roles.js), for the first-start step
+async function loadAgentLine() { try { const m = await import('/modules/agents/ui-roles.js'); setAgentLine(m.agentLine); hireRoles = m.HIRE_ROLES || []; } catch { /* the stored name shows */ } }
 async function boot() {
-  await refresh();
+  await Promise.all([refresh(), loadAgentLine()]);
   await refreshWho();
   if (state.locked) onbWaits = true; else paintOnboarding();
   // a country, currency, zone or style stored before that this computer cannot use was replaced at start: said once

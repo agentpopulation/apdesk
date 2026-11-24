@@ -170,7 +170,7 @@ export function modal({ title, body, actions = [], wide = false, onClose } = {})
   const box = h('div', { class: 'card', style: wide ? { maxWidth: '860px' } : null },
     title ? h('h3', null, title) : null,
     typeof body === 'string' ? h('p', { class: 'sub' }, body) : body,
-    h('div', { class: 'row' }, h('span', { class: 'grow' }), actions.map(a => btn(a.label, { kind: a.kind || 'ghost', onClick: async () => { const r = await a.onClick?.(); if (r !== false) close(a.value); } }))));
+    h('div', { class: 'row' }, h('span', { class: 'grow' }), actions.map(a => btn(a.label, { kind: a.kind ?? 'ghost', onClick: async () => { const r = await a.onClick?.(); if (r !== false) close(a.value); } }))));
   host.replaceChildren(box); host.hidden = false;
   host.onclick = (e) => { if (e.target === host) close(undefined); };
   // the first button is the safe one (Cancel, Close), so Enter never lands on a destructive choice by itself
@@ -215,7 +215,8 @@ export const fmt = {
   // cents so it is true ("$0.42"), and less than one cent reads "less than $0.01", never "$0" for money that was spent.
   money: (minor, currency = prefs.currency) => {
     const n = (Number(minor) || 0) / 100; const c = cur(currency); const abs = Math.abs(n);
-    const one = (v, small) => { const o = c ? { style: 'currency', currency: c } : {}; try { return new Intl.NumberFormat(loc(), small ? { ...o, minimumFractionDigits: v === Math.round(v) ? 0 : 2, maximumFractionDigits: 2 } : { ...o, maximumFractionDigits: 0 }).format(v); } catch { return String(v); } };
+    const digits = () => { try { return c ? new Intl.NumberFormat('en', { style: 'currency', currency: c }).resolvedOptions().maximumFractionDigits : 2; } catch { return 2; } };
+    const one = (v, small) => { const o = c ? { style: 'currency', currency: c } : {}; try { return new Intl.NumberFormat(loc(), small ? { ...o, minimumFractionDigits: v === Math.round(v) ? 0 : Math.min(2, digits()), maximumFractionDigits: Math.min(2, digits()) } : { ...o, maximumFractionDigits: 0 }).format(v); } catch { return String(v); } };
     if (abs > 0 && abs < 0.005) return 'less than ' + one(0.01, true) + (n < 0 ? ' below zero' : '');
     return one(n, abs < 100);
   },

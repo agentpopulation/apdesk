@@ -62,6 +62,6 @@ test('work meant for a retired agent: the Coordinator does it and says so in one
     await t.call('/api/m/chat/chats/everyone/send', { body: { text: 'Look into edge data centres' } });
     const last = await settle(t, 'everyone');
     assert.equal(last.status, 'done'); assert.deepEqual(ran, ['coordinator']);
-    assert.match(last.text, /Scout is not on your team, so I did this myself\. Hire Scout on the Agents page to hand this work over\.$/);
+    assert.match(last.text, /The Researcher is not on your team, so I did this myself\. Hire the Researcher on the Agents page to hand this work over\.$/);
   } finally { await t.close(); }
 });

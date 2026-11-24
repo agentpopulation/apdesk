@@ -25,7 +25,7 @@ Without installing: double-click `start.bat` in the unzipped folder. The desk ru
 | `uninstall.bat` | Removes AP Desk. Asks before deleting your data. |
 | `README.md` | This page. |
 | `app` | The shell and the four doors: models, approvals, storage, modules. |
-| `modules` | The 35 modules, one folder each. 17 are on from the first run. |
+| `modules` | The 38 modules, one folder each. 20 are on from the first run. |
 | `vendor` | Open-source code copied in, with its licences. |
 | `node_modules` | Installed packages. |
 | `setup` | The installer, `setup.bat` (first run), `reinstall.bat` (repair), `autostart.bat on` or `off` (start when you sign in), the icon and the start page. |

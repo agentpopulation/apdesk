@@ -1,0 +1,1 @@
+{"id": "bad-escaped-name", "number": 92, "name": "Escaped name", "description": "A hostile test module for the kit's checker, after the reviewer's h04-escape-md. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

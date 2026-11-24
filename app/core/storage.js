@@ -97,7 +97,8 @@ const SQL_READ_ONLY = new Set(['agents', 'jobs', 'calls']);
 /** Another module's tables (m_<id>_...): never written by a module that is not their own. Read only where a shipped module
  *  depends on it today, until the owner of the table offers the same through its exposed API. */
 const OTHER_MODULE_READS = {};   // none: a module asks another for its data through ctx.modules.api(id)
-const othersTable = (table, moduleId) => table.startsWith('m_') && !table.startsWith('m_' + String(moduleId).toLowerCase() + '_');
+// a module's own tables are m_<id>_..., with each dash in the id written as an underscore (core/modules.js tablePrefix)
+const othersTable = (table, moduleId) => table.startsWith('m_') && !table.startsWith('m_' + String(moduleId).toLowerCase().replace(/-/g, '_') + '_');
 const stripSql = (sql) => String(sql).replace(/--[^\n]*/g, ' ').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/'(?:[^']|'')*'/g, "''").replace(/["`\[\]]/g, ' ').toLowerCase();
 /** Split a script into its statements at top-level semicolons (quotes and comments respected). */
 export function splitSql(sql) {

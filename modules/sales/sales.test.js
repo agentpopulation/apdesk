@@ -36,7 +36,7 @@ test('drafts wait, no approval until the press, deny keeps, Mail off never sends
     const r = await t.core.modules.runTool('outreach_draft', { top: 5 }, { agentId: 'coordinator' });
     assert.equal(r.drafts.length, 1); const d = r.drafts[0];
     assert.equal(t.core.approval.listPending().length, 0, 'saving a draft creates no send approval');
-    assert.equal((await t.call(`/api/m/sales/leads/${a.id}`)).json.lead.stage, 'drafted');
+    assert.equal((await t.call(`/api/m/sales/leads/${a.id}`)).json.lead.stage, 'new', 'an agent\'s draft does not move the lead; the owner\'s send or his own button does');
     const again2 = await t.core.modules.runTool('outreach_draft', { leadIds: [a.id] }, {});
     assert.equal(again2.drafts.length, 0); assert.match(again2.text, /Orbit Components already has a draft waiting/);
     assert.equal((await t.call('/api/m/sales/state')).json.drafts.length, 1, 'one open draft per lead and channel');

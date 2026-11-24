@@ -86,6 +86,7 @@ test('the learned table in plain words', () => {
 
 test('Check my desk on a desk: on by default, owner only, one real call counted, keys never shown, Offline and Panic skip', async () => {
   const t = await testDesk({ modules: ['doctor'], script: () => 'ok' });
+  const PROXY = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']; const proxyWas = PROXY.map(k => process.env[k]); for (const k of PROXY) delete process.env[k];   // the PC's own proxy adds a row of its own
   const realFetch = globalThis.fetch; const out = [];
   globalThis.fetch = (u, init) => { if (String(u).includes('cloudflare.com')) { out.push(String(u)); return Promise.resolve(new Response('colo=BOM', { status: 200 })); } return realFetch(u, init); };
   Object.assign(testHooks, { statfs: () => ({ bavail: 10 * 1024 ** 2, bsize: 4096, blocks: 50 * 1024 ** 2 }), portTaken: async () => true, usualPort: 3445 });
@@ -123,5 +124,14 @@ test('Check my desk on a desk: on by default, owner only, one real call counted,
     const settingsAfter = JSON.stringify(t.core.settings.all());
     await t.call('/api/m/doctor/check', { body: {} });
     assert.equal(JSON.stringify(t.core.settings.all()), settingsAfter, 'the Doctor changes no setting');
-  } finally { globalThis.fetch = realFetch; for (const k of Object.keys(testHooks)) delete testHooks[k]; await t.close(); }
+  } finally { PROXY.forEach((k, i) => { if (proxyWas[i] != null) process.env[k] = proxyWas[i]; }); globalThis.fetch = realFetch; for (const k of Object.keys(testHooks)) delete testHooks[k]; await t.close(); }
+});
+
+test('a proxy on this PC: shown by host and port only, with what the desk does about it; no row when none is set', () => {
+  assert.equal(C.proxyCheck({ env: {} }), null);
+  const used = C.proxyCheck({ env: { HTTPS_PROXY: 'http://alice:secret@proxy.example:8080', NODE_USE_ENV_PROXY: '1' } });
+  assert.equal(used.state, 'fine'); assert.match(used.line, /go through proxy\.example:8080\. The desk itself, Ollama and the local engine never go through it\.$/);
+  assert.doesNotMatch(JSON.stringify(used), /alice|secret/);
+  const not = C.proxyCheck({ env: { http_proxy: 'proxy.example:3128' }, failing: true });
+  assert.equal(not.state, 'problem'); assert.match(not.line, /the desk was not started with it, so its web calls go straight out\. Start the desk with start\.bat/);
 });

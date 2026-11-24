@@ -44,7 +44,40 @@ export async function checkDoors(ui) {
   return out;
 }
 
+/** Settings › Approve from your phone: the Admin's switch, the code that links a phone, and the linked phones. */
+export async function phoneSection(el, ui) {
+  const { h, card, line, btn, sw, api, toast, empty, pill, fmt } = ui;
+  const box = h('div', { class: 'stack' }); el.append(box);
+  let shownCode = null;   // { code, until } while a code is on screen
+  const act = async (path, body, words) => { try { const r = await api(path, { body: body ?? {} }); if (words) toast(words, 'ok'); return r; } catch (e) { toast(e.message || 'That did not go through.', 'err'); return null; } };
+  async function paint() {
+    let s; try { s = await api('phone'); } catch (e) { box.replaceChildren(card(h('h3', null, 'Approve from your phone'), empty(e.message || 'This could not be read just now.'))); return; }
+    const admin = !!s.you?.keeper;
+    const codeBox = h('div', { 'data-phone': 'code' });
+    if (shownCode && shownCode.until > Date.now()) codeBox.append(h('div', { class: 'phone-code', style: { fontSize: '28px', letterSpacing: '.2em', fontVariantNumeric: 'tabular-nums', margin: '6px 0' } }, `${shownCode.code.slice(0, 3)} ${shownCode.code.slice(3)}`),
+      h('p', { class: 'sub' }, `Open ${s.address} on your phone and type this code there. It works once, for five minutes.`));
+    box.replaceChildren(
+      card(h('div', { class: 'row' }, h('h3', null, 'Approve from your phone'), pill(s.listening ? 'On' : 'Off', s.listening ? 'ok' : ''), h('span', { class: 'grow' }),
+        admin ? sw(s.on && s.listening, 'Approve from your phone', async (on) => { const r = await act('phone/switch', { on }, null); if (!r) return false; if (r.error) { toast(r.error, 'err'); paint(); return false; } toast(on ? 'On. The phone page is open on your home network.' : 'Off. The phone page is closed.', 'ok'); paint(); }, { 'data-phone': 'switch' }) : null),
+        h('p', { class: 'sub' }, 'When this is on, the desk opens one small page on your home network. A phone you link there shows what waits for you, and Yes or No decides it. Nothing else of the desk can be reached from another device, and nothing leaves your network, so it also works while the desk is Offline.'),
+        h('p', { class: 'sub' }, 'The page uses plain http: someone on the same Wi-Fi could read what it shows. It never shows keys, passwords or PINs, and the text of a message shows only when you tap Show on the phone.'),
+        admin ? null : line('Who switches it on', s.on ? 'The Admin switched it on.' : 'Only the Admin of this PC can switch it on.'),
+        s.note ? line('Home network', s.note) : null,
+        s.listening ? line('Address for your phone', s.address) : null,
+        s.listening ? line('Link a phone', 'Make a code here, then type it on your phone.', btn('Make a code', { kind: 'sm', 'data-phone': 'make-code', onClick: async () => { const r = await act('phone/code', {}, null); if (r?.code) { shownCode = { code: r.code, until: Date.now() + r.seconds * 1000 }; paint(); setTimeout(() => { if (shownCode && shownCode.until <= Date.now()) { shownCode = null; paint(); } }, r.seconds * 1000 + 500); } } })) : null,
+        codeBox,
+        admin ? line('Installs and module switches', s.adminDecides ? 'May be decided on your own phone.' : 'Decided at the desk. The phone shows them as "decide this at the desk".',
+          sw(s.adminDecides, 'Decide installs and module switches on my phone', async (on) => { const r = await act('phone/admin-decides', { on }, 'Saved.'); if (!r) return false; paint(); }, { 'data-phone': 'admin-decides' })) : null),
+      card(h('h3', null, admin ? 'Linked phones' : 'Your linked phones'),
+        s.devices.length ? s.devices.map(d => line(admin ? `${d.name} · ${d.person}` : d.name, `Linked ${fmt.when(d.linked)}${d.lastUsed ? ' · last used ' + fmt.when(d.lastUsed) : ''}`,
+          btn('Remove', { kind: 'ghost sm', onClick: async () => { if (await ui.confirm(`Remove "${d.name}"? It stops working at once.`, { ok: 'Remove', kind: 'stop' })) { if (await act(`phone/devices/${encodeURIComponent(d.id)}/remove`, {}, 'Removed.')) paint(); } } })))
+          : empty(s.listening ? 'No phone is linked yet. Make a code above to link one.' : 'No phone is linked. Switch this on first, then link a phone with a code.')));
+  }
+  await paint();
+}
+
 export const settings = {
+  phone: { title: 'Approve from your phone', render: phoneSection },
   security: { title: 'Security', async render(el, ui) {
     const { h, card, line, btn, pill, api, toast, empty } = ui;
     await ui.coreSettingsSections.security.render(el, ui);

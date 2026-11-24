@@ -643,7 +643,7 @@ export async function activate(ctx) {
   function usagePanel() {
     const day = dayStartIso();
     const agents = ctx.db.all("SELECT COALESCE(agent_id, '(desk)') AS agent, COUNT(*) AS calls, SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END) AS errors, COALESCE(SUM(input_tokens), 0) AS input, COALESCE(SUM(output_tokens), 0) AS output, COALESCE(SUM(cost_minor), 0) AS cost FROM calls WHERE at >= ? GROUP BY agent ORDER BY calls DESC", day)
-      .map((r) => ({ agent: r.agent, calls: r.calls, errors: r.errors, inputTokens: r.input, outputTokens: r.output, costMinor: r.cost }));
+      .map((r) => ({ agent: r.agent, name: r.agent === '(desk)' ? 'The desk' : (ctx.modules.api('agents')?.displayName?.(r.agent) || ctx.agents.get(r.agent)?.name || 'An agent'), calls: r.calls, errors: r.errors, inputTokens: r.input, outputTokens: r.output, costMinor: r.cost }));
     const benchSteps = ctx.db.all("SELECT action, COUNT(*) AS n, COALESCE(SUM(ms), 0) AS ms FROM m_bench_steps WHERE at >= ? GROUP BY action ORDER BY n DESC", day).map((r) => ({ action: r.action, count: r.n, ms: r.ms }));
     return { day, currency: ctx.settings.get('currency') || '', agents, benchSteps };
   }
@@ -651,7 +651,7 @@ export async function activate(ctx) {
     const u = usagePanel();
     const esc = (s) => /[",\n]/.test(String(s)) ? '"' + String(s).replace(/"/g, '""') + '"' : String(s);
     const rows = [['agent', 'calls', 'errors', 'input_tokens', 'output_tokens', 'cost_minor', 'currency']];
-    for (const a of u.agents) rows.push([a.agent, a.calls, a.errors, a.inputTokens, a.outputTokens, a.costMinor, u.currency]);
+    for (const a of u.agents) rows.push([a.name || a.agent, a.calls, a.errors, a.inputTokens, a.outputTokens, a.costMinor, u.currency]);
     return rows.map((r) => r.map(esc).join(',')).join('\r\n') + '\r\n';
   };
 

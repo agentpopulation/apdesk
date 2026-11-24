@@ -29,19 +29,23 @@ test('crm: lead to CRM in one press, merge rules keep both sources, owner only',
     const again = (await t.call(`/api/m/sales/crm/from-lead/${lead.id}`, { method: 'POST' })).json;
     assert.equal(again.already, true); assert.equal(again.company.id, r.company.id);
 
-    // a company typed by the owner with the same site host merges, keeping both sources
-    const typed = (await t.call('/api/m/sales/crm/companies', { body: { name: 'Orbit Components Pvt Ltd', site: 'orbit.example' } })).json.company;
-    assert.equal(typed.id, r.company.id); assert.equal(typed.merged, true);
+    // a company typed by the owner with the same site host but another name: he is asked, then it merges keeping both sources
+    const ask = await t.call('/api/m/sales/crm/companies', { body: { name: 'Orbit Components Pvt Ltd', site: 'orbit.example' } });
+    assert.equal(ask.status, 409); assert.equal(ask.json.same.id, r.company.id);
+    const typed = (await t.call('/api/m/sales/crm/companies', { body: { name: 'Orbit Components Pvt Ltd', site: 'orbit.example', merge: r.company.id, pick: { name: 'theirs' } } })).json.company;
+    assert.equal(typed.id, r.company.id); assert.equal(typed.merged, true); assert.equal(typed.name, 'Orbit Components');
     assert.deepEqual(typed.sources.map(s => s.from), ['https://list.example/makers', 'typed by you']);
     // exact name with no site merges; a different host with the same name does not
     assert.equal((await t.call('/api/m/sales/crm/companies', { body: { name: 'orbit components' } })).json.company.id, r.company.id);
     assert.notEqual((await t.call('/api/m/sales/crm/companies', { body: { name: 'Orbit Components', site: 'orbit-two.example' } })).json.company.id, r.company.id);
     // contacts: by email, then name plus company
-    const c1 = (await t.call('/api/m/sales/crm/contacts', { body: { name: 'Vik Rao', email: 'V.Rao@orbit.example' } })).json.contact;
+    assert.equal((await t.call('/api/m/sales/crm/contacts', { body: { name: 'Vik Rao', email: 'V.Rao@orbit.example' } })).status, 409, 'another name for the same address: the owner picks');
+    const c1 = (await t.call('/api/m/sales/crm/contacts', { body: { name: 'Vik Rao', email: 'V.Rao@orbit.example', merge: r.contact.id, pick: { name: 'theirs' } } })).json.contact;
     assert.equal(c1.id, r.contact.id); assert.equal(c1.merged, true);
     const c2 = (await t.call('/api/m/sales/crm/contacts', { body: { name: 'v rao', companyId: r.company.id, role: 'Buyer' } })).json.contact;
     assert.equal(c2.id, r.contact.id); assert.equal(c2.role, 'Buyer'); assert.ok(!c2.notChecked.includes('Role'));
-    assert.notEqual((await t.call('/api/m/sales/crm/contacts', { body: { name: 'V Rao' } })).json.contact.id, r.contact.id, 'same name with no company is a different person');
+    assert.equal((await t.call('/api/m/sales/crm/contacts', { body: { name: 'V Rao' } })).status, 409, 'the same name with no company: "the same?"');
+    assert.notEqual((await t.call('/api/m/sales/crm/contacts', { body: { name: 'V Rao', separate: true } })).json.contact.id, r.contact.id, 'the owner said it is a different person');
     const crm = (await t.call('/api/m/sales/crm')).json;
     assert.equal(crm.companies.length, 2); assert.equal(crm.contacts.length, 2);
     assert.match(crm.lawful, /responsible for contacting people lawfully/);
@@ -76,12 +80,13 @@ test('crm: customers by CSV with a preview first, export, and the customers rout
     await t.call('/api/m/sales/crm/companies', { body: { name: 'Harlow and Penn', site: 'https://harlow.example' } });
     const csv = 'Company,Website,Contact,Email\nHarlow & Penn,www.harlow.example,Asha N,asha@harlow.example\n"Marlow, Automation",marlow.example,,\n,,Nobody,\nMarlow Automation,marlow.example,,\n';
     const pre = (await t.call('/api/m/sales/crm/import/preview', { body: { csv, fileName: 'C:\\Users\\me\\customers.csv' } })).json;
-    assert.deepEqual(pre.rows.map(r => r.action), ['merge', 'new', 'skip', 'merge']);
-    assert.equal(pre.rows[0].with, 'Harlow and Penn'); assert.match(pre.rows[2].why, /no company name/);
+    // row 1 adds a new contact to a company you have; row 3 is only a name; row 4 is the company of row 2 again
+    assert.deepEqual(pre.rows.map(r => r.action), ['new', 'new', 'skip', 'same']);
+    assert.match(pre.rows[2].why, /only a name/);
     assert.equal((await t.call('/api/m/sales/crm')).json.companies.length, 1, 'the preview saves nothing');
     assert.equal((await t.call('/api/m/sales/crm/import', { session: false, body: { csv } })).status, 403);
     const done = (await t.call('/api/m/sales/crm/import', { body: { csv, fileName: 'C:\\Users\\me\\customers.csv' } })).json;
-    assert.equal(done.saved, 3); assert.equal(done.skipped, 1);
+    assert.equal(done.added, 2); assert.equal(done.already, 1); assert.equal(done.skipped.length, 1);
     const crm = (await t.call('/api/m/sales/crm')).json;
     assert.equal(crm.companies.length, 2); assert.ok(crm.companies.every(c => c.customer));
     const harlow = crm.companies.find(c => c.host === 'harlow.example');
@@ -92,9 +97,9 @@ test('crm: customers by CSV with a preview first, export, and the customers rout
     assert.ok(cu.json.customers.every(c => Object.keys(c).sort().join() === 'host,name'));
     assert.equal((await t.call('/api/m/sales/customers', { session: false })).status, 403, 'owner session only');
     const ex = (await t.call('/api/m/sales/crm/export/companies')).json;
-    assert.equal(ex.fileName, 'companies.csv'); assert.match(ex.csv, /^Name,Site,Customer,Sources,Not checked,Added\r\n/); assert.match(ex.csv, /"Marlow, Automation"/);
+    assert.equal(ex.fileName, 'companies.csv'); assert.match(ex.csv, /^\uFEFFName,Site,Phone,City,Customer,Notes,Sources,Not checked,Added\r\n/); assert.match(ex.csv, /"Marlow, Automation"/);
     assert.match((await t.call('/api/m/sales/crm/export/contacts')).json.csv, /asha@harlow\.example/);
-    assert.match((await t.call('/api/m/sales/crm/export/deals')).json.csv, /^Title,Company,Contact,Stage,Value,Currency,Next step,Next date,Notes\r\n/);
+    assert.match((await t.call('/api/m/sales/crm/export/deals')).json.csv, /^\uFEFFTitle,Company,Contact,Stage,Value,Currency,Close date,Next step,Next date,Notes,Added\r\n/);
     assert.equal((await t.call('/api/m/sales/crm/export/companies', { session: false })).status, 403);
     // a company can be marked and unmarked as a customer by hand
     const un = (await t.call(`/api/m/sales/crm/companies/${harlow.id}`, { method: 'PATCH', body: { customer: false } })).json.company;
@@ -153,9 +158,9 @@ test('crm: an import row with only a company name is not saved as a new customer
     const csv = 'Company,Website,Contact,Email\nGood,good.example,,\nBad,,,\nKnown Co,,,\nNamed,,Ravi K,\n';
     const pre = (await t.call('/api/m/sales/crm/import/preview', { body: { csv } })).json;
     assert.deepEqual(pre.rows.map(r => r.action), ['new', 'skip', 'merge', 'new'], 'a bare name may still mark a company you already have');
-    assert.match(pre.rows[1].why, /only a name/);
+    assert.match(pre.rows[1].why, /only a company name/);
     const done = (await t.call('/api/m/sales/crm/import', { body: { csv } })).json;
-    assert.equal(done.saved, 3); assert.equal(done.skipped, 1);
+    assert.equal(done.added + done.merged + done.already, 3); assert.equal(done.skipped.length, 1);
     assert.ok(!(await t.call('/api/m/sales/crm')).json.companies.some(c => c.name === 'Bad'));
   } finally { await t.close(); }
 });

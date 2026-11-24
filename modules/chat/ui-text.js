@@ -122,7 +122,12 @@ export function stepReason(st) {
 }
 /** Why a try did not make what was asked, as a sentence for the owner (no tool names, no desk terms). */
 export function plainWhy(st) {
-  const r = st?.result?.refused;
+  // the owner's own answer on an approval card, as a tool reports it ({ refused: true, decision })
+  const d = st?.result?.decision;
+  if (d === 'no') return 'you said no';
+  if (d === 'not answered') return 'you did not answer in time';
+  if (d === 'stopped') return 'it was stopped by Panic';
+  const r = st?.result?.refused === true ? null : st?.result?.refused;
   if (r === 'read pages first') return 'no web page had been read yet, and the desk does not save facts no page backs up';
   if (r === 'binary file through the plain file tool') return 'plain text cannot make that kind of file';
   if (r === 'the research saves its own report') return 'the research started here saves its own report';
@@ -220,6 +225,8 @@ export function recordLine(m, nameOf = (id) => id || '') {
   const meta = m?.meta || {};
   if (!m || meta.passed || meta.late) return null;
   if (meta.groupSummary) return `${nameOf(m.agentId)} summed up ${andList((meta.of || []).map(nameOf)) || 'the replies'}`;
+  // a module's command: the module answered, no agent and no model
+  if (meta.command) return `${meta.moduleName || 'A module'} ${m.status === 'stopped' ? 'was stopped' : m.status === 'error' ? 'could not do' : 'answered'} /${meta.command}`;
   const head = `${nameOf(m.agentId)} ${m.status === 'stopped' ? 'was stopped' : m.status === 'error' ? 'did not finish' : 'answered'}`;
   const by = new Map();
   for (const st of (meta.steps || []).filter(x => x && x.tool)) { if (!by.has(st.agentId)) by.set(st.agentId, []); by.get(st.agentId).push(st); }
@@ -319,10 +326,12 @@ export const STARTERS = {
   group: ['Who on the team should help me with what?', { text: 'Find leads for my product and draft the first message', needsBusiness: true }, 'Plan my week across the team'],
   other: ['Tell me in two lines what you can do for me', 'What do you need from me to get started?', 'Help me with my first task'],
 };
-export function startersFor(chat, messages = []) {
+/** roleStarters(agentId): the three starters of the role the agent was hired as (from the Agents module), or null. */
+export function startersFor(chat, messages = [], { roleStarters = null } = {}) {
   if (!chat || messages.some(m => m.role === 'user')) return [];
   if (chat.members.length !== 1) return STARTERS.group;
-  return STARTERS[chat.members[0]] || STARTERS.other;
+  const own = roleStarters?.(chat.members[0]);
+  return Array.isArray(own) && own.length ? own.slice(0, 3) : STARTERS[chat.members[0]] || STARTERS.other;
 }
 
 /** The card that asks, once, how long answers should be: the same everyday question answered short (A) and in full (B). */

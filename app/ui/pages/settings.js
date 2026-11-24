@@ -1,13 +1,13 @@
 // Settings frame, owned by the shell. Core sections live here; a module's ui.js `settings` export adds sections or
 // replaces a core one with the same id (the Safety, Backup, Store, Vault and other modules do that).
-import { ROLES } from '/ui/pages/home.js';
+import { ROLES, customTag } from '/ui/pages/home.js';
 import { arrangeMenu, cleanMenu, movePlace, firstPlace, MENU_KEY, NAME_MAX, ALWAYS_SHOWN } from '/ui/menus.js';
 import { peopleSettings } from '/ui/people.js';
 
 export const ABOUT_MAX = 600;
 export const ABOUT_HELP = 'What you sell, who buys it, and where. Your agents use this for leads, drafts and research.';
 
-const ORDER = ['general', 'appearance', 'people', 'menu', 'security', 'modules', 'accounts', 'keys', 'channels', 'payments', 'network', 'memory', 'backup'];
+const ORDER = ['general', 'appearance', 'people', 'menu', 'security', 'phone', 'modules', 'accounts', 'keys', 'channels', 'payments', 'network', 'memory', 'backup'];
 const TITLES = { general: 'General', appearance: 'Appearance', people: 'People', menu: 'Menu', security: 'Security', modules: 'Modules', accounts: 'Accounts and lock', keys: 'Keys and logins', channels: 'Channels and mail', payments: 'Payments and spend', network: 'Network', memory: 'Memory', backup: 'Backup' };
 const NEEDS = { accounts: 'accounts', keys: 'vault', channels: 'channels', payments: 'payments', network: 'network', memory: 'memory', backup: 'backup' };
 
@@ -197,7 +197,7 @@ export const coreSettingsSections = {
         // a place the role switches off is not "shown" whatever its switch says: the row says so and where to change it
         const shown = keep ? h('span', { class: 'sub mkeep' }, 'Always shown') : off.includes(it.id) ? h('span', { class: 'sub mkeep', 'data-place-off': it.id }, 'Off for your role. ', h('button', { type: 'button', class: 'link', onclick: () => ui.go('settings', 'general') }, 'Change it in General')) : sw(!it.hidden, `Show ${it.label} in the menu`, (on) => { const hidden = now().hidden.filter(x => x !== it.id); if (!on) hidden.push(it.id); return save({ ...now(), hidden }); }, { 'data-place-shown': it.id });
         const row = h('div', { class: 'mrow' + (it.hidden ? ' off' : ''), role: 'listitem', draggable: 'true', 'data-place': it.id },
-          h('span', { class: 'grip', 'aria-hidden': 'true', title: 'Drag to move' }, '⋮⋮'), name,
+          h('span', { class: 'grip', 'aria-hidden': 'true', title: 'Drag to move' }, '⋮⋮'), name, customTag(h, ui.state.modules.find(x => x.id === it.module)),
           h('span', { class: 'mbtns' }, btn('↑', { kind: 'ghost sm', 'aria-label': `Move ${it.label} up`, disabled: i === 0, onClick: () => move(it.id, -1) }), btn('↓', { kind: 'ghost sm', 'aria-label': `Move ${it.label} down`, disabled: i === places.length - 1, onClick: () => move(it.id, 1) })), shown);
         row.addEventListener('dragstart', (e) => { dragId = it.id; row.classList.add('drag'); try { e.dataTransfer.setData('text/plain', it.id); e.dataTransfer.effectAllowed = 'move'; } catch {} });
         row.addEventListener('dragend', () => { dragId = null; row.classList.remove('drag'); });
@@ -217,15 +217,15 @@ export const coreSettingsSections = {
   security: { title: 'Security', render(el, ui) {
     const { h, api, card, line, btn, toast, fmt, empty } = ui;
     const levels = h('div', { class: 'levels' }), auto = h('div'), pending = h('div'), log = h('div');
-    const LV = [['open', 'Open', 'Agents work freely in the workspace. Sending to a person and spending over your limit still ask.'], ['careful', 'Careful', 'Agents ask once per job before writing files or acting in the browser.'], ['strict', 'Strict', 'Agents ask before every action that changes anything.']];
+    const LV = [['open', 'Open', 'Agents work freely in the workspace. Sending to a person, adding a module, changes to your customer records, repeating schedules, standing instructions and spending over your limit still ask.'], ['careful', 'Careful', 'Agents ask once per job before writing files or acting in the browser.'], ['strict', 'Strict', 'Agents ask before every action that changes anything.']];
     const paint = async () => {
       const sec = ui.state.security;
       levels.replaceChildren(...LV.map(([id, name, desc]) => h('button', { class: 'level', 'aria-pressed': String(sec.level === id), onclick: async () => { try { await ui.setLevel(id); paint(); } catch (e) { toast(e.message, 'err'); } } }, h('b', null, name), h('span', null, desc))));
       const until = sec.autoApproveUntil;
-      auto.replaceChildren(line('Auto-approve', until ? `On until ${fmt.when(until)}. It never covers sending to a person or spending over your limit.` : 'Off. Turn it on for a while when you trust the job in hand.',
+      auto.replaceChildren(line('Auto-approve', until ? `On until ${fmt.when(until)}. ${sec.windowNever || 'It never covers sending to a person or spending over your limits.'}` : 'Off. Turn it on for a while when you trust the job in hand.',
         ...[['Off', 0], ['15 minutes', 15], ['1 hour', 60], ['Today', 'today']].map(([label, w]) => btn(label, { kind: 'ghost sm', onClick: async () => { try { await ui.setAutoApprove(w); paint(); } catch (e) { toast(e.message, 'err'); } } }))));
       pending.replaceChildren(...(ui.state.pendingApprovals.length ? ui.state.pendingApprovals.map(ui.approvalCard) : [empty('Nothing is waiting for you.')]));
-      try { const a = await api('activity'); log.replaceChildren(...(a.items.length ? a.items.slice(0, 40).map(x => line(x.title || x.action, `${fmt.when(x.at)} · ${x.how || ''}${x.agent_id ? ' · ' + (ui.agent(x.agent_id)?.name || x.agent_id) : ''}`)) : [empty('No activity yet.')])); } catch (e) { log.replaceChildren(empty('The recent decisions could not be shown: ' + ui.plainError(e))); }
+      try { const a = await api('activity'); log.replaceChildren(...(a.items.length ? a.items.slice(0, 40).map(x => line(x.title || x.action, `${fmt.when(x.at)} · ${x.how || ''}${x.agent_id ? ' · ' + ui.agentLine(x.agent_id) : ''}`)) : [empty('No activity yet.')])); } catch (e) { log.replaceChildren(empty('The recent decisions could not be shown: ' + ui.plainError(e))); }
     };
     el.append(card(h('h3', null, 'Security level'), h('p', { class: 'sub' }, 'Changed only here. No chat message and no other program can change it.'), levels), card(auto), card(h('h3', null, 'Waiting for you'), pending), card(h('h3', null, 'Recent decisions'), log));
     paint(); ui.on('approval', paint); ui.on('security', paint);
@@ -233,7 +233,7 @@ export const coreSettingsSections = {
   modules: { title: 'Modules', render(el, ui) {
     const { h, api, card, sw, pill, toast } = ui;
     const list = h('div');
-    const paint = () => list.replaceChildren(...ui.state.modules.map(m => h('div', { class: 'line', 'data-card': m.id }, h('div', null, h('b', null, `${m.number ?? ''} ${m.name}`.trim()), h('span', { class: 'd' }, m.description + (m.error ? ` · ${m.error}` : ''))),
+    const paint = () => list.replaceChildren(...ui.state.modules.map(m => h('div', { class: 'line', 'data-card': m.id }, h('div', null, h('b', null, `${m.number ?? ''} ${m.name}`.trim()), customTag(h, m), h('span', { class: 'd' }, m.description + (m.error ? ` · ${m.error}` : ''))),
       m.kind === 'core' ? pill('Core', 'ok') : m.kind === 'parked' ? pill('Parked') : sw(m.on, m.name, async (on) => { await api(`modules/${m.id}/${on ? 'on' : 'off'}`, { method: 'POST' }); await ui.refresh(); toast(`${m.name} is ${on ? 'on' : 'off'}`, 'ok'); paint(); }, { 'data-module': m.id }))));
     el.append(card(h('h3', null, 'Modules'), h('p', { class: 'sub' }, 'Core modules stay on. Switch the others on when you want them.'), list));
     paint(); ui.on('modules', async () => { await ui.refresh(); paint(); });

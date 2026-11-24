@@ -100,7 +100,7 @@ export function figuresIn(...texts) {
   const nums = new Set(); const near = new Map();
   for (const t of texts) {
     const s = String(t || '');
-    for (const m of s.matchAll(/\d{1,3}(?:[,    ]\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?/g)) {
+    for (const m of s.matchAll(/\d{1,2}(?:,\d{2})+,\d{3}(?:\.\d+)?|\d{1,3}(?:[,    ]\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?/g)) {   // 3,50,000 (lakh grouping) too
       const n = digits(m[0]); nums.add(n);
       const after = s.slice(m.index + m[0].length, m.index + m[0].length + 30).toLowerCase();
       near.set(n, (near.get(n) || '') + '|' + after);

@@ -1,0 +1,1 @@
+{"id": "bad-keys-optional", "number": 151, "name": "Keys optional", "description": "A hostile test module for the checker: Switches the owner's model keys off with optional chaining all the way. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

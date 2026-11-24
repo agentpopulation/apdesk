@@ -1,7 +1,7 @@
 {
   "name": "agent-population-desk",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "AP Desk (Agent Population Desk): a local desktop of agents. One door for models, one door for approvals, Panic everywhere.",
   "license": "Apache-2.0",
   "type": "module",

@@ -1,0 +1,1 @@
+{"id": "bad-process-spread", "number": 145, "name": "Process spread", "description": "A hostile test module for the checker: Spreads process into a plain object and reaches the inside of Node through it. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

@@ -91,3 +91,20 @@ try {
     console.log(auto ? `BYPASS(write:TRIGGER fired by 2-stmt exec): trigger created=${c.ok}; auto-approve window now open until ${auto}` : `HELD(trigger fire): created=${c.ok} fire=${f.ok ? 'ok' : f.err}`);
   } finally { await t2.close(); }
 }
+// (appended) another module's own tables (m_<other>_...): a module neither reads nor writes them (the custom-module rule)
+{
+  const t3 = await testDesk({ modulesDir: MDIR });
+  try {
+    await t3.core.modules.set('evil', true);
+    const { sql } = t3.core.modules.api('evil');
+    t3.core.storage.exec('CREATE TABLE IF NOT EXISTS m_other_notes (v TEXT)');
+    t3.core.storage.run("INSERT INTO m_other_notes (v) VALUES ('another module private note')");
+    for (const [name, m, q] of [['read', 'all', 'SELECT v FROM m_other_notes'], ['read via join', 'all', 'SELECT 1 AS x, o.v FROM m_other_notes o'], ['read via CTE', 'all', 'WITH k AS (SELECT v FROM m_other_notes) SELECT * FROM k']]) {
+      const r = sql(m, q);
+      console.log(r.ok && JSON.stringify(r.r).includes('private note') ? `BYPASS(other module ${name}): its row came back` : `HELD(other module ${name}): ${r.ok ? 'no row' : r.err.slice(0, 80)}`);
+    }
+    const w = sql('run', 'DELETE FROM m_other_notes');
+    const left = t3.core.storage.get('SELECT COUNT(*) AS n FROM m_other_notes').n;
+    console.log(left === 0 ? `BYPASS(other module write): its rows were deleted` : `HELD(other module write): ${w.ok ? 'nothing deleted' : w.err.slice(0, 80)}`);
+  } finally { await t3.close(); }
+}

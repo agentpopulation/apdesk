@@ -1,14 +1,17 @@
 // Chat page: rail of chats, the conversation at full width, the folding panel. Matches the Chat section of the approved preview.
 import { chipText, chipNeedsBusiness } from '/ui/pages/home.js';
 import { cleanReply, uniqueOutputs, previewText, stepChips, footTag, waitLine, hasTable, shortCell, railLine, liveText, PANEL_PREFIXES, BARE_LINES, bareStart, lastAsk, cutAtWord, LENGTH_ASK, siteAboutText, startersFor, recordLine } from '/modules/chat/ui-text.js';
+import { commandsFor } from '/modules/chat/ui-commands.js';
+import { parts as nameParts } from '/modules/chat/ui-names.js';
+import { guardOutside, bindPictures, LINK_CSS } from '/modules/chat/ui-links.js';
 
 /** The Everyone chat holds every agent and is never edited (the same line as the server's). */
 const EVERYONE_LINE = 'Everyone always holds all your agents. To talk to fewer, make a new group.';
-const COORDINATOR_LINE = 'The Coordinator is in every group: it sums up';
-const WHO_ANSWERS = [['everyone', 'Everyone, then a summary'], ['coordinator', 'The Coordinator']];
+const COORDINATOR_LINE = 'The Manager is in every group: it sums up';
+const WHO_ANSWERS = [['everyone', 'Everyone, then a summary'], ['coordinator', 'The Manager']];
 // auto-approve, in plain words: what it approves (every ask but these), what it never does, and for how long
 const AUTO_WHAT = 'While it is on, the desk says yes for you whenever an agent would ask you first: to save or delete a file, run a command, use the browser, post to a site, log in, change your calendar, or spend within your limits.';
-const AUTO_NEVER = 'It never sends anything to a person, never installs anything, and never spends more than your limits. Press the chip again to switch it off.';
+const AUTO_NEVER = 'It never sends anything to a person, never adds or removes a module, never changes your customer records, never makes a repeating schedule or a standing instruction for your agents, and never spends more than your limits. Press the chip again to switch it off.';
 const AUTO_FOR = [[15, '15 minutes'], [60, '1 hour'], ['today', 'Until midnight']];
 const AUTO_ON = { 15: 'Auto-approve is on for 15 minutes.', 60: 'Auto-approve is on for 1 hour.', today: 'Auto-approve is on until midnight.' };
 // the rating thumbs: outlines drawn here, dim at rest (one path, turned over for "poor")
@@ -32,10 +35,19 @@ async function loadMarkdown() {
   } catch (e) { console.warn('markdown libraries did not load; using the kit renderer', e); mdLib = false; }
   return mdLib;
 }
-function md(ui, text) {
-  if (!mdLib) return ui.md(text);
-  const el = ui.h('div', { class: 'md', html: mdLib(text) });
-  for (const a of el.querySelectorAll('a[href]')) { if (/^https?:/i.test(a.getAttribute('href'))) { a.target = '_blank'; a.rel = 'noopener noreferrer'; } }
+/** Html built in an inert document (nothing loads there), its outside pictures and links guarded, then put in the page. */
+function safeHtml(tag, cls, html) {
+  const inert = new DOMParser().parseFromString(`<${tag}${cls ? ` class="${cls}"` : ''}>${html}</${tag}>`, 'text/html');
+  guardOutside(inert.body.firstElementChild);
+  return bindPictures(document.importNode(inert.body.firstElementChild, true));
+}
+/** A reply drawn from its text. plain: the chat was made plain (createChat({ plain: true })): text only, no links, pictures or
+ *  markup. Otherwise the html is built in an inert document (nothing loads there), outside pictures and links are guarded
+ *  (ui-links.js), and only then is it put in the page. */
+function md(ui, text, plain = false) {
+  if (plain) return ui.h('div', { class: 'md plain', style: { whiteSpace: 'pre-wrap' } }, String(text ?? ''));
+  if (!mdLib) return guardOutside(ui.md(text));
+  const el = safeHtml('div', 'md', mdLib(text));
   for (const t of el.querySelectorAll('table')) { const w = document.createElement('div'); w.className = 'scroll'; t.replaceWith(w); w.append(t); }
   for (const c of el.querySelectorAll('th, td')) if (shortCell(c.textContent)) c.classList.add('nw');   // "Day 1" stays on one line
   return el;
@@ -45,9 +57,9 @@ function md(ui, text) {
 function mdInline(ui, text) {
   const s = String(text ?? '');
   if (!/[[*_`]|https?:\/\//.test(s)) return s;
-  if (/^https?:\/\/\S+$/.test(s)) return ui.h('a', { href: s, target: '_blank', rel: 'noopener noreferrer' }, (() => { try { return new URL(s).hostname.replace(/^www\./, ''); } catch { return s; } })());
-  const span = mdLib?.inline ? ui.h('span', { html: mdLib.inline(s) }) : (() => { const d = ui.md(s); const p = d.querySelector('p'); return p ? ui.h('span', { html: p.innerHTML }) : d; })();
-  for (const a of span.querySelectorAll('a[href]')) { if (/^https?:/i.test(a.getAttribute('href'))) { a.target = '_blank'; a.rel = 'noopener noreferrer'; } else a.removeAttribute('href'); }
+  if (/^https?:\/\/\S+$/.test(s)) return ui.h('a', { href: s, target: '_blank', rel: 'noopener noreferrer', title: s, 'data-where': s }, (() => { try { return new URL(s).hostname.replace(/^www\./, ''); } catch { return s; } })());
+  const span = mdLib?.inline ? safeHtml('span', '', mdLib.inline(s)) : (() => { const d = ui.md(s); const p = d.querySelector('p'); return guardOutside(p ? ui.h('span', { html: p.innerHTML }) : d); })();
+  for (const a of span.querySelectorAll('a[href]')) { if (!/^https?:/i.test(a.getAttribute('href'))) a.removeAttribute('href'); }
   return span;
 }
 function fillRow(v, id) { if (v === '$row') return id; if (Array.isArray(v)) return v.map(x => fillRow(x, id)); if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, fillRow(x, id)])); return v; }
@@ -56,7 +68,7 @@ function hasRow(v) { return v === '$row' || (Array.isArray(v) ? v.some(hasRow) :
 function css() {
   if (document.getElementById('chat-css')) return;
   const s = document.createElement('style'); s.id = 'chat-css';
-  s.textContent = `
+  s.textContent = LINK_CSS + `
 .chatv .talk{min-width:0}.chatv .who-t .nm{flex:1}
 .chatv .msg{overflow-wrap:anywhere;min-width:0}
 .chatv .msg.tbl{max-width:100%}
@@ -89,6 +101,11 @@ function css() {
 .chatv .chat .empty{margin:auto}
 .chatv .drawer .line>div:first-child b,.chatv .drawer .line .d{overflow-wrap:anywhere;word-break:break-word}.chatv .drawer .line>.pill,.chatv .drawer .line>.btn{flex-shrink:0;align-self:flex-start}
 .chatv .compose .btn.stop{background:var(--stop)}
+.chatv .cmds{display:flex;flex-direction:column;gap:2px;margin:0 0 6px;padding:4px;border:1px solid var(--line);border-radius:12px;background:var(--panel,var(--bg));max-height:220px;overflow:auto}
+.chatv .cmds[hidden]{display:none}
+.chatv .cmds .cmd{display:flex;gap:10px;align-items:baseline;text-align:left;padding:7px 10px;border:0;border-radius:8px;background:none;color:var(--fg);font:inherit;cursor:pointer;min-width:0}
+.chatv .cmds .cmd:hover,.chatv .cmds .cmd:focus-visible{background:var(--bubble)}
+.chatv .cmds .cn{font-weight:500;flex-shrink:0}.chatv .cmds .ch{color:var(--dim);font-size:13px;overflow-wrap:anywhere;min-width:0}
 .chatv .under .mini b{font-weight:500}
 .chatv .msg.me .md a{color:#fff}
 .chatv .msg .waiting{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.chatv .msg .wait{font-size:12px;color:var(--dim)}
@@ -133,6 +150,8 @@ function css() {
 export const pages = { chat: { title: 'Chat', render, unmount() {} } };
 
 async function render(el, ui, route) {
+  // a chat made plain (createChat({ plain: true })) is drawn as text only
+  const mdc = (text) => md(ui, text, chat?.settings?.plain === true);
   const { h, api, btn, pill, toast, fmt, empty, line, sw } = ui;
   css(); await loadMarkdown();
   el.classList.add('chatv');
@@ -158,7 +177,9 @@ async function render(el, ui, route) {
   const showBtn = h('button', { class: 'panel-show', type: 'button', title: 'Show the panel', 'aria-label': 'Show the panel', hidden: true, html: ICON_PANEL }, h('span', { class: 'new', hidden: true }));
   const tip = h('div', { class: 'panel-tip', role: 'status', hidden: true }, 'The panel folded away. The button on the right opens it.');
   const fileIn = h('input', { type: 'file', hidden: true, multiple: true });
-  el.append(rail, h('div', { class: 'talk' }, h('div', { class: 'row hd' }, grp, hdTitle, grpN, panelBtn, tip), showBtn, chatEl, chips, form, under, fileIn), drawer);
+  // the commands modules offer, shown as the owner types "/" at the start of the box (a module's own hint beside each)
+  const cmdBox = h('div', { class: 'cmds', id: 'cmds', role: 'listbox', 'aria-label': 'Commands', hidden: true });
+  el.append(rail, h('div', { class: 'talk' }, h('div', { class: 'row hd' }, grp, hdTitle, grpN, panelBtn, tip), showBtn, chatEl, chips, cmdBox, form, under, fileIn), drawer);
 
   // The panel shows when a chat opens and folds away 3 seconds later, unless it is pinned, the pointer is over it, focus is in it
   // or one of its pop-ups is open. On a narrow screen it stays a drawer that opens only from its button (nothing folds by itself, nothing is remembered).
@@ -227,7 +248,16 @@ async function render(el, ui, route) {
   ui.onLeave(() => { alive = false; clearInterval(waitTick); clearTimeout(foldTimer); clearTimeout(tipTimer); });
 
   const openFile = (p) => { if (typeof ui.openFile === 'function') ui.openFile(p); else location.hash = '#/files?path=' + encodeURIComponent(p || ''); };
-  const agentName = (id) => ui.agent(id)?.name || (id === 'coordinator' ? 'Coordinator' : 'Agent');
+  // an agent is shown by its role, with the owner's own name for it when he gave one ("Kent · Researcher"); a display line
+  // the desk already gives with the agent wins
+  // the one rule is the Agents module's (ui.agentLine and /modules/agents/ui-roles.js); Chat's own copy is used only when that
+  // module's file cannot be loaded
+  let roles = null; try { roles = await import('/modules/agents/ui-roles.js'); } catch {}
+  const agentName = (id) => { const a = ui.agent(id) || { id }; return roles?.agentLine ? roles.agentLine(a) : typeof ui.agentLine === 'function' ? ui.agentLine(a) : nameParts(a).line; };
+  const ownNameOf = (id) => { const a = ui.agent(id); return !a ? '' : roles?.ownName ? roles.ownName(a) : nameParts(a).name; };
+  const roleNameOf = (id) => { const a = ui.agent(id) || { id }; return (roles?.roleOf ? roles.roleOf(a) : nameParts(a).role) || 'agent'; };
+  /** The three starters of a hired role, from the role itself. */
+  const roleStarters = (id) => roles?.hireRole?.(ui.agent(id)?.meta?.roleId || id)?.starters || null;
   // each agent's avatar from the Agents page's own helper; letters in a circle only if that page cannot be loaded
   let drawAvatar = null; try { drawAvatar = (await import('/modules/agents/ui.js')).avatarEl || null; } catch {}
   const avatarOf = (id, size = 's') => drawAvatar ? drawAvatar(ui.agent(id) || { id, name: agentName(id) }, size) : h('span', { class: 'av' }, initials(agentName(id)));
@@ -268,7 +298,7 @@ async function render(el, ui, route) {
     // a group the owner made keeps its own name even when its members are a starting room's ("New chat · Sales room" came from that)
     const made = !chat.seeded;
     for (const [id, name] of PRESETS) { opts.push(['g:' + id, name]); if (!sel && !made && (id === 'everyone' ? chat.everyone : sameSet(chat.members, PRESET_MEMBERS[id]))) sel = 'g:' + id; }
-    for (const a of ui.state.agents) { opts.push(['a:' + a.id, a.name]); if (!sel && chat.members.length === 1 && chat.members[0] === a.id) sel = 'a:' + a.id; }
+    for (const a of ui.state.agents) { opts.push(['a:' + a.id, agentName(a.id)]); if (!sel && chat.members.length === 1 && chat.members[0] === a.id) sel = 'a:' + a.id; }
     if (!sel) { sel = 'cur'; opts.unshift(['cur', chatTitle(chat)]); }
     // a chat's own title is shown beside the group it holds, never twice ("Everyone · Everyone" came from an Everyone chat that
     // had lost its Everyone mark; the store now keeps it, and a title equal to the name is shown once)
@@ -290,7 +320,7 @@ async function render(el, ui, route) {
   const paintMessages = () => {
     msgEls.clear(); offerEl = null;
     const els = messages.map(m => { const e = msgEl(m); msgEls.set(m.id, e); return e; });
-    chatEl.replaceChildren(...(els.length ? els : [empty(chat?.members.length === 1 ? `Ask ${agentName(chat.members[0])} anything.` : 'Ask anything. The Coordinator answers and hands work to the right agent.')]), approvalsEl());
+    chatEl.replaceChildren(...(els.length ? els : [empty(chat?.members.length === 1 ? `Ask ${agentName(chat.members[0])} anything.` : 'Ask anything. The Manager answers and hands work to the right agent.')]), approvalsEl());
     if (queued) paintQueue();
     paintChips();
     toBottom();
@@ -342,7 +372,7 @@ async function render(el, ui, route) {
     // an agent that passed, or did not answer in time, in a group: one quiet line
     if (m.meta?.passed || m.meta?.late) return h('div', { class: 'msg sys quiet', 'data-role': m.meta.passed ? 'pass' : 'late', 'data-agent-id': m.agentId || '', dataset: { id: m.id } }, m.text);
     if (m.role === 'user') {
-      return h('div', { class: 'msg me' + (m.cards?.length ? ' wide' : ''), 'data-role': 'user', dataset: { id: m.id } }, m.text ? md(ui, m.text) : null, ...(m.cards || []).map(c => cardEl(c, m)));
+      return h('div', { class: 'msg me' + (m.cards?.length ? ' wide' : ''), 'data-role': 'user', dataset: { id: m.id } }, m.text ? mdc(m.text) : null, ...(m.cards || []).map(c => cardEl(c, m)));
     }
     const live = m.status === 'streaming';
     const text = live ? liveText(cleanReply(streaming.get(m.id) ?? m.text), m.meta?.steps) : m.text;
@@ -356,7 +386,7 @@ async function render(el, ui, route) {
     const stepsEl = live ? (steps.length ? h('div', { class: 'steps' }, stepChips(steps, agentName, m.status).map(t => h('span', null, t))) : null) : rec ? h('div', { class: 'rec', 'data-record': '' }, rec) : null;
     const waitEl = live && m.meta?.wait ? h('span', { class: 'wait', 'data-wait': JSON.stringify(m.meta.wait) }, waitLine(m.meta.wait)) : null;
     const note = m.meta?.planNote ? h('div', { class: 'rec', 'data-plan-note': '' }, m.meta.planNote) : null;   // one quiet line: no plan, answered directly
-    const body = text ? md(ui, text) : live ? h('div', { class: 'waiting' }, h('span', { class: 'typing' }, h('span'), h('span'), h('span')), waitEl) : null;
+    const body = text ? mdc(text) : live ? h('div', { class: 'waiting' }, h('span', { class: 'typing' }, h('span'), h('span'), h('span')), waitEl) : null;
     const tagText = footTag(m);
     const foot = tagText ? pill(tagText, tagText === 'Offline' ? 'wait' : 'stop') : null;
     const speak = !live && text && window.apdVoice?.speak ? btn('Read aloud', { kind: 'ghost sm', onClick: () => window.apdVoice.speak(text) }) : null;
@@ -368,6 +398,7 @@ async function render(el, ui, route) {
   const runAction = async (a, extra = null) => {
     if (a.go) { if (String(a.go).startsWith('#')) location.hash = a.go; else ui.go(...String(a.go).split('/')); return; }
     if (a.stopAsk) { try { await api(API + `chats/${chat.id}/stop`, { method: 'POST' }); toast('Fine. Ask again when you want it.'); } catch (e) { toast(e.message, 'err'); } return; }
+    if (a.nameAgent) { await nameAgent(a.nameAgent); return; }
     if (a.retry || a.direct) { try { await api(API + `chats/${chat.id}/retry`, { method: 'POST', body: a.direct ? { direct: true } : {} }); setRunning(true); } catch (e) { toast(e.message, 'err'); } return; }
     if (!a.tool) return;
     // row actions: '$row' in the args stands for that row's id (rowIds beside rows); without it the row itself rides along
@@ -375,7 +406,18 @@ async function render(el, ui, route) {
     if (extra) args = hasRow(args) ? fillRow(args, extra.rowId ?? extra.rowIndex) : { ...args, ...(extra.rowId != null ? { rowId: extra.rowId } : { row: extra.row }) };
     try { await api(API + `chats/${chat.id}/action`, { body: { tool: a.tool, args, label: a.label } }); } catch (e) { toast(e.message, 'err'); }
   };
-  const actionBtns = (actions, extra) => (actions || []).filter(a => a && a.label && (a.tool || a.go || a.retry || a.stopAsk || a.direct)).map(a => btn(a.label, { kind: 'ghost sm', onClick: (ev) => { ev.currentTarget.disabled = true; runAction(a, extra); } }));
+  /** "Give me a name" under a new agent's hello note: the owner types a name; it is saved on the agent, and the desk says so. */
+  async function nameAgent(id) {
+    const role = roleNameOf(id);
+    const t = await ui.ask(`A name for your ${role}`, { value: '' });
+    const name = String(t ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (!name) { repaintSoon(); return; }
+    try { const a = await api(`agents/${encodeURIComponent(id)}`, { method: 'PATCH', body: { name } }); const i = ui.state.agents.findIndex(x => x.id === id); if (i >= 0 && a?.id) ui.state.agents[i] = a; toast(`Your ${role} is now called ${name}.`, 'ok'); paintRail(); paintHeader(); }
+    catch (e) { toast(e.message, 'err'); }
+    repaintSoon();
+  }
+  // a "Give me a name" button shows only while that agent has no own name
+  const actionBtns = (actions, extra) => (actions || []).filter(a => a && a.label && (a.tool || a.go || a.retry || a.stopAsk || a.direct || (a.nameAgent && !ownNameOf(a.nameAgent)))).map(a => btn(a.label, { kind: 'ghost sm', onClick: (ev) => { ev.currentTarget.disabled = true; runAction(a, extra); } }));
   function cardEl(c, m) {
     const el = cardInner(c, m);
     if (el instanceof Element) el.setAttribute('data-card', String(c.kind || 'text'));
@@ -386,11 +428,11 @@ async function render(el, ui, route) {
       const own = moduleCard(c);
       if (own) return own;
       switch (c.kind) {
-        case 'text': return h('div', { class: 'card' }, md(ui, c.text || ''));
+        case 'text': return h('div', { class: 'card' }, mdc(c.text || ''));
         case 'table': {
           const cols = c.columns || []; const rows = c.rows || [];
           const asObj = (r) => Object.fromEntries(cols.map((k, i) => [k, Array.isArray(r) ? r[i] : r?.[k]]));
-          const cell = (v) => mdInline(ui, v == null ? '' : typeof v === 'object' ? (v.url && (v.label || v.title) ? `[${v.label || v.title}](${v.url})` : v.label || v.text || v.title || v.url || '') : String(v));
+          const cell = (v) => { const s = v == null ? '' : typeof v === 'object' ? (v.url && (v.label || v.title) ? `[${v.label || v.title}](${v.url})` : v.label || v.text || v.title || v.url || '') : String(v); return chat?.settings?.plain === true ? s : mdInline(ui, s); };
           return h('div', { class: 'card', style: { padding: '8px 10px' } },
             c.title ? h('div', { class: 'row', style: { marginBottom: '4px' } }, h('b', null, c.title), h('span', { class: 'sub' }, `${rows.length} ${rows.length === 1 ? 'row' : 'rows'}`)) : null,
             h('div', { class: 'scroll', style: { maxHeight: '420px', overflow: 'auto' } }, h('table', null,
@@ -437,10 +479,10 @@ async function render(el, ui, route) {
         case 'report': return h('div', { class: 'card' },
           h('div', { class: 'row' }, h('b', null, c.title || 'Report'), (c.sources || []).length ? pill(`${c.sources.length} ${c.sources.length === 1 ? 'source' : 'sources'}`) : null, h('span', { class: 'grow' }),
             c.go || c.path ? btn('Open', { kind: 'sm', onClick: () => { if (c.go) location.hash = c.go; else openFile(c.path); } }) : null),
-          c.summary ? h('div', { style: { marginTop: '6px' } }, md(ui, c.summary)) : null);
+          c.summary ? h('div', { style: { marginTop: '6px' } }, mdc(c.summary)) : null);
         case 'actions': return h('div', { class: 'act' }, actionBtns(c.actions));
         case 'answer-length': return lengthCard(c);
-        default: return h('div', { class: 'card' }, md(ui, c.text || c.summary || c.title || ''));
+        default: return h('div', { class: 'card' }, mdc(c.text || c.summary || c.title || ''));
       }
     } catch (e) { console.error(e); return h('div', { class: 'card sub' }, c.title || 'A card that could not be shown.'); }
   }
@@ -453,7 +495,7 @@ async function render(el, ui, route) {
     return h('div', { class: 'card alen' }, h('b', null, LENGTH_ASK.title), h('div', { class: 'q' }, LENGTH_ASK.question),
       h('div', { class: 'ab' },
         h('div', { 'data-sample': 'a' }, h('b', { class: 'k' }, 'A'), h('ul', null, LENGTH_ASK.a.map(x => h('li', null, x)))),
-        h('div', { 'data-sample': 'b' }, h('b', { class: 'k' }, 'B'), md(ui, LENGTH_ASK.b))),
+        h('div', { 'data-sample': 'b' }, h('b', { class: 'k' }, 'B'), mdc(LENGTH_ASK.b))),
       h('div', { class: 'act' }, btn('A: short', { kind: 'sm', onClick: pick('short') }), btn('B: detailed', { kind: 'sm', onClick: pick('detailed') }), h('button', { class: 'mini', type: 'button', onclick: later }, 'Ask me later')));
   }
   const renderers = new Map();   // kind -> fn from another module's chatCards
@@ -487,7 +529,7 @@ async function render(el, ui, route) {
     if (deskStarted === false) return chips.replaceChildren(
       h('button', { class: 'chip', type: 'button', 'data-start': 'hello', onclick: () => send('Hello') }, 'Say hello'),
       h('button', { class: 'chip main', type: 'button', 'data-start': 'models', onclick: () => ui.go('models') }, 'Select model / Add API'));
-    chips.replaceChildren(...startersFor(chat, messages).map(c => h('button', { class: 'chip', type: 'button', onclick: () => send(chipText(c), { chip: true, needsBusiness: chipNeedsBusiness(c) }) }, chipText(c))));
+    chips.replaceChildren(...startersFor(chat, messages, { roleStarters }).map(c => h('button', { class: 'chip', type: 'button', onclick: () => send(chipText(c), { chip: true, needsBusiness: chipNeedsBusiness(c) }) }, chipText(c))));
   }
   paintChips();
   let prefillChip = null;   // a chip pressed on Home arrives as text in the box; sent unchanged, it is still that chip
@@ -497,10 +539,22 @@ async function render(el, ui, route) {
   const paintBtn = () => { const stopMode = !!chat?.running && !input.value.trim(); sendBtn.textContent = stopMode ? 'Stop' : queued && chat?.running ? 'Replace waiting' : chat?.running ? 'Send after' : 'Send'; sendBtn.classList.toggle('stop', stopMode); };
   const setRunning = (on) => { if (chat) chat.running = on; paintBtn(); if (!on && queued) setTimeout(flushQueue, 60); };
   input.addEventListener('input', paintBtn);
+  let commands = null;   // read once the owner first types "/", and again when modules change
+  const paintCmds = async () => {
+    const v = input.value;
+    if (!v.startsWith('/')) { cmdBox.hidden = true; return; }
+    if (commands === null) { commands = []; try { commands = (await api(API + 'commands')).commands || []; } catch { commands = null; } }
+    const fit = commandsFor(input.value, commands || []);
+    cmdBox.replaceChildren(...fit.map(c => h('button', { type: 'button', class: 'cmd', role: 'option', onclick: () => { input.value = '/' + c.name + ' '; cmdBox.hidden = true; input.focus(); paintBtn(); } }, h('span', { class: 'cn' }, '/' + c.name), c.hint ? h('span', { class: 'ch' }, c.hint) : null)));
+    cmdBox.hidden = !fit.length;
+  };
+  input.addEventListener('input', paintCmds);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Tab' && !cmdBox.hidden && !e.shiftKey) { const first = cmdBox.querySelector('.cmd'); if (first) { e.preventDefault(); first.click(); } } else if (e.key === 'Escape' && !cmdBox.hidden) cmdBox.hidden = true; });
+  ui.on('modules', () => { commands = null; });
   const paintQueue = () => {
     queueEl?.remove(); queueEl = null;
     if (!queued) return;
-    queueEl = h('div', { class: 'msg me', 'data-role': 'queued', style: { opacity: '.75' } }, md(ui, queued),
+    queueEl = h('div', { class: 'msg me', 'data-role': 'queued', style: { opacity: '.75' } }, mdc(queued),
       h('div', { class: 'foot', style: { justifyContent: 'flex-end' } }, h('span', { style: { fontSize: '11px' } }, 'Waiting to send. It goes out when the reply above ends.'),
         h('button', { type: 'button', class: 'mini', style: { color: 'inherit' }, title: 'Remove the waiting message', onclick: () => { input.value = input.value || queued; queued = null; paintQueue(); paintBtn(); } }, 'Remove')));
     chatEl.insertBefore(queueEl, chatEl.querySelector(':scope > .approvals')); toBottom();
@@ -669,7 +723,7 @@ async function render(el, ui, route) {
     // the Coordinator sums up a group, so it is in every group: its tick is shown, locked, with the reason
     const lock = (a) => a.id === 'coordinator' && ui.state.agents.length > 1;
     if (ui.state.agents.some(lock)) picked.add('coordinator');
-    const box = h('div', { class: 'stack', style: { gap: '4px' } }, ui.state.agents.map(a => h('label', { class: 'row', style: { gap: '8px' }, 'data-member': a.id }, h('input', { type: 'checkbox', checked: picked.has(a.id), disabled: lock(a), onchange: (e) => e.target.checked ? picked.add(a.id) : picked.delete(a.id) }), h('span', null, a.name), h('span', { class: 'sub' }, lock(a) ? COORDINATOR_LINE : a.role))));
+    const box = h('div', { class: 'stack', style: { gap: '4px' } }, ui.state.agents.map(a => h('label', { class: 'row', style: { gap: '8px' }, 'data-member': a.id }, h('input', { type: 'checkbox', checked: picked.has(a.id), disabled: lock(a), onchange: (e) => e.target.checked ? picked.add(a.id) : picked.delete(a.id) }), h('span', null, agentName(a.id)), h('span', { class: 'sub' }, lock(a) ? COORDINATOR_LINE : a.role))));
     ui.modal({ title: 'Who is in this chat', body: box, actions: [{ label: 'Cancel' }, { label: 'Save', kind: '', onClick: async () => { if (!picked.size) { toast('Pick at least one agent.', 'err'); return false; } try { chat = await api(API + `chats/${chat.id}/members`, { method: 'PUT', body: { members: [...picked] } }); paintHeader(); paintUnder(); paintDrawer(); loadChats(); } catch (e) { toast(e.message, 'err'); return false; } } }] });
   }
 

@@ -1,0 +1,1 @@
+{"id": "bad-builtins", "number": 97, "name": "Built-ins changed", "description": "A hostile test module for the kit's checker, after the reviewer's h09-builtins. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

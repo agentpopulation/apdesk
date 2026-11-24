@@ -18,7 +18,9 @@ const waitIdle = async (t, chatId, ms = 15000) => {
 };
 const isPlan = (b) => /You plan how the desk answers/.test(String(b.messages?.[0]?.content || ''));
 const isChoice = (b) => /Reply with one word: GO or PASS/.test(String(b.messages?.[0]?.content || ''));
-const whoIs = (b) => (String(b.messages?.[0]?.content || '').match(/^You are ([\w-]+), an agent/) || [])[1] || null;
+const ROLE_KEY = { Researcher: 'Scout', 'Sales expert': 'Closer', 'Operations expert': 'Operator', Coder: 'Coder', Manager: 'Coordinator' };
+/** Which agent a prompt is for, keyed by its old id-like name: "You are the Researcher on the owner's team" is Scout. */
+const whoIs = (b) => { const s = String(b.messages?.[0]?.content || ''); const m = s.match(/^You are the (.+?) on the owner's team/); return m ? ROLE_KEY[m[1]] || m[1] : (s.match(/^You are ([\w-]+)(?:, an agent| on the owner's team)/) || [])[1] || null; };
 
 test('5: a card action for a tool switched off for that agent is refused in plain words and never runs', async () => {
   const t = await testDesk({ modules: ['chat', 'agents'] });
@@ -29,7 +31,7 @@ test('5: a card action for a tool switched off for that agent is refused in plai
     assert.equal(off.status, 200);
     const r = await t.call('/api/m/chat/chats/dm-coordinator/action', { body: { tool: 'file_list', label: 'List files' } });
     assert.equal(r.status, 403);
-    assert.match(r.json.error, /^Coordinator may not use this tool\. Switch it on in Agents/);
+    assert.match(r.json.error, /^Manager may not use this tool\. Switch it on in Agents/);
     assert.deepEqual(ran, [], 'the tool did not run');
     const msgs = (await t.call('/api/m/chat/chats/dm-coordinator/messages')).json.messages;
     assert.ok(!msgs.some(m => /Done: List files/.test(m.text || '')), 'no "Done" line for work that did not happen');
@@ -117,9 +119,9 @@ test('b: a group member is told its own part and to leave the other roles\' plan
     await t.call('/api/m/chat/chats/everyone/send', { body: { text: 'Plan my week.' } });
     await waitIdle(t, 'everyone');
     const choice = t.fake.calls.find(b => isChoice(b) && whoIs(b) === 'Coder').messages[0].content;
-    assert.match(choice, /Answer GO only when the owner's message needs work in your own role \(Coder: [^)]+\)/);
+    assert.match(choice, /Answer GO only when the owner's message needs work in your own role \(Coder: [^)]+\)/); assert.match(choice, /your role is Coder\./);
     const member = t.fake.calls.find(b => !isChoice(b) && !isPlan(b) && whoIs(b) === 'Closer').messages[0].content;
-    assert.match(member, /Your part is only Closer's role: /);
+    assert.match(member, /Your part is only your own role \(Sales expert\): /);
     assert.match(member, /Leave the other roles' parts to them: do not write steps, a plan or a schedule for their work/);
   } finally { await t.close(); }
 });
@@ -196,7 +198,7 @@ test('b: when every agent that chose to answer passes after all, the Coordinator
     await t.call('/api/m/chat/chats/sales-room/send', { body: { text: 'Plan my week.' } });
     const msgs = await waitIdle(t, 'sales-room');
     const replies = msgs.filter(m => m.role === 'assistant');
-    assert.equal(replies.find(m => m.agentId === 'closer')?.text, 'Closer had nothing to add');
+    assert.equal(replies.find(m => m.agentId === 'closer')?.text, 'Sales expert had nothing to add');
     const co = replies.filter(m => m.agentId === 'coordinator');
     assert.equal(co.length, 1); assert.equal(co[0].text, 'Here is your week, in one plan.');
   } finally { await t.close(); }

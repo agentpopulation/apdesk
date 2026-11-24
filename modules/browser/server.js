@@ -38,12 +38,14 @@ export async function activate(ctx) {
   const ask = (r) => ctx.approval.request({ signal: ctx.panic.signal, ...r });
   const modelFor = (agentId) => (messages, signal) => ctx.model.chat({ agentId, messages, json: true, purpose: 'small', temperature: 0.1, maxTokens: 900, signal });
 
+  /** The Agents module's one rule for naming an agent on screen. */
+  const agentLine = (id) => ctx.modules.api('agents')?.displayName?.(id) || ctx.agents.get(id)?.name || 'An agent';
   async function runTask({ agentId = 'operator', goal, startUrl = null, chatId = null, maxSteps = 25, model = null }) {
     if (!goal) throw new Error('Say what the agent should do in the browser.');
     refuseOffline(startUrl);   // Offline: only a task that starts on this PC may run, and no browser is started otherwise
     const c = computer(agentId);
-    if (c.jobId && ctx.jobs.get(c.jobId)?.status === 'running') throw Object.assign(new Error(`${ctx.agents.get(agentId)?.name || agentId} is already busy in the browser. Stop that task first.`), { code: 'busy' });
-    const name = ctx.agents.get(agentId)?.name || agentId;
+    if (c.jobId && ctx.jobs.get(c.jobId)?.status === 'running') throw Object.assign(new Error(`${agentLine(agentId)} is already busy in the browser. Stop that task first.`), { code: 'busy' });
+    const name = agentLine(agentId);
     const cardId = 'browser-' + Date.now().toString(36);
     return ctx.jobs.start({
       kind: 'browser.task', title: `${name} in the browser: ${String(goal).slice(0, 70)}`, agentId, chatId, input: { goal, startUrl },
@@ -153,7 +155,7 @@ export async function activate(ctx) {
     async run(args, call) {
       const agentId = args.agentId || 'operator';
       const job = await runTask({ agentId, goal: args.goal, startUrl: args.startUrl, chatId: call.chatId });
-      return { started: true, jobId: job.id, note: `${ctx.agents.get(agentId)?.name || agentId} is working in the browser. Watch it on the agent's Computer tab.`, cards: [{ kind: 'actions', actions: [{ label: 'Watch', go: `#/agents/${agentId}/computer` }] }] };
+      return { started: true, jobId: job.id, note: `${agentLine(agentId)} is working in the browser. Watch it on the agent's Computer tab.`, cards: [{ kind: 'actions', actions: [{ label: 'Watch', go: `#/agents/${agentId}/computer` }] }] };
     },
   });
   ctx.expose({ runTask, readPage, status, computers: () => [...computers.keys()] });

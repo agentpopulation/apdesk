@@ -8,10 +8,17 @@ const DIST = path.join(ROOT, 'dist'); const STAGE = path.join(DIST, 'stage'); co
 /** modules/shipped.json: the module folders this release ships, so an update can tell a module the release dropped
  *  from one the owner added (setup/apply-update.mjs reads it). */
 export function writeShipped(modulesDir, version) {
-  const folders = fs.readdirSync(modulesDir, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name).sort();
+  const folders = shippedFolders(modulesDir);
   const rec = { version, entries: [...folders, 'shipped.json'] };
   fs.writeFileSync(path.join(modulesDir, 'shipped.json'), JSON.stringify(rec, null, 1) + '\n');
   return rec;
+}
+/** The built-in module folders: every folder, except one the Module Store added (it carries .apd-added.json) and an old
+ *  copy kept asleep beside a replaced one (<id>.old-<date>). The same rule a test checks against modules/shipped.json. */
+export function shippedFolders(modulesDir) {
+  return fs.readdirSync(modulesDir, { withFileTypes: true })
+    .filter(e => e.isDirectory() && !/\.old-/.test(e.name) && !fs.existsSync(path.join(modulesDir, e.name, '.apd-added.json')))
+    .map(e => e.name).sort();
 }
 const skip = (rel) => /(^|\/)(node_modules|\.git|dist|data|backups|runtime|__pycache__|\.venv|venv)(\/|$)/.test(rel) || rel === 'setup/assets/make-icon.mjs' || rel === 'setup/installed.txt' || /\.test\.(js|mjs)$/.test(rel) || /(^|\/)(real-check|ui-check|check-)[\w.-]*\.mjs$/.test(rel) || /\.(log|sqlite|sqlite-wal|sqlite-shm|pid|pyc)$/.test(rel) || /(^|\/)\.env(\.|$)/.test(rel) || /(^|\/)(test|tests|fixtures)\//.test(rel + '/') || /(^|\/)docs\/design(\/|$)/.test(rel);
 const crlf = (rel) => /\.(bat|cmd)$/i.test(rel);
@@ -69,8 +76,12 @@ function pruneNodeModules(nm) {
   console.log(`pruned in all: ${(bytes / 1e6).toFixed(1)} MB from node_modules`);
 }
 
-// run as a script only; a test imports writeShipped without building anything
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+// run as a script only; a test imports writeShipped without building anything.
+//   node tools/make-zip.mjs --shipped   writes modules/shipped.json in this folder only (the list of built-in modules), no zip
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  if (process.argv.includes('--shipped')) { const rec = writeShipped(path.join(ROOT, 'modules'), JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version); console.log(`modules/shipped.json: ${rec.entries.length - 1} built-in module folders`); }
+  else main();
+}
 function main() {
 // only this script's own output is cleared: other files kept in dist (a repository bundle) stay
 fs.rmSync(STAGE, { recursive: true, force: true }); fs.rmSync(ZIP, { force: true }); fs.mkdirSync(OUT, { recursive: true });

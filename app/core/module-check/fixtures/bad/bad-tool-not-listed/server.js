@@ -1,0 +1,1 @@
+export async function activate(ctx) { ctx.tool({ name: 'quiet_helper', description: 'does something', parameters: { type: 'object', properties: {} }, async run() { return { ok: true }; } }); return { deactivate() {} }; }

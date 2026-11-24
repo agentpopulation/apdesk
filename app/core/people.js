@@ -39,7 +39,7 @@ export class People {
   shown(r) { return r ? { id: r.id, name: r.name, emoji: r.emoji, colour: r.colour, keeper: !!r.keeper, hasPin: !!r.pin_hash } : null; }
   /** At first start after this change: person 1, made from the existing desk, with no PIN, the keeper of this PC. */
   ensureFirst(name = '') {
-    if (!this.db.prepare('SELECT 1 AS x FROM people LIMIT 1').get()) this.db.prepare("INSERT INTO people (id, name, keeper, folder, created) VALUES ('p1', ?, 1, '', ?)").run(String(name || 'Keeper').slice(0, 40), new Date(this.now()).toISOString());
+    if (!this.db.prepare('SELECT 1 AS x FROM people LIMIT 1').get()) this.db.prepare("INSERT INTO people (id, name, keeper, folder, created) VALUES ('p1', ?, 1, '', ?)").run(String(name || 'Admin').slice(0, 40), new Date(this.now()).toISOString());
     return this.keeper();
   }
   list() { return this.db.prepare('SELECT * FROM people ORDER BY keeper DESC, created, id').all().map(r => this.shown(r)); }
@@ -72,7 +72,7 @@ export class People {
   /** Take a person off this desk. Their folder stays where it is; the answer says where. */
   remove(id) {
     const r = this.row(id); if (!r) throw bad('No such person.', 404);
-    if (r.keeper) throw bad('The keeper of this PC stays.', 409);
+    if (r.keeper) throw bad('The Admin of this PC stays.', 409);
     this.db.prepare('DELETE FROM people WHERE id = ?').run(r.id);
     return { id: r.id, folder: path.dirname(path.join(this.dataDir, r.folder)) };
   }
@@ -117,7 +117,7 @@ export class People {
   /** The keeper gives a person a new PIN; the person is told who did it and when. */
   async resetPin(id, pin, byId) {
     const by = this.row(byId); await this.setPin(id, pin);
-    this.db.prepare('UPDATE people SET reset_by = ?, reset_at = ? WHERE id = ?').run(by?.name || 'The keeper', new Date(this.now()).toISOString(), id);
+    this.db.prepare('UPDATE people SET reset_by = ?, reset_at = ? WHERE id = ?').run(by?.name || 'The Admin', new Date(this.now()).toISOString(), id);
   }
   /** The tool at the PC (setup/reset-pin.mjs): the person enters with no PIN until they set a new one. */
   clearPin(id, by) {

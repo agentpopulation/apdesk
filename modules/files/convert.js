@@ -124,7 +124,8 @@ function colIndex(ref) {
   return n - 1;
 }
 
-function xlsx(files) {
+/** Every sheet of a workbook as rows of cell text: [{ name, rows, more }], at most cap data rows per sheet. */
+function xlsxSheets(files, cap = MAX_SHEET_ROWS) {
   const shared = [];
   const sst = files.get('xl/sharedStrings.xml');
   if (sst) for (const si of sst.toString('utf8').matchAll(/<si\b[\s\S]*?<\/si>/g)) shared.push(runText(si[0], ''));
@@ -144,7 +145,7 @@ function xlsx(files) {
     const rows = [];
     let more = 0;
     for (const row of data.toString('utf8').matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
-      if (rows.length > MAX_SHEET_ROWS) { more += 1; continue; }
+      if (rows.length > cap) { more += 1; continue; }
       const cells = [];
       for (const c of row[1].matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
         const attrs = c[1];
@@ -164,9 +165,28 @@ function xlsx(files) {
       if (values.some((x) => String(x).trim())) rows.push(values);
     }
     if (!rows.length) continue;
-    out.push(`## ${sheet.name}\n\n${table(rows)}${cutNote(more)}`);
+    out.push({ name: sheet.name, rows, more });
   }
-  return out.join('\n\n');
+  return out;
+}
+
+function xlsx(files) {
+  return xlsxSheets(files).map((x) => `## ${x.name}\n\n${table(x.rows)}${cutNote(x.more)}`).join('\n\n');
+}
+
+/**
+ * The rows of cells of a table file, for a module that imports rows (Sales customers): a .xlsx or .xlsm workbook (its
+ * first sheet that holds data, every row), or CSV text. { rows, sheet, sheets }; a file it cannot read throws with a plain line.
+ */
+export function readTable(bytes, ext) {
+  const e = String(ext || '').toLowerCase().replace(/^(?!\.)/, '.');
+  if (e === '.csv') return { rows: parseCsv(Buffer.from(bytes).toString('utf8').replace(/^\uFEFF/, '')), sheet: '', sheets: 1 };
+  if (e !== '.xlsx' && e !== '.xlsm') throw Object.assign(new Error('Only .xlsx and .csv files can be read as a table.'), { code: 'unsupported' });
+  let files;
+  try { files = entryMap(bytes); } catch (err) { throw Object.assign(new Error('The spreadsheet is damaged or has no readable content.'), { code: 'malformed', cause: err }); }
+  const sheets = xlsxSheets(files, Infinity);
+  if (!sheets.length) return { rows: [], sheet: '', sheets: 0 };
+  return { rows: sheets[0].rows, sheet: sheets[0].name, sheets: sheets.length };
 }
 
 function pptx(files) {

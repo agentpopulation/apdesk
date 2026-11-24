@@ -1,0 +1,1 @@
+{"id": "bad-fetch-undeclared", "number": 101, "name": "Fetch undeclared", "description": "A hostile test module for the kit's checker, after the reviewer's h14-manifest. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

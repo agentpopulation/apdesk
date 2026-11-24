@@ -75,10 +75,10 @@ test('rename and tone show in the very next prompt; skills reach the prompt', as
   const t = await testDesk({ modules: ['chat', 'agents'], script: (b) => { prompts.push(b.messages[0].content); return 'ok'; } });
   try {
     await t.call('/api/m/chat/chats/dm-scout/send', { body: { text: 'hi' } }); await waitReply(t, 'dm-scout');
-    assert.match(prompts.at(-1), /You are Scout/); assert.match(prompts.at(-1), /Cited brief/);
+    assert.match(prompts.at(-1), /^You are the Researcher on the owner's team\./); assert.match(prompts.at(-1), /Cited brief/);
     await t.call('/api/agents/scout', { method: 'PATCH', body: { name: 'Ranger', personality: 'Speaks like a pirate.' } });
     await t.call('/api/m/chat/chats/dm-scout/send', { body: { text: 'hi again' } }); await waitReply(t, 'dm-scout');
-    assert.match(prompts.at(-1), /You are Ranger/); assert.match(prompts.at(-1), /pirate/);
+    assert.match(prompts.at(-1), /^You are the Researcher on the owner's team; he calls you Ranger\./); assert.match(prompts.at(-1), /pirate/);
   } finally { await t.close(); }
 });
 

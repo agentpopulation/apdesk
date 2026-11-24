@@ -1,0 +1,1 @@
+{"id": "bad-global-member", "number": 146, "name": "Global member", "description": "A hostile test module for the checker: Reaches process as a member of the global object. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

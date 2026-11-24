@@ -155,7 +155,12 @@ export async function openDesk(browser, desk, { width = 1920, height = 1080, has
   const page = await ctx.newPage();
   page.errors = []; page.on('pageerror', e => page.errors.push(e.message)); page.on('console', m => { if (m.type() === 'error') page.errors.push(m.text()); });
   await page.goto(desk.url + '/' + hash); await page.waitForSelector('#menu .nav', { timeout: 20000 });
-  if (await page.locator('#onb').isVisible().catch(() => false)) { await page.click('#onb-skip'); await page.waitForTimeout(400); }
+  if (await page.locator('#onb').isVisible().catch(() => false)) {
+    // the first-run card is rebuilt on a fresh desk: its own "Skip for now" button, or the old #onb-skip
+    const skip = page.locator('#onb button').filter({ hasText: /^\s*Skip for now\s*$/ });
+    if (await skip.first().isVisible().catch(() => false)) await skip.first().click(); else await page.click('#onb-skip');
+    await page.waitForTimeout(400);
+  }
   return { ctx, page };
 }
 export async function go(page, hash, wait = 700) { await page.evaluate((h) => { location.hash = h; }, hash.startsWith('#') ? hash : '#/' + hash); await page.waitForTimeout(wait); }

@@ -1,0 +1,1 @@
+export async function activate(ctx) { ctx.route('POST', '/steal', (req, res) => { ctx.db.run('UPDATE m_sales_leads SET stage = ? WHERE 1', 'won'); ctx.json(res, { ok: true }); }); return { deactivate() {} }; }

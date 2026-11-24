@@ -54,8 +54,8 @@
    "id": "quotation-draft",
    "title": "Quotation draft",
    "category": "Business",
-   "description": "Use when a customer asks for a price: draft a clear quotation with items, GST and validity.",
-   "body": "## Steps\n\n1. Collect: customer name, items or services, quantity, rate, GST rate for each item, delivery time and payment terms.\n2. Work out line totals, GST (CGST+SGST for the same state, IGST for another state) and the grand total.\n3. Add validity (for example 15 days) and the business details the owner keeps on file.\n4. Write the quotation as a clean document in the workspace and show it to the owner.\n5. Do not send it; the owner sends it.\n\n## Checks\n- Totals and GST are worked out correctly\n- State of supply decides CGST+SGST or IGST"
+   "description": "Use when a customer asks for a price: draft a clear quotation with items, tax and validity.",
+   "body": "## Steps\n\n1. Collect: customer name, items or services, quantity, rate, tax rate for each item (the tax the owner's country uses), delivery time and payment terms.\n2. Work out line totals, the tax (in India: CGST+SGST in the same state, IGST across states) and the grand total.\n3. Add validity (for example 15 days) and the business details the owner keeps on file.\n4. Write the quotation as a clean document in the workspace and show it to the owner.\n5. Do not send it; the owner sends it.\n\n## Checks\n- Totals and tax are worked out correctly\n- Money is in the owner's currency"
   },
   {
    "id": "invoice-follow-up",
@@ -196,6 +196,69 @@
    "category": "Advisors",
    "description": "Use to read what the desk holds about income and costs and say what stands out.",
    "body": "## Steps\n\n1. Read the records of money the desk holds, in the owner's currency.\n2. Say what is coming in and going out, or not checked when there are no records.\n3. Name the one cost or gap that stands out.\n4. Propose one step and ask before assuming anything.\n\n## Checks\n- Money is shown in the owner's currency from settings\n- No figure is guessed"
+  },
+  {
+   "id": "finance-cash-view",
+   "title": "Cash view",
+   "category": "Business",
+   "description": "Use to show money in and money out for a month from the records the desk holds, and what is due next.",
+   "body": "## Steps\n\n1. Read the invoices, payments and tables the desk holds for the month.\n2. List money in and money out, in the owner's currency from settings.\n3. Name what is due next and who owes it.\n4. Say not checked for any figure no record gave.\n\n## Checks\n- Every figure comes from a record, named\n- Money is in the owner's currency"
+  },
+  {
+   "id": "marketing-month-plan",
+   "title": "A month of marketing",
+   "category": "Business",
+   "description": "Use to plan one month of simple marketing: who to reach, the message, and one post or offer a week.",
+   "body": "## Steps\n\n1. Ask or read what the business sells, to whom, and where.\n2. Pick the one group of buyers to reach this month.\n3. Write the main message in one sentence.\n4. Plan one post, email or offer a week, with the day it goes out.\n5. Nothing is posted or sent: each piece is a draft the owner approves.\n\n## Checks\n- The plan fits a small business with little time\n- No made-up figures"
+  },
+  {
+   "id": "marketing-post-drafts",
+   "title": "Post drafts",
+   "category": "Business",
+   "description": "Use to draft short posts for social pages or a newsletter, in the owner's voice.",
+   "body": "## Steps\n\n1. Read the offer or news the owner wants to share.\n2. Draft three short versions: plain, friendly, and with a clear next step.\n3. Keep each under 60 words and add no claims a page did not give.\n4. Leave them as drafts for the owner to approve.\n\n## Checks\n- Nothing is posted\n- No price or fact the owner did not give"
+  },
+  {
+   "id": "secretary-follow-ups",
+   "title": "Reminders and follow-ups",
+   "category": "Work",
+   "description": "Use to list what the owner promised or is waiting on, and set reminders for each.",
+   "body": "## Steps\n\n1. Read recent chats, tasks, meeting notes and the calendar.\n2. List each promise or open follow-up with who it is for and when.\n3. Propose a reminder or task for each, at a time in the owner's zone.\n4. Ask before adding anything to the calendar.\n\n## Checks\n- Times are in the owner's zone\n- Nothing is sent without approval"
+  },
+  {
+   "id": "care-common-answers",
+   "title": "Answers to common questions",
+   "category": "Business",
+   "description": "Use to write short, calm answers to the questions customers ask most.",
+   "body": "## Steps\n\n1. Read past customer messages and replies the desk holds.\n2. Find the five questions asked most.\n3. Write a short answer to each, in the owner's tone.\n4. Mark any answer that needs a fact the owner must check.\n\n## Checks\n- Answers say only what the business really offers\n- Facts not checked are marked"
+  },
+  {
+   "id": "recruit-job-post",
+   "title": "Job post",
+   "category": "Work",
+   "description": "Use to write a short, clear job post: the work, the hours, the pay the owner gives, and how to apply.",
+   "body": "## Steps\n\n1. Ask for the job, the hours, the place and the pay.\n2. Write the post in plain words, under 150 words.\n3. Add how to apply and by when.\n4. Leave it as a draft for the owner.\n\n## Checks\n- Pay is only what the owner gave, in his currency\n- No promise the owner did not make"
+  },
+  {
+   "id": "recruit-shortlist",
+   "title": "Shortlist",
+   "category": "Work",
+   "description": "Use to read applications and make a fair shortlist with a reason for each.",
+   "body": "## Steps\n\n1. Read the applications the owner gave.\n2. Score each against what the job needs, the same way for everyone.\n3. Make a shortlist of three to five with one line on why.\n4. Draft polite replies; nothing is sent until the owner approves.\n\n## Checks\n- The same test for every applicant\n- No judgement on age, gender, religion or origin"
+  },
+  {
+   "id": "data-read-table",
+   "title": "Read a table",
+   "category": "Work",
+   "description": "Use to read a table or spreadsheet and say what stands out, in plain words.",
+   "body": "## Steps\n\n1. Open the table and say what each column holds.\n2. Count rows and totals that matter.\n3. Name the three things that stand out, with the row they come from.\n4. Say what is missing or unclear.\n\n## Checks\n- Every number comes from the table\n- Money in the owner's currency"
+  },
+  {
+   "id": "data-what-changed",
+   "title": "What changed",
+   "category": "Work",
+   "description": "Use to compare two periods (this month and last) and say what moved and why it may have.",
+   "body": "## Steps\n\n1. Pick the two periods and the same measure for both.\n2. Show the change as a number and in words.\n3. Name the likely cause only where a record shows it; else say not checked.\n4. Propose one thing to look at next.\n\n## Checks\n- Like is compared with like\n- Causes without a record are marked not checked"
   }
  ],
  "packs": [

@@ -1,5 +1,6 @@
 // Files page: the explorer mounted on the shell kit.
 import { mountFileExplorer } from './ui/explorer.js';
+import { showWhereLinksGo } from './ui/links.js';
 
 const SESSION = () => document.querySelector('meta[name="apd-session"]')?.content || '';
 let current = null;
@@ -46,9 +47,9 @@ export const pages = {
       const explorer = mountFileExplorer(host, {
         api: (p, o) => call(ui, p, o),
         toast: (text, err) => ui.toast(text, err ? 'err' : ''),
-        md: (text) => ui.md(text),
+        md: (text) => showWhereLinksGo(ui.md(text)),   // every link shows the address it goes to
         fmt: ui.fmt,
-        agentLabel: (id) => ui.agent(id)?.name || id,
+        agentLabel: (id) => (ui.agentLine ? ui.agentLine(id) : ui.agent(id)?.name) || 'An agent',
         decide: (id, d) => ui.decide(id, d),
         openChat: (chatId) => ui.go('chat', chatId),
         openAdd: () => picker.click(),

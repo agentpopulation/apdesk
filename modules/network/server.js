@@ -233,9 +233,11 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
     ctx.db.run('INSERT INTO m_network_visits (at, url, host, via, who, result, note) VALUES (?, ?, ?, ?, ?, ?, ?)', new Date(clock()).toISOString(), u, hostOf(u), via === 'browser' ? 'Browser' : 'Page read', label, result, note);
     if (Math.random() < 0.01) ctx.db.run('DELETE FROM m_network_visits WHERE id <= (SELECT MAX(id) - 50000 FROM m_network_visits)');
   }
+  /** An agent named on screen by the Agents module's one rule ("Kent · Secretary", or the role alone). */
+  const agentLine = (id) => ctx.modules.api('agents')?.displayName?.(id) || ctx.agents.get(id)?.name || 'An agent';
   function whoLabel(who) {
     const parts = [];
-    if (who?.agentId) parts.push(ctx.agents.get(who.agentId)?.name || 'An agent');
+    if (who?.agentId) parts.push(agentLine(who.agentId));
     if (who?.jobId) { const jb = ctx.jobs.get(who.jobId); if (jb?.title) parts.push(jb.title.slice(0, 80)); }
     if (!parts.length && who?.module) {
       const running = ctx.jobs.list({ status: 'running', limit: 50 }).filter(x => String(x.kind || '').split('.')[0] === who.module);
@@ -482,14 +484,15 @@ export async function activate(ctx, { siLib = si, clock = () => Date.now() } = {
     const jobs = [...ctx.jobs.list({ status: 'running', limit: 100 }), ...ctx.jobs.list({ status: 'waiting', limit: 100 }), ...ctx.jobs.list({ status: 'failed', limit: 100 })];
     const since = new Date(clock() - DAY).toISOString();
     let calls = []; try { calls = ctx.db.all('SELECT agent_id, purpose, provider, ok FROM calls WHERE at >= ? ORDER BY id DESC LIMIT 20000', since); } catch {}
-    const byName = new Map(agents.map(a => [a.name, a.id]));
+    const byName = new Map(agents.flatMap(a => [[a.name, a.id], [agentLine(a.id), a.id]]));   // visits are logged by the display line; older rows hold the stored name
     const visits = ctx.db.all('SELECT host, who FROM m_network_visits WHERE at >= ? ORDER BY id DESC LIMIT 5000', since)
       .map(v => ({ host: v.host, agentId: byName.get(String(v.who || '').split(' · ')[0]) })).filter(v => v.agentId);
     // The last check on record for each provider, however old: a failure stays marked until a later check passes.
     const last = ctx.db.all('SELECT provider, label, url, ok, status, ms, at FROM m_network_api WHERE id IN (SELECT MAX(id) FROM m_network_api GROUP BY provider)').map(r => ({ ...r, ok: !!r.ok }));
     const health = apiHealthFrom(last, clock()).map(p => ({ provider: p.provider, status: p.status }));
     const router = routerHealth(health); if (router) health.push({ provider: 'router', status: router });   // the Free API is checked host by host
-    return { at: nowIso(), states: agentStates({ agents, jobs, now: clock() }), deps: dependencyModel({ agents, calls, health, visits, label: (p) => ctx.model.label(p, null) || p }) };
+    const named = agents.map(a => ({ ...a, name: agentLine(a.id) }));   // the map and the table name an agent as the rest of the desk does
+    return { at: nowIso(), states: agentStates({ agents: named, jobs, now: clock() }), deps: dependencyModel({ agents: named, calls, health, visits, label: (p) => ctx.model.label(p, null) || p }) };
   }
 
   // ================= P. IP tracking: the local addresses (read here, no outbound) and the public address (recorded when

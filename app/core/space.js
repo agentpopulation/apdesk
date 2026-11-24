@@ -36,6 +36,7 @@ export function openSpace({ dataDir, backupsDir, panic: housePanic, main = true,
   core.modules = modules;
   approval.spendModuleOn = () => modules.isOn('payments');
   jobs.onEnd = (id) => approval.endScope(id);   // "ask once per job" ends with the job
+  approval.isStrictJob = (id) => jobs.isStrict(id);   // a job started with strictApprovals asks for everything
   // a job that asks the owner shows "waiting" with the reason, and goes back to "running" once the owner decides
   approval.onJobWait = (jobId, title, waiting) => {
     const j = jobs.get(jobId); if (!j) return;

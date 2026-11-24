@@ -39,27 +39,54 @@ export async function activate(ctx) {
     if (want === 'local' || local) return 'local';
     return 'browser';
   };
-  const browserOnly = () => err('Voice is set to Browser, which works only in the page. To use it from an agent, pick On this PC or ElevenLabs in Settings, Voice.', 409);
+  const noEngine = (message) => Object.assign(err(message, 409), { code: 'no_engine' });
+  const browserOnly = () => noEngine('Voice is set to Browser, which works only in the page. To use it from an agent, pick On this PC or ElevenLabs in Settings, Voice.');
+  const LISTEN_BROWSER = 'No speech engine is set up for recordings. Voice is set to Browser, which works only in the page. Pick On this PC or ElevenLabs in Settings, Voice.';
   const hostedOk = async (what, agentId) => {
     const d = await ctx.approval.request({ agentId, chatId: 'voice', action: 'net.post', title: `Send ${what} to ElevenLabs`, detail: 'Voice · hosted engine you chose' });
     if (!d.ok) throw err(d.reason === 'halted' ? 'Stopped.' : 'Sending audio to ElevenLabs was not allowed.', 403);
   };
 
-  /** Speech to text: whisper.cpp on this PC, or ElevenLabs. `file` is workspace-relative (or absolute inside the workspace). */
+  /** Before a recording is turned into words: which engine would be used, and what that means for the owner.
+   *  listenPlan() -> { available, engine, leavesPc, cost, why }
+   *    engine   'whisper.cpp' or 'ElevenLabs', or null when none can be used
+   *    leavesPc true only for a hosted engine: the sound is sent to that service (the owner is asked first, every time)
+   *    cost     'Free, it runs on this PC' for the local engine, otherwise 'not known' (the desk has no price for a hosted engine)
+   *    why      one plain sentence the page can show as it is (what happens, or what to set up when available is false)
+   *  Any module may call it. It reads settings only: it opens no file, sends nothing, spends nothing. */
+  function listenPlan() {
+    const how = pick('listen');
+    if (how === 'elevenlabs') {
+      if (!elevenKey()) return { available: false, engine: null, leavesPc: false, cost: 'not known', why: 'No ElevenLabs key. Add one on the Models page under service keys.' };
+      return { available: true, engine: 'ElevenLabs', leavesPc: true, cost: 'not known', why: 'The recording is sent to ElevenLabs over the internet. You are asked before it is sent. What it costs depends on your ElevenLabs plan.' };
+    }
+    if (how === 'browser') return { available: false, engine: null, leavesPc: false, cost: 'not known', why: LISTEN_BROWSER };
+    const e = engines();
+    if (!e.whisper) return { available: false, engine: null, leavesPc: false, cost: 'not known', why: 'whisper.cpp was not found. Pick the folder that holds whisper-cli in Settings › Voice.' };
+    if (!e.whisperModel) return { available: false, engine: null, leavesPc: false, cost: 'not known', why: 'No whisper model file (ggml-….bin) was found in that folder.' };
+    return { available: true, engine: 'whisper.cpp', leavesPc: false, cost: 'Free, it runs on this PC', why: 'The recording is turned into words on this PC. The sound does not leave it.' };
+  }
+
+  /** Speech to text: whisper.cpp on this PC, or ElevenLabs. `file` is workspace-relative (or absolute inside the workspace).
+   *  transcribe(file, { signal, language, agentId }) -> { text, engine, model, seconds, leavesPc, cost }  (see listenPlan for the last two).
+   *  Any module may call it. It only reads that one file, and only inside the workspace. With no usable engine it refuses with
+   *  a plain sentence and the error code 'no_engine' (HTTP 409). The engine is the one the owner chose; a hosted engine is never
+   *  used unless he chose it, and the desk asks him before any sound is sent (the same approval door as everything that is sent
+   *  out). It writes no file, deletes nothing, sends no mail and cannot spend without that approval. */
   async function transcribe(file, { signal, language, agentId = null } = {}) {
     const absIn = path.isAbsolute(String(file)) ? path.resolve(file) : ctx.workspacePath(String(file || ''));
-    const how = pick('listen'); if (how === 'browser') throw browserOnly();
+    const how = pick('listen'); if (how === 'browser') throw noEngine(LISTEN_BROWSER);
     if (how === 'elevenlabs') {
-      const key = elevenKey(); if (!key) throw err('No ElevenLabs key. Add one on the Models page under service keys.', 409);
+      const key = elevenKey(); if (!key) throw noEngine('No ElevenLabs key. Add one on the Models page under service keys.');
       if (!absIn.startsWith(path.resolve(ctx.workspace) + path.sep) || !fs.existsSync(absIn)) throw err('That file is not in the workspace.', 404);
       await hostedOk('a recording', agentId);
       const started = Date.now();
       const text = await elevenTranscribe({ fetch: (u, i) => ctx.fetch(u, i), key, file: absIn, language: language || prefs().language, signal: ctx.panic.child(signal), refused: elevenRefused });
-      return { text, engine: 'ElevenLabs', model: 'scribe_v1', seconds: (Date.now() - started) / 1000 };
+      return { text, engine: 'ElevenLabs', model: 'scribe_v1', seconds: (Date.now() - started) / 1000, leavesPc: true, cost: 'not known' };
     }
     const e = engines();
-    if (!e.whisper) throw err('whisper.cpp was not found. Pick the folder that holds whisper-cli in Settings › Voice.', 409);
-    if (!e.whisperModel) throw err('No whisper model file (ggml-….bin) was found in that folder.', 409);
+    if (!e.whisper) throw noEngine('whisper.cpp was not found. Pick the folder that holds whisper-cli in Settings › Voice.');
+    if (!e.whisperModel) throw noEngine('No whisper model file (ggml-….bin) was found in that folder.');
     const abs = absIn;
     if (!abs.startsWith(path.resolve(ctx.workspace) + path.sep)) throw err('The file must be in the workspace.', 403);
     if (!fs.existsSync(abs)) throw err('That file is not in the workspace.', 404);
@@ -69,7 +96,7 @@ export async function activate(ctx) {
     const r = await run(e.whisper, args, { signal: ctx.panic.child(signal), timeoutMs: 15 * 60_000, track: mine });
     if (r.error === 'stopped') throw Object.assign(err('Stopped.', 409), { code: 'halted' });
     if (r.code !== 0) throw err(`whisper.cpp could not read the file${r.error ? ': ' + r.error : ''}. ${r.stderr.split('\n').filter(Boolean).slice(-1)[0] || ''}`.trim(), 502);
-    return { text: r.stdout.replace(/\s+/g, ' ').trim(), engine: 'whisper.cpp', model: path.basename(e.whisperModel), seconds: (Date.now() - started) / 1000 };
+    return { text: r.stdout.replace(/\s+/g, ' ').trim(), engine: 'whisper.cpp', model: path.basename(e.whisperModel), seconds: (Date.now() - started) / 1000, leavesPc: false, cost: 'Free, it runs on this PC' };
   }
 
   /** Text to speech: Piper on this PC (a WAV) or ElevenLabs (an MP3), saved in workspace/voice. */
@@ -159,6 +186,6 @@ export async function activate(ctx) {
     fs.createReadStream(f).pipe(res);
   });
 
-  ctx.expose({ transcribe, speak, status: () => status(false) });
+  ctx.expose({ transcribe, listenPlan, speak, status: () => status(false) });
   return { async deactivate() { offStop?.(); killAll(mine); } };
 }

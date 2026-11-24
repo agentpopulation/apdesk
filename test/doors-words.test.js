@@ -48,7 +48,9 @@ test('download card: plain size, the file and where it comes from; no internal k
   try {
     const d = await t.core.downloads.start({ title: 'Granite model', url: host.url('/m.gguf'), allowHosts: ['127.0.0.1'], size: body.length, sha256: sha(body), to: path.join(t.dataDir, 'dl', 'm.gguf'), kind: 'local-engine' });
     const card = await until(() => t.core.approval.listPending()[0]);
-    assert.deepEqual(Object.keys(card.payload).sort(), ['file', 'size', 'url']);
+    // what a screen is given holds no raw address: the host is named in the detail line
+    assert.deepEqual(Object.keys(card.payload).sort(), ['file', 'size']);
+    assert.ok(!JSON.stringify(card).includes(host.url('/m.gguf')), 'no raw address on the card');
     assert.equal(card.payload.size, '30.0 KB'); assert.equal(card.payload.file, 'm.gguf');
     assert.doesNotMatch(JSON.stringify(card.payload), /local-engine|[0-9a-f]{64}|"download"/);
     assert.match(card.detail, /^From 127\.0\.0\.1\. The desk checks the file is the one published before it is used\.$/); assert.doesNotMatch(card.title + card.detail, /SHA|hash/i);

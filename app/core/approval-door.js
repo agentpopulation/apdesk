@@ -10,10 +10,17 @@ export const SETTINGS_TOKEN = Symbol('apd.settings.token');
 /** The last millisecond of the day that holds `ms`, in the owner's zone (a day the clocks change included). */
 export function endOfDay(ms, timeZone) { const start = dayStart(ms, timeZone).getTime(); return dayStart(start + 26 * 3600000, timeZone).getTime() - 1; }
 export const LEVELS = ['open', 'careful', 'strict'];
-export const ACTIONS = ['file.write', 'file.delete', 'file.read.outside', 'shell.run', 'browser.open', 'browser.act', 'net.post', 'send.person', 'spend', 'module.toggle', 'install', 'login', 'calendar.write', 'custom'];
-// An install (a desk update, a module's packages, a local engine or model, any program) asks the owner each time, at
-// every level and inside an auto-approve window. Installing a desk update is done by core/update.js, never by the grant.
-const ALWAYS_ASK = new Set(['send.person', 'install']);
+export const ACTIONS = ['file.write', 'file.delete', 'file.read.outside', 'shell.run', 'browser.open', 'browser.act', 'net.post', 'send.person', 'spend', 'module.toggle', 'install', 'login', 'calendar.write', 'record.change', 'schedule.repeat', 'memory.lesson', 'custom'];
+// These ask the owner each time, at every level and inside an auto-approve window, and are never covered by "ask once":
+//   install          a desk update, a module added or removed, a module's packages, a local engine or model, any program
+//                    (installing a desk update is done by core/update.js, never by the grant)
+//   record.change    an agent's tool adds or changes the owner's customer records (contacts, companies, deals, notes)
+//   schedule.repeat  an agent's turn makes a schedule that repeats (a one-time reminder does not ask)
+//   memory.lesson    an agent's turn saves a standing lesson or instruction (an ordinary remembered fact does not ask)
+//   custom           anything a module has no named action for (until each caller has its own name)
+export const ALWAYS_ASK = new Set(['send.person', 'install', 'record.change', 'schedule.repeat', 'memory.lesson', 'custom']);
+/** What an auto-approve window never covers, in one plain line (the auto-approve dialog and Settings say it). */
+export const WINDOW_NEVER = 'It never covers sending to a person, adding or removing a module, changes to your customer records, repeating schedules, standing instructions for your agents, or spending over your limits.';
 const alwaysAsks = (action) => ALWAYS_ASK.has(action);
 const ASK_ONCE = { careful: new Set(['file.write', 'browser.act']), strict: new Set() };
 // allow | ask | once  per level
@@ -29,6 +36,9 @@ const POLICY = {
   'module.toggle':     { open: 'ask', careful: 'ask', strict: 'ask' },
   'install':           { open: 'ask', careful: 'ask', strict: 'ask' },
   'login':             { open: 'ask', careful: 'ask', strict: 'ask' },
+  'record.change':     { open: 'ask', careful: 'ask', strict: 'ask' },
+  'schedule.repeat':   { open: 'ask', careful: 'ask', strict: 'ask' },
+  'memory.lesson':     { open: 'ask', careful: 'ask', strict: 'ask' },
   'custom':            { open: 'ask', careful: 'ask', strict: 'ask' },
   'send.person':       { open: 'ask', careful: 'ask', strict: 'ask' },
   'spend':             { open: 'limit', careful: 'ask', strict: 'ask' },
@@ -37,7 +47,7 @@ const TIMEOUT_MS = 24 * 3600 * 1000;
 // Exact field names only (a field called shipping_note must never be hidden because it contains "pin").
 const SECRET_KEY = /^(password|passwd|passphrase|otp|cvv|cvc|card_?number|pin|pin_?code|secret|token|access_?token|api_?key|authorization)$/i;
 // For these actions the owner approves content, so nothing in the payload is ever hidden from the card.
-const SHOW_ALL = new Set(['send.person', 'shell.run', 'net.post', 'spend', 'file.write', 'file.delete', 'browser.act', 'calendar.write', 'install', 'custom']);
+const SHOW_ALL = new Set(['send.person', 'shell.run', 'net.post', 'spend', 'file.write', 'file.delete', 'browser.act', 'calendar.write', 'install', 'record.change', 'schedule.repeat', 'memory.lesson', 'custom']);
 const MAX_PAYLOAD = 256 * 1024;
 
 const ONCE_TTL_MS = 15 * 60 * 1000;   // an "ask once" grant never outlives this, even if nobody ended its scope
@@ -50,6 +60,9 @@ export class ApprovalDoor {
     this.visited = new Set();     // hostnames the browser already opened (Careful)
     this.granted = new Map();     // id -> { action, usedAt }
     this.spendModuleOn = () => false;
+    // A job started with strictApprovals (core/jobs.js): every action with a side effect in it asks, whatever the level and
+    // any auto-approve window. The space wires this to its Jobs; a module can only raise strictness this way, never lower it.
+    this.isStrictJob = () => false;
     // Incognito (contracts/PEOPLE.md): the person's real door. Spend is the one carry-over, so Incognito cannot get
     // around the limits: this door's day and month totals and its limits are the person's own, and on leaving the
     // Incognito space writes ONE amount-only row back to the real door (noteIncognitoSpend).
@@ -65,7 +78,7 @@ export class ApprovalDoor {
   }
   get level() { const l = this.settings.get('security.level'); return LEVELS.includes(l) ? l : 'open'; }
   get autoApproveUntil() { const u = this.settings.get('security.autoApproveUntil'); return u && new Date(u).getTime() > Date.now() ? u : null; }
-  state() { return { level: this.level, autoApproveUntil: this.autoApproveUntil, pending: this.listPending().length, limits: this.limits(), spentToday: this.spent('day'), spentMonth: this.spent('month') }; }
+  state() { return { level: this.level, autoApproveUntil: this.autoApproveUntil, windowNever: WINDOW_NEVER, pending: this.listPending().length, limits: this.limits(), spentToday: this.spent('day'), spentMonth: this.spent('month') }; }
 
   // ---- only settings-routes.js holds the token
   setLevel(level, token) {
@@ -91,7 +104,8 @@ export class ApprovalDoor {
   // Incognito reads the person's real limits, so the same ceiling holds inside it.
   limits() { const s = this.spendCarry ? this.spendCarry.settings : this.settings; return { perItem: s.get('spend.perItem'), perDay: s.get('spend.perDay'), perMonth: s.get('spend.perMonth'), currency: s.get('currency') }; }
   spent(period) {
-    const since = new Date(); if (period === 'day') since.setHours(0, 0, 0, 0); else { since.setDate(1); since.setHours(0, 0, 0, 0); }
+    // "today" and "this month" are the owner's, in his zone from Settings: the same clock as the model door (dayStart)
+    const since = dayStart(Date.now(), (this.spendCarry ? this.spendCarry.settings : this.settings).get('timeZone'), period !== 'day');
     const a = this.s.get("SELECT COALESCE(SUM(amount), 0) AS t FROM approvals WHERE action = 'spend' AND status = 'approved' AND decided >= ?", since.toISOString())?.t || 0;
     const c = this.s.get('SELECT COALESCE(SUM(cost_minor), 0) AS t FROM calls WHERE at >= ?', since.toISOString())?.t || 0;
     // Incognito spend counts toward the person's own day and month totals.
@@ -145,9 +159,12 @@ export class ApprovalDoor {
     else if (rule === 'folder') { const f = String(req.payload?.folder || req.payload?.path || ''); decide = f && (this.settings.get('files.allowedFolders') || []).some(x => insideFolder(f, x)) ? 'allow' : 'ask'; }
     else decide = 'ask';
 
-    // auto-approve window never covers send.person, install or spend over the limit
+    // auto-approve window never covers the always-ask actions (ALWAYS_ASK) or spend over the limit
     if (decide === 'ask' && this.autoApproveUntil && !alwaysAsks(action) && action !== 'spend') decide = 'auto';
     if (decide === 'ask' && this.autoApproveUntil && action === 'spend' && Number.isFinite(Number(req.amount)) && Number(req.amount) > 0 && !this.overLimit(req.amount)) decide = 'auto';
+    // a strict job asks for everything, after the level and the window had their say: neither can let it through
+    const strict = !!req.jobId && this.strictJob(req.jobId);
+    if (strict && (decide === 'allow' || decide === 'auto')) decide = 'ask:this job asks before every action';
 
     // The card must be able to show everything the grant covers. A payload too large to show is refused, never cut.
     let payloadSize = 0; try { payloadSize = JSON.stringify(req.payload ?? null).length; } catch { return { ok: false, reason: 'bad_payload', id: null }; }
@@ -157,7 +174,7 @@ export class ApprovalDoor {
     if (decide === 'allow' || decide === 'auto') {
       const how = decide === 'allow' ? 'level' : 'auto';
       this.insert(row, 'approved', how);
-      this.remember(action, onceKey, req);
+      this.remember(action, onceKey, req, strict);
       this.activity({ agentId: row.agentId, action, title: row.title, how, detail: row.detail });
       this.granted.set(row.id, { action, bind: bindHash(req.payload, req.amount) });
       return { ok: true, how, id: row.id };
@@ -183,8 +200,9 @@ export class ApprovalDoor {
     let n = 0; for (const k of [...this.once.keys()]) if (k.endsWith(tail)) { this.once.delete(k); n++; }
     return n;
   }
-  remember(action, onceKey, req) {
-    if (ASK_ONCE[this.level]?.has(action)) this.once.set(onceKey, Date.now());
+  strictJob(jobId) { try { return this.isStrictJob(jobId) === true; } catch { return true; } }   // unsure: ask
+  remember(action, onceKey, req, strict = false) {
+    if (!strict && !alwaysAsks(action) && ASK_ONCE[this.level]?.has(action)) this.once.set(onceKey, Date.now());   // a strict job keeps no ask-once grant
     if (action === 'browser.open') { const h = hostOf(req.payload?.url); if (h) this.visited.add(h); }
     if (action === 'file.read.outside' && req.payload?.folder) { const list = this.settings.get('files.allowedFolders') || []; if (!list.includes(req.payload.folder)) this.settings.set('files.allowedFolders', [...list, req.payload.folder]); }
   }
@@ -192,19 +210,22 @@ export class ApprovalDoor {
     this.s.run('INSERT INTO approvals (id, agent_id, chat_id, job_id, action, title, detail, payload, amount, currency, status, how, created, decided) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       row.id, row.agentId, row.chatId, row.jobId, row.action, row.title, row.detail, JSON.stringify(row.payload ?? null), row.amount, row.currency, status, how, now(), status === 'pending' ? null : now());
   }
-  /** The owner's decision, from any screen. */
-  decide(id, decision, how = 'owner') {
+  /** The owner's decision, from any screen. Once: a row that is no longer waiting is returned as it is, marked `already`,
+   *  and nothing is logged or changed. `from`: where the owner decided when it was not the desk (a linked phone's name). */
+  decide(id, decision, how = 'owner', from = null) {
     const p = this.pending.get(id);
     const status = decision === 'approve' ? 'approved' : decision === 'deny' ? 'denied' : decision;   // timeout | aborted | halted
-    this.s.run('UPDATE approvals SET status = ?, how = ?, decided = ? WHERE id = ? AND status = ?', status, how, now(), id, 'pending');
+    const changed = Number(this.s.run('UPDATE approvals SET status = ?, how = ?, decided = ? WHERE id = ? AND status = ?', status, how, now(), id, 'pending')?.changes || 0);
     const row = this.rowOut(this.s.get('SELECT * FROM approvals WHERE id = ?', id));
     if (!row) return null;
-    this.activity({ agentId: row.agentId, action: row.action, title: row.title, how: status === 'approved' ? 'owner approve' : status === 'denied' ? 'owner deny' : status, detail: row.detail });
+    if (!changed) return { ...row, already: true };
+    const where = from ? `Decided on the phone "${String(from).slice(0, 60)}"` : null;
+    this.activity({ agentId: row.agentId, action: row.action, title: row.title, how: status === 'approved' ? 'owner approve' : status === 'denied' ? 'owner deny' : status, detail: [row.detail, where].filter(Boolean).join(' · ') || null });
     this.events.emit('approval', row);
     if (p) {
       clearTimeout(p.timer); this.pending.delete(id);
       if (status === 'halted') this.stoppedByPanic++;
-      if (status === 'approved') { this.remember(row.action, `${row.action}|${row.agentId || ''}|${row.jobId || row.chatId || 'none'}`, p.req); this.granted.set(id, { action: row.action, bind: bindHash(p.req.payload, p.req.amount) }); }
+      if (status === 'approved') { this.remember(row.action, `${row.action}|${row.agentId || ''}|${row.jobId || row.chatId || 'none'}`, p.req, !!row.jobId && this.strictJob(row.jobId)); this.granted.set(id, { action: row.action, bind: bindHash(p.req.payload, p.req.amount) }); }
       p.resolve(status === 'approved' ? { ok: true, how: 'owner', id } : { ok: false, reason: status === 'denied' ? 'denied' : status, id });
     }
     return row;
@@ -242,6 +263,12 @@ export class ApprovalDoor {
     if (n) { this.activity({ action: 'approval.dismiss', title: `Dismissed ${n} stopped by Panic`, how: 'dismissed' }); this.events.emit('approval', { id: id === 'all' ? null : String(id), status: 'halted', how: 'dismissed' }); }
     return n;
   }
+  /** For the Scorecard: per agent, how many times the owner was asked between two times (fromIso included, toIso not)
+   *  and how many of those he refused. What the level, auto-approve or Incognito granted without asking is not counted. */
+  countsBetween(fromIso, toIso) {
+    return this.s.all("SELECT agent_id AS agentId, COUNT(*) AS asked, SUM(CASE WHEN status = 'denied' THEN 1 ELSE 0 END) AS denied FROM approvals WHERE agent_id IS NOT NULL AND created >= ? AND created < ? AND COALESCE(how, '') NOT IN ('level', 'auto', 'incognito') GROUP BY agent_id ORDER BY agent_id", String(fromIso || ''), String(toIso || ''))
+      .map(r => ({ agentId: r.agentId, asked: Number(r.asked) || 0, denied: Number(r.denied) || 0 }));
+  }
   listRecent(limit = 50) { return this.s.all('SELECT * FROM approvals ORDER BY created DESC LIMIT ?', limit).map(r => this.rowOut(r)); }
   activity(a) { this.s.run('INSERT INTO activity (at, agent_id, action, title, how, detail) VALUES (?, ?, ?, ?, ?, ?)', now(), a.agentId || null, a.action, a.title || null, a.how || null, a.detail || null); }
   activityList(limit = 200) { return this.s.all('SELECT * FROM activity ORDER BY id DESC LIMIT ?', limit); }
@@ -258,6 +285,10 @@ export class ApprovalDoor {
       dismissStopped: (id) => this.dismissStopped(id),
       /** One approval by id (status pending | approved | denied | timeout | aborted | halted), or null. Read-only. */
       get: (id) => this.rowOut(this.s.get('SELECT * FROM approvals WHERE id = ?', String(id || ''))),
+      /** Read-only counts per agent between two times: [{ agentId, asked, denied }] (see countsBetween). */
+      countsBetween: (fromIso, toIso) => this.countsBetween(fromIso, toIso),
+      /** This door honours ctx.jobs.start({ strictApprovals: true }): every action in such a job asks. */
+      strictJobs: true,
     });
   }
 }

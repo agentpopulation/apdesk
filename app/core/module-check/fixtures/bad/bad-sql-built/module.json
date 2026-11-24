@@ -1,0 +1,1 @@
+{"id": "bad-sql-built", "number": 98, "name": "SQL built at run time", "description": "A hostile test module for the kit's checker, after the reviewer's h10-othertable. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

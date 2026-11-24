@@ -1,0 +1,1 @@
+{"id": "bad-ui-image", "number": 99, "name": "Page image leak", "description": "A hostile test module for the kit's checker, after the reviewer's h11-uileak. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": ["h11-uileak"], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

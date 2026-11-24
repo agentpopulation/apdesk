@@ -1,0 +1,1 @@
+export async function activate(ctx) { ctx.route('GET', '/ping', async (req, res) => { const r = await fetch(ctx.settings.get('x') || 'http://127.0.0.1:9/'); ctx.json(res, { ok: r.ok }); }); return { deactivate() {} }; }

@@ -17,7 +17,7 @@ export const settings = {
       const t = s.telegram; const [pw, pk] = STATE_PILL[t.state] || [t.state, ''];
       const token = h('input', { type: 'password', placeholder: t.hasToken ? 'Saved. Paste a new one to replace it.' : 'Bot token from @BotFather', autocomplete: 'off', style: { minWidth: '300px' } });
       const agentMark = ui.savedMark();
-      const agentSel = h('select', { onchange: (e) => agentMark.run(() => api(`${API}/telegram/settings`, { body: { agentId: e.target.value } }), { field: e.target, old: t.agentId }) }, ui.state.agents.map(a => h('option', { value: a.id, selected: a.id === t.agentId }, a.name)));
+      const agentSel = h('select', { onchange: (e) => agentMark.run(() => api(`${API}/telegram/settings`, { body: { agentId: e.target.value } }), { field: e.target, old: t.agentId }) }, ui.state.agents.map(a => h('option', { value: a.id, selected: a.id === t.agentId }, ui.agentLine ? ui.agentLine(a) : a.name)));
       const apiMark = ui.savedMark();
       const apiBase = h('input', { type: 'text', value: t.apiBase, style: { minWidth: '260px' }, onchange: (e) => apiMark.run(() => api(`${API}/telegram/settings`, { body: { apiBase: e.target.value } }), { field: e.target, old: t.apiBase }) });
       const allowIn = h('input', { type: 'text', placeholder: 'Chat number', style: { width: '160px' } });

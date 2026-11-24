@@ -9,6 +9,7 @@ import {
   insideGranted, metaSet, metaKey, MIME, extOf,
 } from './explorer.js';
 import { Knowledge, KNOWLEDGE_SQL, extractText } from './knowledge.js';
+import { readTable } from './convert.js';
 
 const TEXT_EXT = new Set(['txt', 'md', 'markdown', 'csv', 'tsv', 'json', 'log', 'js', 'mjs', 'ts', 'py', 'css', 'html', 'htm', 'xml', 'yml', 'yaml', 'sh', 'ps1', 'sql', 'ini', 'toml']);
 const MAX_READ = 200 * 1024;
@@ -22,7 +23,9 @@ export async function activate(ctx) {
   // A folder outside the workspace is open only when the owner approved it through this module (kv) AND it is still
   // in the door's remembered list (Settings). Either one alone is not enough.
   const grants = () => { const mine = ctx.kv.get('grants', []); const door = ctx.settings.get('files.allowedFolders') || []; return mine.filter((g) => door.includes(g)); };
-  const env = explorerEnv({ workspace: ctx.workspace, dataDir: ctx.dataDir, deskDir: ctx.deskDataDir, houseBackups: ctx.houseBackupsDir, db: ctx.db, agents: () => ctx.agents.list(), grants });
+  /** An agent as the screen names it (own name and role), from the Agents module when it is on. */
+  const agentLine = (a) => { try { return ctx.modules.api('agents')?.agentLine?.(a) || a?.name || 'An agent'; } catch { return a?.name || 'An agent'; } };
+  const env = explorerEnv({ workspace: ctx.workspace, dataDir: ctx.dataDir, deskDir: ctx.deskDataDir, houseBackups: ctx.houseBackupsDir, db: ctx.db, agents: () => ctx.agents.list().map((a) => ({ ...a, name: agentLine(a) })), grants });
   const kb = new Knowledge({ db: ctx.db, dir: knowledgeDir, workspace: ctx.workspace });
   kb.reindex().catch((e) => ctx.log('knowledge index', e.message));
   const changed = (data) => ctx.events.emit('files', data);
@@ -51,7 +54,7 @@ export async function activate(ctx) {
     if (!okRoot || isBlocked(env, real)) throw fail(403, 'symlink_escape', 'That link points outside the folder, so it stays closed.');
     return t;
   }
-  const cardFor = (r, who) => ({ kind: 'file', path: r.path, name: r.name, size: r.size, note: who?.agentId ? `Written by ${ctx.agents.get(who.agentId)?.name || who.agentId}` : 'Saved in the workspace' });
+  const cardFor = (r, who) => ({ kind: 'file', path: r.path, name: r.name, size: r.size, note: who?.agentId ? `Written by ${agentLine(ctx.agents.get(who.agentId) || { id: who.agentId })}` : 'Saved in the workspace' });
 
   /** Write a file in the workspace after the approval door says yes (ask 15). content: string or Buffer. */
   async function write(p, content, who = {}) {
@@ -109,13 +112,15 @@ export async function activate(ctx) {
 
   const knowledgeSearch = async (query, opts) => kb.search(query, opts);
 
-  ctx.expose({ list, write, read, trash, knowledgeSearch, knowledgeReindex: (o) => kb.reindex(o), cardFor });
+  // readTable(bytes, ext): the rows of cells of a .xlsx or .csv the owner gave (Sales reads an import through it). Reads
+  // only the bytes handed in; nothing on disk.
+  ctx.expose({ list, write, read, trash, knowledgeSearch, knowledgeReindex: (o) => kb.reindex(o), cardFor, readTable: (bytes, ext) => readTable(bytes, ext) });
 
   // ---- Coordinator tools ----
   const who = (call) => ({ agentId: call?.agentId || null, jobId: call?.jobId || null, chatId: call?.chatId || null, signal: call?.signal });
   const plain = (e) => ({ ok: false, error: e.message });
   ctx.tool({
-    name: 'file_write', description: 'Write a text file in the workspace (for example reports/notes.md). The owner may be asked first.',
+    name: 'file_write', description: 'Write a text file in the workspace (for example reports/notes.md). The owner may be asked first. Not for the owner\'s customer records: contacts, companies and deals live in the desk\'s own CRM (crm tools).',
     parameters: { type: 'object', properties: { path: { type: 'string', description: 'Workspace-relative path, e.g. drafts/plan.md' }, content: { type: 'string' } }, required: ['path', 'content'] },
     async run(args, call) {
       try { const r = await write(args.path, args.content, who(call)); const card = cardFor(r, who(call)); call?.emitCard?.(card); return { ok: true, path: r.path, name: r.name, size: r.size, cards: [card] }; } catch (e) { return plain(e); }

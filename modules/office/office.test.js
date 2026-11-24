@@ -30,3 +30,20 @@ test('makeTable writes a real xlsx in workspace/tables; makeDoc writes docx/pdf/
     assert.equal(tool.cards[0].kind, 'file');
   } finally { await t.close(); }
 });
+
+test('a tool call ignores any folder it is given: tables go to tables, documents to reports, never into Knowledge', async () => {
+  const t = await testDesk({ modules: ['files', 'office'] });
+  try {
+    const who = { agentId: 'coder', chatId: 'c' };
+    const tb = await t.core.modules.runTool('table_file', { title: 'Contacts', columns: ['Name'], rows: [['A']], dir: 'knowledge' }, who);
+    assert.equal(tb.ok, true); assert.equal(tb.path, 'tables/contacts.xlsx');
+    const dc = await t.core.modules.runTool('doc_file', { title: 'Standing rules', markdown: '# Rules', format: 'md', dir: 'knowledge/../knowledge' }, who);
+    assert.equal(dc.ok, true); assert.equal(dc.path, 'reports/standing-rules.md');
+    const fs = await import('node:fs');
+    assert.ok(!fs.existsSync(path.join(t.dataDir, 'workspace', 'knowledge', 'standing-rules.md')), 'nothing written into Knowledge');
+    // a direct caller inside the desk may still name its folder
+    assert.equal((await t.core.modules.api('office').makeDoc({ title: 'Note', markdown: 'x', format: 'md', dir: 'reports/week' })).path, 'reports/week/note.md');
+    const tools = [...t.core.modules.tools.values()];
+    assert.match(tools.find(x => x.name === 'table_file').description, /Not for the owner's customer records: contacts, companies and deals live in the desk's own CRM/);
+  } finally { await t.close(); }
+});

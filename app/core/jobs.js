@@ -6,6 +6,7 @@ export class Jobs {
     this.s = storage; this.panic = panic; this.events = events; this.log = log;
     this.running = new Map();   // id -> { ac, promise }
     this.cardSink = null;       // set by the chat module: (chatId, card, jobId) => void
+    this.strict = new Set();    // ids of running jobs started with strictApprovals: every action in them asks (approval-door.js)
     // anything that was running when the server last stopped is interrupted, never silently resumed
     this.s.run("UPDATE jobs SET status = 'interrupted', updated = ?, finished = ? WHERE status IN ('running', 'waiting')", now(), now());
     panic.onStop(() => this.stopAll('Panic'));
@@ -14,7 +15,7 @@ export class Jobs {
     if (!r) return null;
     const j = (x) => { try { return x ? JSON.parse(x) : null; } catch { return null; } };
     const input = j(r.input);
-    return { id: r.id, kind: r.kind, title: r.title, quiet: input?.quiet === true, agentId: r.agent_id, chatId: r.chat_id, status: r.status, progress: r.progress, detail: r.detail, input, output: j(r.output), error: r.error, created: r.created, updated: r.updated, finished: r.finished };
+    return { id: r.id, kind: r.kind, title: r.title, quiet: input?.quiet === true, strictApprovals: input?.strictApprovals === true, agentId: r.agent_id, chatId: r.chat_id, status: r.status, progress: r.progress, detail: r.detail, input, output: j(r.output), error: r.error, created: r.created, updated: r.updated, finished: r.finished };
   }
   list({ status, limit = 100 } = {}) {
     const rows = status ? this.s.all('SELECT * FROM jobs WHERE status = ? ORDER BY created DESC LIMIT ?', status, limit) : this.s.all('SELECT * FROM jobs ORDER BY created DESC LIMIT ?', limit);
@@ -32,12 +33,16 @@ export class Jobs {
   }
   /** Start a job now. Returns the stored job at once; the work continues in the background.
    *  quiet: the desk started it for its own upkeep, not the owner. It is kept in the input record (no new column) and read back as job.quiet;
-   *  the shell, Home and the brief leave a quiet job out unless it failed. */
-  async start({ kind, title, agentId = null, chatId = null, input = null, quiet = false, run }) {
+   *  the shell, Home and the brief leave a quiet job out unless it failed.
+   *  strictApprovals: every action with a side effect in this job asks the owner, whatever the security level and any
+   *  auto-approve window (kept in the input record too, so the job shows it). It can only make the door ask more. */
+  async start({ kind, title, agentId = null, chatId = null, input = null, quiet = false, strictApprovals = false, run }) {
     if (this.panic.halted) throw Object.assign(new Error('Everything is stopped. Press Resume first.'), { code: 'halted' });
     if (typeof run !== 'function') throw new Error('jobs.start needs run()');
     if (quiet) input = { ...(input && typeof input === 'object' ? input : {}), quiet: true };
+    if (strictApprovals === true) input = { ...(input && typeof input === 'object' ? input : {}), strictApprovals: true };
     const id = makeId('job_'); const t = now();
+    if (strictApprovals === true) this.strict.add(id);
     this.s.run('INSERT INTO jobs (id, kind, title, agent_id, chat_id, status, progress, detail, input, created, updated) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)', id, kind, title, agentId, chatId, 'running', 'Starting', JSON.stringify(input), t, t);
     const ac = new AbortController();
     const signal = this.panic.child(ac.signal);
@@ -58,7 +63,7 @@ export class Jobs {
       } catch (e) {
         if (signal.aborted || e?.code === 'aborted' || e?.code === 'halted' || e?.name === 'AbortError') this.update(id, { status: 'stopped', detail: 'Stopped', finished: now() });
         else { this.log('job failed', kind, e?.message); this.update(id, { status: 'failed', error: String(e?.message || e), detail: 'Failed', finished: now() }); }
-      } finally { this.running.delete(id); signal.release?.(); try { this.onEnd?.(id); } catch {} }   // the job is over: Panic lets go of it
+      } finally { this.running.delete(id); this.strict.delete(id); signal.release?.(); try { this.onEnd?.(id); } catch {} }   // the job is over: Panic lets go of it
     })();
     this.running.set(id, { ac, promise });
     this.events.emit('job', this.get(id));
@@ -87,5 +92,7 @@ export class Jobs {
     const c = (st) => this.s.get('SELECT COUNT(*) AS c FROM jobs WHERE status = ?', st).c;
     return { running: c('running'), waiting: c('waiting'), done: c('done'), failed: c('failed'), stopped: c('stopped'), interrupted: c('interrupted') };
   }
-  forModule() { return Object.freeze({ start: (o) => this.start(o), list: (o) => this.list(o), get: (id) => this.get(id), stop: (id) => this.stop(id), wait: (id, t) => this.wait(id, t), summary: () => this.summary() }); }
+  /** Was this job started with strictApprovals? A job that is over asks nothing more, so only running ones are kept. */
+  isStrict(id) { return this.strict.has(String(id || '')); }
+  forModule() { return Object.freeze({ takes: Object.freeze(['strictApprovals']), start: (o) => this.start(o), list: (o) => this.list(o), get: (id) => this.get(id), stop: (id) => this.stop(id), wait: (id, t) => this.wait(id, t), summary: () => this.summary() }); }
 }

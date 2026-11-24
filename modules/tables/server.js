@@ -94,11 +94,14 @@ export async function activate(ctx) {
     });
   }
 
-  // ---- into the CRM, through its own merge rules; the page address and the date read go on every row
-  function toCrm(from, rows, columns, at, addedKeys) {
+  // ---- into the CRM, through its own merge rules; the page address and the date read go on every row. A field this list
+  // filled follows the list; a field the owner changed by hand is left and named; a row no longer on the list is marked.
+  const FIELD_WORDS = { name: 'name', email: 'mail address', role: 'role', phone: 'phone', company_id: 'company', site: 'site', notes: 'notes', city: 'city' };
+  function toCrm(from, rows, columns, at, addedKeys, gone = [], changedKeys = new Set()) {
     const sales = ctx.modules.api('sales');
     if (!sales?.addCompany) return ' Sales is off, so nothing went to the CRM.';
-    let skipped = 0;
+    let skipped = 0; const synced = { co: [], ct: [] }; const left = []; let marked = 0;
+    const said = (rec, fields) => `${rec.name || rec.email}: ${fields.map(f => FIELD_WORDS[f] || f).join(', ')}`;
     for (const r of rows) {
       const v = rowValues(r.cells, columns);
       const coName = v.company || v.operator;
@@ -106,12 +109,18 @@ export async function activate(ctx) {
       const notes = [v.country && `Country: ${v.country}.`, v.operator && v.company && `Network operator: ${v.operator}.`].filter(Boolean).join(' ');
       try {
         const co = coName ? sales.addCompany({ name: coName, site: v.site, notes }, { from, at }) : null;
+        const fresh = addedKeys.has(r.key) || changedKeys.has(r.key);   // what was left is said when this read brought it, not on every refresh
+        if (co?.synced?.length) synced.co.push(said(co, co.synced)); if (fresh && co?.left?.length) left.push(said(co, co.left));
         // a name with no mail address and no company matches nothing in the CRM: it is added the first time it is seen only
-        if (email || (v.name && (co || addedKeys.has(r.key)))) sales.addContact({ name: v.name, email, role: v.title, companyId: co?.id || null }, { from, at });
-        else if (!co && !v.name) skipped++;
+        if (email || (v.name && (co || addedKeys.has(r.key)))) {
+          const ct = sales.addContact({ name: v.name, email, role: v.title, companyId: co?.id || null }, { from, at });
+          if (ct?.synced?.length) synced.ct.push(said(ct, ct.synced)); if (fresh && ct?.left?.length) left.push(said(ct, ct.left));
+        } else if (!co && !v.name) skipped++;
       } catch (e) { if (!e.status) throw e; skipped++; }
     }
-    return skipped ? ` ${plural(skipped, 'row')} had no company, name or mail address and did not go to the CRM.` : '';
+    for (const cells of gone) { const v = rowValues(cells, columns); try { if (sales.markGone?.({ name: v.name, email: okMail(v.email) ? v.email : '', company: v.company || v.operator }, { from, at })) marked++; } catch {} }
+    const crm = [synced.ct.length && `${plural(synced.ct.length, 'contact')} updated (${synced.ct.join('; ')})`, synced.co.length && `${synced.co.length} compan${synced.co.length === 1 ? 'y' : 'ies'} updated (${synced.co.join('; ')})`, left.length && `left as you changed them: ${left.join('; ')}`, marked && `${marked} marked no longer on the list`].filter(Boolean);
+    return (crm.length ? ` In the CRM: ${crm.join('; ')}.` : '') + (skipped ? ` ${plural(skipped, 'row')} had no company, name or mail address and did not go to the CRM.` : '');
   }
 
   // ---- refresh: read only that address, find the list by its signature, follow plain "next" links up to the limit
@@ -169,7 +178,7 @@ export async function activate(ctx) {
     const unique = [...new Map(rows.map(r => [r.key, r])).values()];
     let crmNote = '';
     const diff = store.saveRead(id, unique, { at, pages, relink, note: (d) => {
-      crmNote = toCrm(src.url, unique, columns, at, new Set(d.addedKeys));
+      crmNote = toCrm(src.url, unique, columns, at, new Set(d.addedKeys), d.gone, new Set(d.changed.map(c => rowKey(c.after, columns))));
       return `${plural(unique.length, 'row')} from ${plural(pages, 'page')}: ${d.added.length} new, ${d.changed.length} changed, ${d.gone.length} no longer on the list.${more}${crmNote}`;
     } });
     const note = `${plural(unique.length, 'row')} from ${plural(pages, 'page')}: ${diff.added.length} new, ${diff.changed.length} changed, ${diff.gone.length} no longer on the list.${more}${crmNote}`;

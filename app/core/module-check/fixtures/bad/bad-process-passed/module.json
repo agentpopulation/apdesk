@@ -1,0 +1,1 @@
+{"id": "bad-process-passed", "number": 144, "name": "Process passed", "description": "A hostile test module for the checker: Passes process to a helper, which reaches getBuiltinModule under another name. It is never added to a desk.", "kind": "switch-on", "defaultOn": false, "menu": [], "pages": [], "tools": [], "requires": [], "npm": {}, "hosts": [], "status": "works"}

@@ -117,9 +117,9 @@ test('usage: "today" is the owner\'s day in his zone, and the rows carry their v
     clock.t = Date.UTC(2026, 10, 21, 20, 0);
     assert.equal((await t.call('/api/m/bench/usage')).json.day, '2026-11-21T18:30:00.000Z');
   } finally { await t.close(); }
-  const tb = usageTable({ currency: 'INR', agents: [{ agent: 'coordinator', calls: 1, errors: 0, inputTokens: 10, outputTokens: 5, costMinor: 0 }, { agent: '(desk)', calls: 1, errors: 0, inputTokens: 3, outputTokens: 2, costMinor: 0 }] }, { money: (m) => '₹' + m / 100 });
+  const tb = usageTable({ currency: 'INR', agents: [{ agent: 'coordinator', name: 'Manager', calls: 1, errors: 0, inputTokens: 10, outputTokens: 5, costMinor: 0 }, { agent: '(desk)', calls: 1, errors: 0, inputTokens: 3, outputTokens: 2, costMinor: 0 }] }, { money: (m) => '₹' + m / 100 });
   assert.ok(tb.cols.every((c) => c.key && c.label), 'columns as the kit table reads them');
-  assert.deepEqual(tb.rows.map((r) => tb.cols.map((c) => r[c.key])), [['coordinator', '1', '0', '15', '—'], ['The desk', '1', '0', '5', '—']]);
+  assert.deepEqual(tb.rows.map((r) => tb.cols.map((c) => r[c.key])), [['Manager', '1', '0', '15', '—'], ['The desk', '1', '0', '5', '—']]);
 });
 
 test('spend words: a free key\'s list price is no paid spend; the header words are apart', async () => {

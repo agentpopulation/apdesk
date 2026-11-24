@@ -1,7 +1,7 @@
 // Sales page: totals, the pipeline board (drag and drop or Move), the lead panel, Leads, Outreach, and a coach note.
 // Tabs: Leads (all of the above), Contacts, Companies, Deals (ui-crm.js).
 import { mountCrm, CRM_STYLE } from './ui-crm.js';
-// Closer's own avatar beside the coach note, drawn by the Agents page's helper (letters when that page is not there)
+// The Sales expert's own avatar beside the coach note, drawn by the Agents page's helper (letters when that page is not there)
 let agentAvatar = null; import('/modules/agents/ui.js').then((m) => { agentAvatar = m.avatarEl || null; }, () => {});
 const STAGES = [['new', 'New'], ['researched', 'Researched'], ['drafted', 'Drafted'], ['talks', 'In talks']];
 const S_IDX = Object.fromEntries(STAGES.map(([id], i) => [id, i]));
@@ -81,7 +81,7 @@ export const pages = {
       const jobLine = h('span', { class: 'sub' });
       const tabs = ui.seg(TABS, st.tab, (o, i) => { st.tab = i; layout(); });
       const leadBar = h('div', { class: 'row', style: { flex: '1 1 auto', minWidth: 0 } }, seg, jobLine, h('span', { class: 'grow' }),
-        btn('Your offer', { kind: 'ghost', title: 'What you sell: Closer uses it in drafts', onClick: offerDialog }), btn('Find leads', { kind: 'ghost', onClick: findDialog }), btn('Add lead', { onClick: () => leadDialog() }));
+        btn('Your offer', { kind: 'ghost', title: 'What you sell: your Sales expert uses it in drafts', onClick: offerDialog }), btn('Find leads', { kind: 'ghost', onClick: findDialog }), btn('Add lead', { onClick: () => leadDialog() }));
       const head = h('div', { class: 'row' }, h('h2', null, title), tabs, leadBar);
       const tiles = h('div', { class: 'tiles' });
       const coachBox = h('div', { class: 'card coach' });
@@ -114,8 +114,8 @@ export const pages = {
       }
       function paintCoach() {
         const c = st.data.coach;
-        coachBox.replaceChildren(agentAvatar && ui.agent('closer') ? agentAvatar(ui.agent('closer'), 's') : ui.av('Closer'), c?.text ? h('p', null, c.text, ' ', h('span', { class: 'sub' }, `· ${c.label} · ${fmt.ago(c.at)}`)) : h('p', { class: 'sub' }, 'Ask Closer what to do next with the pipeline.'),
-          btn(c?.text ? 'Ask again' : 'Ask Closer', { kind: 'ghost sm', onClick: async (e) => { const b = e.currentTarget; b.disabled = true; b.replaceChildren(ui.spinner(), ' Thinking'); try { st.data.coach = await api('m/sales/coach', { method: 'POST' }); } catch (x) { toast(x.message, 'err'); } paintCoach(); } }));
+        coachBox.replaceChildren(agentAvatar && ui.agent('closer') ? agentAvatar(ui.agent('closer'), 's') : ui.av('Sales expert'), c?.text ? h('p', null, c.text, ' ', h('span', { class: 'sub' }, `· ${c.label} · ${fmt.ago(c.at)}`)) : h('p', { class: 'sub' }, 'Ask your Sales expert what to do next with the pipeline.'),
+          btn(c?.text ? 'Ask again' : 'Ask Sales expert', { kind: 'ghost sm', onClick: async (e) => { const b = e.currentTarget; b.disabled = true; b.replaceChildren(ui.spinner(), ' Thinking'); try { st.data.coach = await api('m/sales/coach', { method: 'POST' }); } catch (x) { toast(x.message, 'err'); } paintCoach(); } }));
       }
       function leadCard(l) {
         const n = l.sources.length;
@@ -155,12 +155,12 @@ export const pages = {
       }
       function paintOutreach() {
         const ds = st.data.drafts;
-        main.replaceChildren(h('div', { class: 'card s-list' }, ds.length ? ds.map(dr => { const l = leadById(dr.leadId); const [word, kind] = STATUS[dr.status] || [dr.status, '']; return ui.line(l?.company || 'Removed lead', `${CHANNEL[dr.channel] || 'Draft'} by Closer${dr.subject ? ' · ' + dr.subject : ''}${dr.note ? ' · ' + dr.note : ''}`, pill(word, kind), btn('Review', { kind: 'ghost sm', onClick: () => { st.pick = dr.leadId; paint(); } })); })
+        main.replaceChildren(h('div', { class: 'card s-list' }, ds.length ? ds.map(dr => { const l = leadById(dr.leadId); const [word, kind] = STATUS[dr.status] || [dr.status, '']; return ui.line(l?.company || 'Removed lead', `${CHANNEL[dr.channel] || 'Draft'} by your Sales expert${dr.subject ? ' · ' + dr.subject : ''}${dr.note ? ' · ' + dr.note : ''}`, pill(word, kind), btn('Review', { kind: 'ghost sm', onClick: () => { st.pick = dr.leadId; paint(); } })); })
           : ui.empty('No drafts yet. Pick a lead and press Draft outreach.')));
       }
       function paintDetail() {
         const l = leadById(st.pick);
-        if (!l) { det.replaceChildren(ui.empty('Pick a lead to see what Closer found.')); return; }
+        if (!l) { det.replaceChildren(ui.empty('Pick a lead to see what your Sales expert found.')); return; }
         const dr = draftsFor(l.id)[0];
         const sel = h('select', { 'aria-label': 'Move to stage', onchange: (e) => move(l.id, e.target.value) }, STAGES.map(([id, label]) => h('option', { value: id, selected: id === l.stage }, label)));
         const next = STAGES[S_IDX[l.stage] + 1];
@@ -169,7 +169,7 @@ export const pages = {
           h('div', { class: 'row' }, pill([dot(l.stage), l.stageLabel]), pill(money(l.value, l.currency)), pill(`${l.sources.length} source${l.sources.length === 1 ? '' : 's'}`), h('span', { class: 'grow' }),
             inCrm(l) ? pill('In the CRM', 'ok') : btn('Add to CRM', { kind: 'ghost sm', title: 'Save this company and contact in Companies and Contacts', onClick: (e) => addToCrm(l, e.currentTarget) })),
           open(l) ? h('div', { class: 'sub' }, `${openText(l)}: no page read said it.`) : null,
-          h('div', null, h('h6', null, 'What Closer found'), h('p', { class: 'sub', style: { margin: 0 } }, l.findings || l.need || 'Nothing yet.')),
+          h('div', null, h('h6', null, 'What your Sales expert found'), h('p', { class: 'sub', style: { margin: 0 } }, l.findings || l.need || 'Nothing yet.')),
           l.email || l.website || l.contactOther ? h('div', { class: 'sub' }, l.email ? 'Mail: ' + l.email + ' · ' : '', l.website ? h('a', { href: l.website, target: '_blank', rel: 'noopener noreferrer' }, l.website.replace(/^https?:\/\//, '')) : '', (() => { const u = (l.contactOther.match(/https?:\/\/\S+/) || [])[0]; return u ? [' · ', h('a', { href: u, target: '_blank', rel: 'noopener noreferrer' }, 'contact page')] : ''; })()) : null,
           l.sources.length ? h('div', { class: 'srcs' }, h('h6', null, 'Sources'), l.sources.map((s, i) => h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer', title: s.url }, `${i + 1} · ${s.title}`))) : null,
           h('div', null, h('h6', null, 'Draft'), dr ? h('div', { class: 'stack', style: { gap: '6px' } },
@@ -224,15 +224,15 @@ export const pages = {
       }
       function offerDialog() {
         const t = h('textarea', { rows: 4, placeholder: 'For example: We build PLC panels and retrofit packaging lines for mid-size plants in Maharashtra.' }, st.data.offer || '');
-        ui.modal({ title: 'What you sell', body: h('div', { class: 'stack' }, h('span', { class: 'sub' }, 'Closer writes drafts from this and from what the pages said. Without it, drafts leave a gap for you to fill.'), t),
+        ui.modal({ title: 'What you sell', body: h('div', { class: 'stack' }, h('span', { class: 'sub' }, 'Your Sales expert writes drafts from this and from what the pages said. Without it, drafts leave a gap for you to fill.'), t),
           actions: [{ label: 'Cancel' }, { label: 'Save', kind: '', onClick: async () => { try { const r = await api('m/sales/offer', { body: { offer: t.value } }); st.data.offer = r.offer; toast('Saved', 'ok'); } catch (e) { toast(e.message, 'err'); return false; } } }] });
       }
       function findDialog() {
         if (ui.state.settings?.online === false) { ui.modal({ title: 'Find leads', body: 'The desk is offline. Finding leads needs the internet.', actions: [{ label: 'Close' }] }); return; }
-        if (!st.data.searchOn) { ui.modal({ title: 'Find leads', body: 'Search is switched off, so Closer cannot look on the web. Switch on Search in Settings › Modules, or add a lead by hand.', actions: [{ label: 'Close' }] }); return; }
+        if (!st.data.searchOn) { ui.modal({ title: 'Find leads', body: 'Search is switched off, so your Sales expert cannot look on the web. Switch on Search in Settings › Modules, or add a lead by hand.', actions: [{ label: 'Close' }] }); return; }
         const q = h('textarea', { rows: 3, placeholder: 'For example: companies in my city that make packaging machines' });
         const n = h('input', { type: 'number', value: '20', min: '1', max: '50' });
-        ui.modal({ title: 'Find leads', body: h('div', { class: 'stack' }, h('label', { class: 'f' }, 'Who are you looking for?', q), h('label', { class: 'f' }, 'How many', n), h('span', { class: 'sub' }, 'Closer searches several ways, reads the pages and keeps only companies a page names. Nothing is sent.')),
+        ui.modal({ title: 'Find leads', body: h('div', { class: 'stack' }, h('label', { class: 'f' }, 'Who are you looking for?', q), h('label', { class: 'f' }, 'How many', n), h('span', { class: 'sub' }, 'Your Sales expert searches several ways, reads the pages and keeps only companies a page names. Nothing is sent.')),
           actions: [{ label: 'Cancel' }, { label: 'Start search', kind: '', onClick: async () => { if (!q.value.trim()) return false; try { const r = await api('m/sales/find', { body: { query: q.value.trim(), count: Number(n.value) || 20 } }); if (!r.ok) toast(r.text, 'err'); else { st.job = r.jobId; jobLine.textContent = 'Finding leads…'; } } catch (e) { toast(e.message, 'err'); } } }] });
       }
 

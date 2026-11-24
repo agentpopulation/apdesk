@@ -1,7 +1,9 @@
 // Sales CRM (module 13): leads with sources, a four-stage pipeline, outreach drafts that wait for the owner.
 // Nothing is sent from here: an approved draft is handed to Mail, which asserts the send.person approval right before sending.
 import { SalesStore, STAGES, CHANNELS, stageId, stageLabel } from './store.js';
-import { CrmStore, LAWFUL, TYPED } from './crm.js';
+import { CrmStore, LAWFUL, TYPED, notCsv } from './crm.js';
+import { FIELDS } from './columns.js';
+import { crmTools } from './crm-tools.js';
 import { parseDraftReply } from './parse.js';
 import { findLeads, closingLine, leadCounts, groupLine, cutWords, purposeLine } from './find.js';
 import { companyKey, sameCompany, askCountry, buyerAsk, textNames } from './rules.js';
@@ -13,7 +15,7 @@ export async function activate(ctx) {
   const currency = () => ctx.settings.get('currency') || '';
   const sysLocale = () => { try { return Intl.DateTimeFormat().resolvedOptions().locale; } catch { return undefined; } };
   const store = new SalesStore(ctx.db, { currency, emit: (d) => ctx.events.emit('sales', d) });
-  const crm = new CrmStore(ctx.db, { currency, timeZone: () => ctx.settings.get('timeZone') || '', kv: ctx.kv, emit: (d) => ctx.events.emit('sales', d) });
+  const crm = new CrmStore(ctx.db, { currency, timeZone: () => ctx.settings.get('timeZone') || '', locale: () => ctx.settings.get('locale') || '', kv: ctx.kv, emit: (d) => ctx.events.emit('sales', d) });
   const waiting = new Map();       // draftId -> AbortController of its pending send.person request
   const pendingId = new Map();     // draftId -> approval id still pending in this run
 
@@ -165,6 +167,8 @@ export async function activate(ctx) {
       const r = await mail.send({ to, subject: item.subject, body: item.body, approvalId: dec.id, source: 'sales', ref: draftId });
       store.updateDraft(draftId, { status: 'sent', sentAt: new Date().toISOString(), note: r?.messageId ? 'Sent by Mail' : 'Sent' });
       store.log(d.leadId, 'You', `Sent to ${to}`);
+      // the owner's send moves a lead that was not further on to Drafted, with the next step to wait for an answer
+      if (lead && ['new', 'researched'].includes(lead.stage)) { store.moveLead(lead.id, 'drafted', { who: 'You' }); store.updateLead(lead.id, { nextStep: 'Wait for a reply' }, { who: 'You' }); }
     } catch (e) { store.updateDraft(draftId, { status: 'approved', note: `Approved, not sent: ${e.message}` }); store.log(d.leadId, 'Mail', `Not sent: ${e.message}`); }
   }
 
@@ -174,12 +178,13 @@ export async function activate(ctx) {
     whatsapp: 'Write one short WhatsApp message (under 50 words, no subject line, plain and polite) for the owner to paste himself',
     text: 'Write one short plain message (under 80 words, no subject line) for the owner to paste himself',
   };
-  async function writeDraft(lead, { signal, channel = 'email', language = '' }) {
+  async function writeDraft(lead, { signal, channel = 'email', language = '', offer: given = '' }) {
     const owner = ctx.settings.get('ownerName') || '';
     const business = clip(ctx.settings.get('companyName') || '', 120);
     const closer = ctx.agents.get('closer');
-    // his offer text from the Sales page; with none, what he wrote under "What you do" in Settings (his own words either way)
-    const offer = clip(ctx.kv.get('offer', '') || ctx.settings.get('business.about') || '', 600);
+    // what he sells, said in this ask (used for these drafts only, never saved); else his offer text from the Sales page;
+    // with none, what he wrote under "What you do" in Settings (his own words either way)
+    const offer = clip(given || ctx.kv.get('offer', '') || ctx.settings.get('business.about') || '', 600);
     const support = [offer, business].filter(Boolean).join(' ');     // what the owner gave about himself: his offer text and business name
     const lang = languageOf(language);
     const langRule = lang && lang.name !== 'English' ? ` Write the whole message${channel === 'email' ? ', subject and body,' : ''} in ${lang.name}${lang.script ? `, in ${lang.script} script` : ''}; only names of companies and people, numbers and addresses may stay as they are.` : '';
@@ -251,10 +256,14 @@ export async function activate(ctx) {
         return { leads, why: leads.length < n ? `the table above has only ${leads.length} lead${leads.length === 1 ? '' : 's'} left` : leads.length === 1 ? 'the first row of the table above' : `the first ${leads.length} of the table above` };
       }
     }
-    const leads = store.listLeads({ stage: 'new' }).sort((a, b) => !!a.unchecked?.length - !!b.unchecked?.length).slice(0, n);   // as the page shows it: checked first
+    // as the page shows it, checked first; a lead that already has a draft is not one "without a draft" (drafting no longer moves it)
+    const drafted = new Set(store.drafts().filter(d => ['waiting', 'approved', 'copy', 'sent'].includes(d.status)).map(d => d.leadId));
+    const leads = store.listLeads({ stage: 'new' }).filter(l => !drafted.has(l.id)).sort((a, b) => !!a.unchecked?.length - !!b.unchecked?.length).slice(0, n);
     return { leads, why: !leads.length ? '' : leads.length < n ? `the New lane of the Sales page has only ${leads.length}` : leads.length === 1 ? 'the first lead in the New lane of the Sales page' : `the first ${leads.length} in the New lane of the Sales page` };
   }
-  async function startDrafts({ leadIds, top, chatId = null, wait = true, channel = 'email', language = '' }) {
+  /** byOwner: the owner's own Draft button on the Sales page, which also moves the lead to Drafted. An agent's call
+   *  never moves a lead or changes its next step: that happens when the owner sends the mail or presses his own button. */
+  async function startDrafts({ leadIds, top, chatId = null, wait = true, channel = 'email', language = '', offer = '', byOwner = false }) {
     channel = CHANNELS.includes(String(channel || '').toLowerCase()) ? String(channel).toLowerCase() : 'email';
     language = clip(language, 40);
     let leads; let why = '';
@@ -271,11 +280,13 @@ export async function activate(ctx) {
           try {
             // one open draft per lead and channel: a second request is refused with a plain line
             if (store.openDraft(lead.id, channel)) { skipped.push(lead.company); continue; }
-            const w = await writeDraft(lead, { signal: job.signal, channel, language });
+            const w = await writeDraft(lead, { signal: job.signal, channel, language, offer: clip(offer, 600) });
             // No approval is created here: an email asks for it only when the owner presses "Approve and send" on that draft.
             const d = store.addDraft({ leadId: lead.id, channel, to: lead.email || '', subject: w.subject, body: w.body, label: w.label, agentId: 'closer', chatId, note: w.note });
-            store.moveLead(lead.id, 'drafted', { who: 'Closer' });
-            store.updateLead(lead.id, { nextStep: channel !== 'email' ? `Copy the ${channel === 'text' ? 'text' : CHANNEL_WORDS[channel]} and send it yourself` : lead.email ? 'Approve the draft to send it' : 'Find an address, then approve the draft' }, { who: 'Closer' });
+            if (byOwner) {
+              store.moveLead(lead.id, 'drafted', { who: 'You' });
+              store.updateLead(lead.id, { nextStep: channel !== 'email' ? `Copy the ${channel === 'text' ? 'text' : CHANNEL_WORDS[channel]} and send it yourself` : lead.email ? 'Approve the draft to send it' : 'Find an address, then approve the draft' }, { who: 'You' });
+            }
             job.card(draftCard(d, lead));
             made.push({ draftId: d.id, leadId: lead.id, company: lead.company, channel, approvalId: null, status: d.status, label: w.label, regenerated: w.regenerated, removed: w.removed });
           } catch (e) {
@@ -321,8 +332,8 @@ export async function activate(ctx) {
       return { ok: true, lead: { id: l.id, company: l.company, stage: l.stageLabel }, text: l.duplicate ? `${l.company} is already in the pipeline (${l.stageLabel}).` : `Added ${l.company} to the pipeline as ${l.stageLabel}.`, cards: [{ kind: 'actions', actions: [{ label: 'Open Sales', go: '#/sales' }] }] };
     } });
   ctx.tool({ name: 'outreach_draft', description: 'Write outreach drafts in the owner\'s name for leads (by id or company), or for the top n leads. Email drafts wait for the owner; LinkedIn, WhatsApp and plain text are copy-only. Nothing is sent.',
-    parameters: { type: 'object', properties: { leadIds: { type: 'array', items: { type: 'string' } }, top: { type: 'integer', description: 'Draft for the top n leads without a draft' }, offer: { type: 'string', description: 'What the owner sells, in his words, if he said it (saved for later drafts)' }, channel: { type: 'string', enum: CHANNELS, description: 'email (default) makes a draft the owner can approve and send. linkedin, whatsapp or text make copy-only text: no subject, no approval, nothing can send it. Use the channel the owner named.' }, language: { type: 'string', description: 'The language the owner asked for, as a plain name (Hindi, Tamil, Malayalam, Marathi, Bengali, English). Leave out when he named none.' }, chatId: { type: 'string', description: 'The chat the ask came from: "top n" means the first n rows of the leads table last shown there' } } },
-    async run(args, call) { if (args.offer) ctx.kv.set('offer', clip(args.offer, 600)); return startDrafts({ leadIds: args.leadIds, top: args.top, channel: args.channel, language: args.language, chatId: args.chatId || call.chatId }); } });
+    parameters: { type: 'object', properties: { leadIds: { type: 'array', items: { type: 'string' } }, top: { type: 'integer', description: 'Draft for the top n leads without a draft' }, offer: { type: 'string', description: 'What the owner sells, in his words, if he said it in this ask. Used for these drafts only; it is not saved (the owner saves his offer on the Sales page).' }, channel: { type: 'string', enum: CHANNELS, description: 'email (default) makes a draft the owner can approve and send. linkedin, whatsapp or text make copy-only text: no subject, no approval, nothing can send it. Use the channel the owner named.' }, language: { type: 'string', description: 'The language the owner asked for, as a plain name (Hindi, Tamil, Malayalam, Marathi, Bengali, English). Leave out when he named none.' }, chatId: { type: 'string', description: 'The chat the ask came from: "top n" means the first n rows of the leads table last shown there' } } },
+    async run(args, call) { return startDrafts({ leadIds: args.leadIds, top: args.top, channel: args.channel, language: args.language, offer: typeof args.offer === 'string' ? args.offer : '', chatId: args.chatId || call.chatId, byOwner: call?.byOwner === true }); } });
   ctx.tool({ name: 'pipeline_move', description: 'Move a lead to another stage: New, Researched, Drafted or In talks.',
     parameters: { type: 'object', properties: { leadId: { type: 'string' }, company: { type: 'string' }, stage: { type: 'string', enum: STAGES.map(s => s.label) } }, required: ['stage'] },
     async run(args) {
@@ -331,6 +342,8 @@ export async function activate(ctx) {
       const l = store.moveLead(lead.id, args.stage, { who: 'Closer' });
       return { ok: true, text: `${l.company} is now ${l.stageLabel}.` };
     } });
+
+  crmTools(ctx, crm, { currency });
 
   // ---------------- routes (owner-only for anything that changes data)
   const ownerOnly = (res, owner) => { if (!owner) { ctx.json(res, { error: 'Only the owner at this desk can do that.' }, 403); return true; } return false; };
@@ -346,7 +359,7 @@ export async function activate(ctx) {
   ctx.route('DELETE', '/leads/:id', (req, res, { params, owner }) => { if (ownerOnly(res, owner)) return; store.removeLead(params.id); ctx.json(res, { ok: true }); });
   ctx.route('POST', '/leads/:id/move', (req, res, { params, body, owner }) => { if (ownerOnly(res, owner)) return; const l = store.moveLead(params.id, body?.stage); l ? ctx.json(res, { lead: l }) : ctx.json(res, { error: 'Not found' }, 404); });
   ctx.route('POST', '/find', async (req, res, { body, owner }) => { if (ownerOnly(res, owner)) return; ctx.json(res, await startFind({ query: body?.query, count: body?.count })); });
-  ctx.route('POST', '/draft', async (req, res, { body, owner }) => { if (ownerOnly(res, owner)) return; ctx.json(res, await startDrafts({ leadIds: body?.leadIds, top: body?.top, channel: body?.channel, language: body?.language, wait: false })); });
+  ctx.route('POST', '/draft', async (req, res, { body, owner }) => { if (ownerOnly(res, owner)) return; ctx.json(res, await startDrafts({ leadIds: body?.leadIds, top: body?.top, channel: body?.channel, language: body?.language, wait: false, byOwner: true })); });
   ctx.route('PATCH', '/drafts/:id', (req, res, { params, body, owner }) => {
     if (ownerOnly(res, owner)) return;
     const d = store.getDraft(params.id); if (!d) return ctx.json(res, { error: 'Not found' }, 404);
@@ -373,27 +386,66 @@ export async function activate(ctx) {
     ctx.json(res, { approvalId: id });
   });
   // ---------------- CRM: contacts, companies, deals, customers. Owner only, every route; nothing here sends anything.
-  const crmView = () => ({ companies: crm.companies(), contacts: crm.contacts(), deals: crm.deals(), stages: crm.stages(), currency: currency(), lawful: LAWFUL });
+  const crmView = () => ({ companies: crm.companies(), contacts: crm.contacts(), deals: crm.deals(), stages: crm.stages(), imports: crm.imports(), currency: currency(), lawful: LAWFUL });
+  // a refusal keeps its reason, the field it is about, and for "the same?" both records, so the page can show them
   const crmRoute = (method, path, fn) => ctx.route(method, path, async (req, res, arg) => {
     if (ownerOnly(res, arg.owner)) return;
     try { const out = await fn(arg); out === null ? ctx.json(res, { error: 'Not found' }, 404) : ctx.json(res, out); }
-    catch (e) { if (e.status) ctx.json(res, { error: e.message }, e.status); else throw e; }
+    catch (e) { if (e.status) { const { field, code, same, why, differs, canSeparate } = e; ctx.json(res, { error: e.message, field, code, same, why, differs, canSeparate }, e.status); } else throw e; }
   });
   crmRoute('GET', '/crm', () => crmView());
   crmRoute('POST', '/crm/from-lead/:id', ({ params }) => { const l = store.getLead(params.id); return l ? crm.fromLead(l) : null; });
   crmRoute('POST', '/crm/companies', ({ body }) => ({ company: crm.upsertCompany(body || {}) }));
   crmRoute('PATCH', '/crm/companies/:id', ({ params, body }) => { const c = crm.updateCompany(params.id, body || {}); return c && { company: c }; });
   crmRoute('DELETE', '/crm/companies/:id', ({ params }) => { crm.removeCompany(params.id); return { ok: true }; });
+  crmRoute('GET', '/crm/companies/:id/page', ({ params }) => crm.page('company', params.id));
   crmRoute('POST', '/crm/contacts', ({ body }) => ({ contact: crm.upsertContact(body || {}) }));
   crmRoute('PATCH', '/crm/contacts/:id', ({ params, body }) => { const c = crm.updateContact(params.id, body || {}); return c && { contact: c }; });
   crmRoute('DELETE', '/crm/contacts/:id', ({ params }) => { crm.removeContact(params.id); return { ok: true }; });
+  crmRoute('GET', '/crm/contacts/:id/page', ({ params }) => crm.page('contact', params.id));
+  crmRoute('POST', '/crm/notes', ({ body }) => ({ note: crm.addNote(body?.kind, String(body?.id || ''), body?.text, TYPED) }));
+  crmRoute('DELETE', '/crm/notes/:id', ({ params }) => { crm.removeNote(params.id); return { ok: true }; });
   crmRoute('POST', '/crm/deals', ({ body }) => ({ deal: crm.addDeal(body || {}) }));
   crmRoute('PATCH', '/crm/deals/:id', ({ params, body }) => { const d = crm.updateDeal(params.id, body || {}); return d && { deal: d }; });
   crmRoute('DELETE', '/crm/deals/:id', ({ params }) => { crm.removeDeal(params.id); return { ok: true }; });
   crmRoute('PUT', '/crm/stages', ({ body }) => ({ stages: crm.renameStages(body?.labels || {}) }));
-  const csvIn = (body) => { const csv = String(body?.csv || ''); if (!csv.trim()) throw Object.assign(new Error('The file is empty.'), { status: 400 }); if (csv.length > 2_000_000) throw Object.assign(new Error('The file is too large: 2 MB at most.'), { status: 413 }); return csv; };
-  crmRoute('POST', '/crm/import/preview', ({ body }) => ({ rows: crm.plan(csvIn(body)) }));
-  crmRoute('POST', '/crm/import', ({ body }) => { const r = crm.importCsv(csvIn(body), body?.fileName); ctx.activity(`Customers added from ${r.from}`, `${r.saved} saved, ${r.skipped} skipped`); return r; });
+  // The file of an import: CSV text, or an .xlsx workbook (sent as base64) read into rows by the Files module's reader.
+  const csvIn = (body) => {
+    const name = String(body?.fileName || '');
+    if (typeof body?.xlsx === 'string' && body.xlsx) {
+      if (!/\.(xlsx|xlsm)$/i.test(name)) throw Object.assign(new Error('Only .xlsx workbooks and CSV files can be imported.'), { status: 415 });
+      const files = ctx.modules.api('files');
+      if (!files?.readTable) throw Object.assign(new Error('Reading .xlsx needs the Files module. Switch it on in Settings, Modules, or save the sheet as CSV and import that.'), { status: 409 });
+      const bytes = Buffer.from(body.xlsx, 'base64');
+      if (bytes.length > 4_000_000) throw Object.assign(new Error('The file is too large: 4 MB at most. Split it into two files.'), { status: 413 });
+      let t; try { t = files.readTable(bytes, name.slice(name.lastIndexOf('.'))); } catch { throw Object.assign(new Error('That workbook could not be read. Open it in your spreadsheet program, save it again as .xlsx or CSV, and import that.'), { status: 415 }); }
+      if (!t.rows.length) throw Object.assign(new Error('The file is empty.'), { status: 400 });
+      return t.rows;
+    }
+    const csv = String(body?.csv || ''); const no = notCsv(csv, name);
+    if (no) throw Object.assign(new Error(no), { status: 415 });
+    if (!csv.trim()) throw Object.assign(new Error('The file is empty.'), { status: 400 });
+    if (csv.length > 4_000_000) throw Object.assign(new Error('The file is too large: 4 MB at most. Split it into two files.'), { status: 413 });
+    return csv;
+  };
+  const n2 = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  /** What taking an import back did, in one line, with every count true. */
+  const importBackLine = (r) => [`${n2(r.removed.contacts, 'contact', 'contacts')} and ${n2(r.removed.companies, 'company', 'companies')} removed`,
+    r.shared.contacts + r.shared.companies ? `${r.shared.contacts + r.shared.companies} kept because another file, list or you also have them` : '',
+    r.kept.contacts + r.kept.companies ? `${r.kept.contacts + r.kept.companies} kept because you changed them or they are on a deal` : ''].filter(Boolean).join('; ');
+  const sameOf = (body) => Object.fromEntries(Object.entries(body?.same || {}).map(([k, v]) => [Number(k), String(v)]).filter(([k]) => Number.isFinite(k)));
+  const counts = (rows) => ({ added: rows.filter(r => r.action === 'new').length, merged: rows.filter(r => r.action === 'merge').length, already: rows.filter(r => r.action === 'same').length,
+    skipped: rows.filter(r => r.action === 'skip').map(r => ({ line: r.line, why: r.why })), warned: rows.filter(r => r.warn?.length).map(r => ({ line: r.line, warn: r.warn })) });
+  crmRoute('POST', '/crm/import/preview', ({ body }) => { const r = crm.importRun(csvIn(body), { fileName: body?.fileName, columns: body?.columns || null, same: sameOf(body) }); return { ...r, fields: FIELDS, counts: counts(r.rows) }; });
+  // Save, all at once or in parts (start, end) so the page can show how far it is; the parts of one file share one import.
+  crmRoute('POST', '/crm/import', ({ body }) => {
+    const start = Number.isFinite(Number(body?.start)) ? Number(body.start) : 0; const end = Number.isFinite(Number(body?.end)) ? Number(body.end) : Infinity;
+    const r = crm.importRun(csvIn(body), { fileName: body?.fileName, columns: body?.columns || null, same: sameOf(body), save: true, start, end, importId: body?.importId ? String(body.importId) : null });
+    const c = counts(r.rows); const last = end >= r.total;
+    if (last) { const all = crm.imports().find(x => x.id === r.importId); ctx.activity(`Customers imported from ${r.from}`, all ? `${all.added} added, ${all.merged} merged, ${all.already} already there, ${all.skipped} skipped` : ''); }
+    return { importId: r.importId, from: r.from, total: r.total, done: Math.min(end, r.total), last, ...c };
+  });
+  crmRoute('DELETE', '/crm/imports/:id', ({ params }) => { const r = crm.removeImport(params.id); if (r) ctx.activity(`Took back the import of ${r.file}`, importBackLine(r)); return r && { ...r, line: importBackLine(r) }; });
   crmRoute('GET', '/crm/export/:what', ({ params }) => ({ fileName: `${params.what}.csv`, csv: crm.exportCsv(params.what) }));
   // for other modules (Bench: "already a customer"): customer companies, name and site host only
   crmRoute('GET', '/customers', () => ({ customers: crm.customers() }));
@@ -419,10 +471,26 @@ export async function activate(ctx) {
     sameCompany: (a, b) => sameCompany(a, b),
     customers: () => crm.customers(),
     // The CRM for other modules (Tables): the same merge rules; `from` is the page or file the row came from, `at` when it was read.
-    addCompany: (x, { from, at } = {}) => crm.upsertCompany(x, { from: otherSource(from), at: at || new Date().toISOString(), fresh: true }),
-    addContact: (x, { from, at } = {}) => crm.upsertContact(x, { from: otherSource(from), at: at || new Date().toISOString(), fresh: true }),
+    // sync: a later read of the same source updates the fields it filled itself (never one the owner changed since);
+    // the answer lists them in synced, and the ones left as the owner changed them in left
+    addCompany: (x, { from, at } = {}) => crm.upsertCompany(x, { from: otherSource(from), at: at || new Date().toISOString(), fresh: true, sync: true }),
+    addContact: (x, { from, at } = {}) => crm.upsertContact(x, { from: otherSource(from), at: at || new Date().toISOString(), fresh: true, sync: true }),
     removeSource: (from) => crm.removeSource(otherSource(from)),
+    /** A row no longer on a watched list: the contact (or company) it gave is marked with the date, never deleted. */
+    markGone: (x, { from, at } = {}) => crm.markGone(x, { from: otherSource(from), at: at || new Date().toISOString() }),
     pageNames: (text, company) => textNames(text, company),
+    // read-only lists for other modules (Playbooks, Meeting notes): the same records the CRM page shows
+    deals: (filter) => (filter ? crm.dealsWhere(filter) : crm.deals()),
+    contacts: () => crm.contacts(),
+    companies: () => crm.companies(),
+    // query: words in the name or mail address (contacts) or the name or site (companies); none lists all
+    listContacts: (query = '') => { const q = String(query || '').trim().toLowerCase(); return crm.contacts().filter(c => !q || [c.name, c.email].some(x => String(x || '').toLowerCase().includes(q))).map(c => ({ id: c.id, name: c.name, email: c.email, companyId: c.companyId })); },
+    listCompanies: (query = '') => { const q = String(query || '').trim().toLowerCase(); return crm.companies().filter(c => !q || [c.name, c.host].some(x => String(x || '').toLowerCase().includes(q))).map(c => ({ id: c.id, name: c.name })); },
+    customerContacts: () => crm.customerContacts(),
+    /** A dated note on a contact or company; source says where it came from (shown on its page). */
+    addNote: (kind, id, text, source) => crm.addNote(kind, String(id || ''), text, otherSource(source)),
+    // attachNote(kind, id, text, source), or one object { kind, id, text, from }
+    attachNote: (kind, id, text, source) => { const o = kind && typeof kind === 'object' ? kind : { kind, id, text, from: source }; return crm.addNote(o.kind, String(o.id || ''), o.text, otherSource(o.from ?? o.source)); },
   });
   return { async deactivate() { for (const ac of waiting.values()) ac.abort('module off'); waiting.clear(); } };
 }

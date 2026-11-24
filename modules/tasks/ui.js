@@ -25,7 +25,7 @@ export const pages = {
       style();
       const { h, api, btn, pill, meter, empty, fmt, toast, md } = ui;
       el.classList.add('tasksv');
-      const jobs = new Map(); let approvals = []; let showAll = false; const open = new Set(); let house = null;
+      const jobs = new Map(); let todos = []; let approvals = []; let showAll = false; const open = new Set(); let house = null;
       const left = h('div', { class: 'tk-col' }); const right = h('div', { class: 'tk-col' });
       el.append(
         h('div', { class: 'row' }, h('h2', { style: { margin: 0 } }, ui.label('tasks', 'Tasks')), h('span', { class: 'grow' }), btn('New task', { onClick: newTask })),
@@ -73,6 +73,18 @@ export const pages = {
         return card;
       }
       async function again(j) { try { const n = await api(`m/tasks/jobs/${j.id}/again`, { body: {} }); jobs.set(n.id, n); toast(`Started again: ${j.title}`); paint(); } catch (e) { toast(e.message, 'err'); } }
+      // to-dos for people (from a meeting or another place), not work for an agent
+      const dueText = (d) => !d ? '' : /^\d{4}-\d{2}-\d{2}$/.test(d) ? fmt.date(d + 'T12:00:00Z') : fmt.when(d);
+      const overdue = (d) => !!d && (/^\d{4}-\d{2}-\d{2}$/.test(d) ? new Date(d + 'T23:59:59Z') < new Date() : new Date(d) < new Date());
+      function todoCard(td) {
+        const bits = [td.who ? 'For ' + td.who : 'Nobody named', td.due ? (td.done ? 'due ' : overdue(td.due) ? 'was due ' : 'due ') + dueText(td.due) : 'no date', td.source].filter(Boolean);
+        return h('div', { class: 'card tk-job' }, h('div', { class: 'top' },
+          h('div', { class: 'what' }, h('b', { style: td.done ? { textDecoration: 'line-through' } : null }, td.title), h('div', { class: 'sub' }, bits.join(' · '))),
+          td.done ? pill('Done', 'ok') : (td.due && overdue(td.due) ? pill('Late', 'stop') : null),
+          btn(td.done ? 'Not done' : 'Done', { kind: 'ghost sm', onClick: async () => { try { await api(`m/tasks/todos/${td.id}/done`, { body: { done: !td.done } }); await loadTodos(); paint(); } catch (e) { toast(e.message, 'err'); } } }),
+          btn('Delete', { kind: 'ghost sm', onClick: async () => { if (!await ui.confirm(`Delete the to-do "${td.title}"?`, { ok: 'Delete', kind: 'stop' })) return; try { await api(`m/tasks/todos/${td.id}`, { method: 'DELETE' }); await loadTodos(); paint(); } catch (e) { toast(e.message, 'err'); } } })));
+      }
+      async function loadTodos() { try { todos = (await api('m/tasks/todos')).todos || []; } catch { todos = []; } }
       const group = (title, n, items, emptyText) => h('div', { class: 'tk-group' }, h('h3', null, title, n ? pill(String(n)) : null), items.length ? items : [empty(emptyText)]);
       function paint() {
         const all = [...jobs.values()].sort((a, b) => String(b.created).localeCompare(String(a.created)));
@@ -90,6 +102,7 @@ export const pages = {
           ...upkeep.slice(0, 20).map(jobCard)) : null;
         left.replaceChildren(
           group('Running', running.length, running.map(jobCard), 'Nothing is running.'),
+          ...(todos.length ? [group('To do', todos.filter(x => !x.done).length, todos.map(todoCard), '')] : []),
           group('Waiting for you', approvals.length + waiting.length, [...approvals.map(a => ui.approvalCard ? ui.approvalCard(a) : h('div', { class: 'card' }, a.title)), ...waiting.map(jobCard), stopped].filter(Boolean), 'Nothing waits for you.'),
           group('Done', done.length, [...shown.map(jobCard), done.length > shown.length ? btn(`Show all ${done.length}`, { kind: 'ghost sm', onClick: () => { showAll = true; paint(); } }) : null].filter(Boolean), 'Finished work waits here, even when the browser was closed.'),
           ...[house].filter(Boolean));
@@ -101,7 +114,8 @@ export const pages = {
       ui.on('approval', async () => { await loadApprovals(); soon(); });
       ui.on('panic', async () => { await Promise.all([loadJobs(), loadApprovals()]); paint(); });
       ui.onLeave?.(() => clearTimeout(t));
-      await Promise.all([loadJobs(), loadApprovals()]);
+      ui.on('todo', async () => { await loadTodos(); soon(); });
+      await Promise.all([loadJobs(), loadApprovals(), loadTodos()]);
       paint();
 
       // right column: schedules and chains of agents
